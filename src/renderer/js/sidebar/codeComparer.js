@@ -626,8 +626,60 @@ class CodeComparer {
                 return;
             }
 
-            logInfo('所有程序编译成功，开始执行对拍');
-            await this.runComparison(task, compiledPrograms, effectiveTimeLimit, workerCount, maxParallel);
+            logInfo('所有程序编译成功，启动 HPC 对拍引擎');
+
+            const config = {
+                stdExe: compiledPrograms.stdExe,
+                testExe: compiledPrograms.testExe,
+                generator: compiledPrograms.generatorRunTarget || compiledPrograms.generatorExe,
+                spjExe: compiledPrograms.spjExe,
+                totalTests: task.state.totalTests,
+                timeLimit: effectiveTimeLimit,
+                threadCount: workerCount,
+                useTestlib: task.config.useTestlib,
+                freopen: {
+                    inputFile: task.config.freopenInputFile || null,
+                    outputFile: task.config.freopenOutputFile || null
+                }
+            };
+
+            const cleanups = [];
+
+            cleanups.push(window.electronAPI.onCompareProgress((data) => {
+                task.state.currentTest = data.current;
+                this.updateProgress(data.current, data.total);
+                this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.testGroup', { i: data.testIndex }) : `Test ${data.testIndex}`);
+            }));
+
+            cleanups.push(window.electronAPI.onCompareError((error) => {
+                task.state.errorResult = {
+                    testNumber: error.testNumber,
+                    input: error.input || '',
+                    stdOutput: error.stdOutput || '',
+                    testOutput: error.testOutput || '',
+                    errorType: error.type,
+                    errorMessage: error.message
+                };
+                task.state.mode = 'error';
+                this.renderIfActive(task);
+            }));
+
+            cleanups.push(window.electronAPI.onCompareComplete((result) => {
+                if (result.warning) {
+                    task.state.warningMessage = result.warning;
+                }
+                if (task.state.mode === 'running') {
+                    task.state.mode = 'complete';
+                    logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
+                }
+                this.renderIfActive(task);
+            }));
+
+            try {
+                await window.electronAPI.startCompare(config);
+            } finally {
+                cleanups.forEach(fn => { try { fn(); } catch(_) {} });
+            }
         } finally {
             task.state.isRunning = false;
             if (task.state.mode === 'running') {
@@ -1285,6 +1337,7 @@ class CodeComparer {
             task.state.mode = 'idle';
         }
         this.updateUIForTask(task);
+        window.electronAPI.stopCompare().catch(() => {});
     }
 
     resetComparison() {

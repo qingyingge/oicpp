@@ -7,6 +7,32 @@ class Logger {
         this.initialized = false;
         this.logDir = path.join(os.homedir(), '.oicpp', 'logs');
         this.logFile = null;
+        this._buffer = [];
+        this._batchSize = 200;
+        this._flushScheduled = false;
+    }
+
+    _scheduleFlush() {
+        if (this._flushScheduled) return;
+        this._flushScheduled = true;
+        setImmediate(() => {
+            this._flushScheduled = false;
+            this._flush();
+        });
+    }
+
+    _flush() {
+        if (this._buffer.length === 0) return;
+        const lines = this._buffer;
+        this._buffer = [];
+        try {
+            if (!this.initialized) this.init();
+            if (this.logFile) fs.appendFileSync(this.logFile, lines.join(''), 'utf8');
+        } catch (e) { }
+    }
+
+    flushSync() {
+        this._flush();
     }
 
     static timestampFilename(date = new Date()) {
@@ -152,10 +178,11 @@ class Logger {
         const ts = `${d8.getFullYear()}-${pad(d8.getMonth() + 1)}-${pad(d8.getDate())} ${pad(d8.getHours())}:${pad(d8.getMinutes())}:${pad(d8.getSeconds())}.${pad(d8.getMilliseconds(), 3)}+08:00`;
         const line = `[${ts}] [${level.toUpperCase()}] ${Logger.stringifyArgs(args, { level })}\n`;
 
-        try {
-            if (!this.initialized) this.init();
-            if (this.logFile) fs.appendFileSync(this.logFile, line, 'utf8');
-        } catch (e) {
+        this._buffer.push(line);
+        if (this._buffer.length >= this._batchSize) {
+            this._flush();
+        } else {
+            this._scheduleFlush();
         }
     }
 

@@ -497,6 +497,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runExecutable: (options) => ipcRenderer.invoke('run-executable', options),
     runProgram: (executablePath, input, timeLimit) => ipcRenderer.invoke('run-program', executablePath, input, timeLimit),
 
+    startCompare: (config) => ipcRenderer.invoke('compare-start', config),
+    stopCompare: () => ipcRenderer.invoke('compare-stop'),
+    onCompareProgress: (cb) => { ipcRenderer.on('compare-progress', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-progress'); },
+    onCompareError: (cb) => { ipcRenderer.on('compare-error', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-error'); },
+    onCompareComplete: (cb) => { ipcRenderer.on('compare-complete', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-complete'); },
+
     readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
     renameFile: (oldPath, newPath) => ipcRenderer.invoke('rename-file', oldPath, newPath),
     deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),

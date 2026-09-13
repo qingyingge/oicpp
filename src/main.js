@@ -1195,6 +1195,7 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, p) => {
     try { logger.logerror('[unhandledRejection]', { reason, promise: String(p) }); } catch (_) { }
 });
+process.on('exit', () => { try { logger.flushSync(); } catch (_) { } });
 
 global.logInfo = (...args) => { try { logger.logInfo(...args); } catch (_) { } };
 global.logwarn = (...args) => { try { logger.logwarn(...args); } catch (_) { } };
@@ -5947,6 +5948,44 @@ function setupIPC() {
             return null;
         }
     }
+
+    // ─── HPC Compare Engine ───────────────────────────────
+    let activeEngine = null;
+
+    ipcMain.handle('compare-start', async (event, config) => {
+        if (activeEngine) {
+            try { await activeEngine.stop(); } catch(_) {}
+            activeEngine = null;
+        }
+        const { CompareEngineV2 } = require('./main-process/compare-engine-v2');
+        const engine = new CompareEngineV2();
+        activeEngine = engine;
+
+        engine.on('progress', (data) => {
+            try { mainWindow?.webContents.send('compare-progress', data); } catch(_) {}
+        });
+        engine.on('error', (data) => {
+            try { mainWindow?.webContents.send('compare-error', data); } catch(_) {}
+        });
+        engine.on('complete', (data) => {
+            try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
+            activeEngine = null;
+        });
+
+        engine.start(config).catch((err) => {
+            try { mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: err.message }); } catch(_) {}
+            activeEngine = null;
+        });
+
+        return { started: true };
+    });
+
+    ipcMain.handle('compare-stop', async () => {
+        if (activeEngine) {
+            try { await activeEngine.stop(); } catch(_) {}
+        }
+        return { stopped: true };
+    });
 }
 
 function normalizeDroppedPath(filePath) {
