@@ -1,0 +1,11 @@
+{"ts":1789256543946,"scenario":"Sort","thread":4,"testIndex":9,"ok":true,"kind":"ok","message":"","genMs":48,"stdMs":137,"testMs":137,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256543970,"scenario":"Sort","thread":3,"testIndex":7,"ok":true,"kind":"ok","message":"","genMs":62,"stdMs":141,"testMs":141,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256543982,"scenario":"Sort","thread":2,"testIndex":5,"ok":true,"kind":"ok","message":"","genMs":76,"stdMs":138,"testMs":138,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256543993,"scenario":"Sort","thread":1,"testIndex":3,"ok":true,"kind":"ok","message":"","genMs":85,"stdMs":122,"testMs":122,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544036,"scenario":"Sort","thread":0,"testIndex":1,"ok":true,"kind":"ok","message":"","genMs":61,"stdMs":169,"testMs":169,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544117,"scenario":"Sort","thread":4,"testIndex":10,"ok":true,"kind":"ok","message":"","genMs":63,"stdMs":110,"testMs":110,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544157,"scenario":"Sort","thread":2,"testIndex":6,"ok":true,"kind":"ok","message":"","genMs":51,"stdMs":122,"testMs":122,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544157,"scenario":"Sort","thread":3,"testIndex":8,"ok":true,"kind":"ok","message":"","genMs":51,"stdMs":133,"testMs":133,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544189,"scenario":"Sort","thread":1,"testIndex":4,"ok":true,"kind":"ok","message":"","genMs":64,"stdMs":131,"testMs":131,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"ts":1789256544215,"scenario":"Sort","thread":0,"testIndex":2,"ok":true,"kind":"ok","message":"","genMs":86,"stdMs":92,"testMs":92,"genLen":1968923,"stdOutput":"","testOutput":""}
+{"type":"summary","engine":"v6","scenario":"Sort","threads":8,"total":10,"wallMs":734,"tps":13.62,"ok":10,"failed":0,"failByKind":{},"genMsAvg":64.7,"stdMsAvg":129.5,"testMsAvg":129.5,"genLenAvg":1968923}

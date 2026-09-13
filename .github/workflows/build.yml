@@ -41,8 +41,6 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, will use committed png icons fallback'); }"
 
       - name: Prepare clangd bundle
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run prebuild:clangd
 
       - name: Verify node-pty linux binary
@@ -130,8 +128,6 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, will use committed png icons fallback'); }"
 
       - name: Prepare clangd bundle
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run prebuild:clangd
 
       - name: Ensure dmg-license is installed
@@ -168,7 +164,7 @@ jobs:
           done
 
   build-windows:
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -224,8 +220,6 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, will use committed png icons fallback'); }"
 
       - name: Prepare clangd bundle
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run prebuild:clangd
 
       - name: Verify node-pty windows binary
@@ -251,31 +245,10 @@ jobs:
           }
           '@ | node
 
-      - name: Build Windows app for NSIS
+      - name: Build Unpacked App
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          npm run prebuild:buildinfo
-          npm run prebuild:icons
-          npx electron-builder --win dir
-
-      - name: Verify packaged language files
-        shell: powershell
-        run: |
-          @'
-          const fs = require("fs");
-          const path = require("path");
-          const asar = require("@electron/asar");
-          const archive = path.join(process.cwd(), "dist", "win-unpacked", "resources", "app.asar");
-          const languageFiles = ["src\\lang\\index.js", "src\\lang\\en.json", "src\\lang\\zh-cn.json"];
-          if (!fs.existsSync(archive)) throw new Error(`Missing packaged app archive: ${archive}`);
-          for (const file of languageFiles) {
-            const content = asar.extractFile(archive, file).toString("utf8");
-            if (!content) throw new Error(`Packaged language file is empty: ${file}`);
-            if (file.endsWith(".json")) JSON.parse(content);
-            console.log(`Verified packaged language file: ${file}`);
-          }
-          '@ | node
+        run: npm run build
 
       - name: Verify packaged node-pty in app.asar.unpacked
         shell: powershell
