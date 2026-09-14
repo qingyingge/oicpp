@@ -491,10 +491,13 @@
     "tle": "TLE",
     "re": "RE",
     "ce": "CE",
+    "mle": "MLE",
     "ole": "OLE",
     "group": "组",
     "timeLimit": "时限:",
+    "memoryLimit": "内存:",
     "ms": "ms",
+    "mb": "MB",
     "inputFile": "输入文件:",
     "outputFile": "输出文件:",
     "freopenInputPlaceholder": "如 sample.in",
@@ -534,7 +537,11 @@
     "expandConfirmMsg": "当前输出大小约 {size} MB。<br><br>过大的输出可能导致界面或进程无响应，是否仍要展开完整输出？",
     "expandConfirmTitle": "展开完整输出确认",
     "spjPathEmpty": "SPJ 文件路径为空",
-    "spjContentEmpty": "SPJ 文件内容为空"
+    "spjContentEmpty": "SPJ 文件内容为空",
+    "interactiveMode": "交互题模式",
+    "grader": "grader.cpp",
+    "graderPathEmpty": "grader.cpp 文件路径为空",
+    "graderContentEmpty": "grader.cpp 文件内容为空"
   },
   "compare": {
     "title": "代码对拍器",

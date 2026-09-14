@@ -1,6 +1,6 @@
 {
   "name": "oicpp-ide",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "OICPP IDE for competitive programming",
   "author": {
     "name": "mywwzh",
@@ -81,7 +81,13 @@
         }
       ]
     },
-    "mac": {
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "selectPerMachineByDefault": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true
+    },    "mac": {
       "icon": "build/icons/png",
       "extraResources": [
         {

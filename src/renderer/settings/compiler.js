@@ -496,6 +496,7 @@ class CompilerSettings {
                         ${isDownloaded ? '<span class="status downloaded-status">' + (window.i18n ? window.i18n.t('compiler.downloaded') : 'Downloaded') + '</span>' : ''}
                     </div>
                 `;
+
                 
                 this.addCompilerItemListeners(compilerDiv, compiler);
                 
@@ -508,9 +509,16 @@ class CompilerSettings {
                 <div class="error-message">
                     <p>${window.i18n ? window.i18n.t('compiler.networkError') : 'Network error: could not fetch compiler list'}</p>
                     <p class="error-detail">${error.message}</p>
-                    <button class="retry-btn" onclick="this.loadAvailableCompilers()" data-i18n="compiler.retry">Retry</button>
+                    <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
                 </div>
             `;
+            const retryBtn = compilerList.querySelector('.retry-btn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.loadAvailableCompilers();
+                });
+            }
         }
     }
 
@@ -1188,13 +1196,15 @@ class CompilerSettings {
                     : `https://oicpp.mywwzh.top${testlib.downloadUrl}`;
                 
                 const versionLabel = window.i18n ? window.i18n.t('compiler.versionSelected').split(' ')[0] : 'Version:';
-                const sizeLabel = window.i18n ? window.i18n.t('compiler.testlibSize', { size: '' }) : 'Size:';
+                const sizeLabel = window.i18n
+                    ? window.i18n.t('compiler.testlibSize', { size: testlib.file_size_mb })
+                    : 'Size: ' + testlib.file_size_mb + 'MB';
                 testlibDiv.innerHTML = `
                     <div class="compiler-info">
                         <h4>${testlib.name}</h4>
                         <p>${versionLabel} ${testlib.version}</p>
                         <p>${testlib.description}</p>
-                        <span class="platform">${sizeLabel} ${testlib.file_size_mb}MB</span>
+                        <span class="platform">${sizeLabel}</span>
                     </div>
                     <div class="compiler-actions">
                         ${isSelected ? 
@@ -1206,6 +1216,7 @@ class CompilerSettings {
                         ${isDownloaded ? '<span class="status downloaded-status">' + (window.i18n ? window.i18n.t('compiler.downloaded') : 'Downloaded') + '</span>' : ''}
                     </div>
                 `;
+
                 
                 this.addTestlibItemListeners(testlibDiv, testlib);
                 testlibList.appendChild(testlibDiv);
@@ -1217,9 +1228,16 @@ class CompilerSettings {
                 <div class="error-message">
                     <p>${window.i18n ? window.i18n.t('compiler.networkError') : 'Network error: could not fetch list'}</p>
                     <p class="error-detail">${error.message}</p>
-                    <button class="retry-btn" onclick="this.loadAvailableTestlibs()" data-i18n="compiler.retry">Retry</button>
+                    <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
                 </div>
             `;
+            const retryBtn = testlibList.querySelector('.retry-btn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.loadAvailableTestlibs();
+                });
+            }
         }
     }
     

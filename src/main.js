@@ -22,7 +22,7 @@ const IntegratedTerminalManager = require('./terminal-manager');
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.5.4';
 const SAVE_ALL_TIMEOUT = 4000;
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
@@ -2271,7 +2271,7 @@ ipcMain.handle('get-build-info', () => {
     } catch (error) {
         logger.logwarn('读取构建信息失败:', error);
     }
-    return { version: '1.5.3 (v48)', buildTime: '未知', author: 'mywwzh' };
+    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh' };
 });
 
 function requestSaveAllAndClose(context = '关闭窗口') {
@@ -4552,7 +4552,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('run-program', async (event, executablePathOrOptions, input, timeLimit) => {
+    ipcMain.handle('run-program', async (event, executablePathOrOptions, input, timeLimit, memoryLimit) => {
         const { spawn } = require('child_process');
 
         let executablePath, args = [], workingDirectory = null;
@@ -4562,6 +4562,9 @@ function setupIPC() {
             args = executablePathOrOptions.args || [];
             workingDirectory = executablePathOrOptions.workingDirectory;
             skipPreKill = !!executablePathOrOptions.skipPreKill;
+            if (executablePathOrOptions.memoryLimit !== undefined) {
+                memoryLimit = executablePathOrOptions.memoryLimit;
+            }
         } else {
             executablePath = executablePathOrOptions;
         }
@@ -4619,6 +4622,7 @@ function setupIPC() {
                 args,
                 cwd: workingDirectory || null,
                 timeLimitMs: Number(timeLimit) || 0,
+                memoryLimitMb: Number(memoryLimit) || 0,
                 inputBytes: input ? Buffer.byteLength(input, 'utf8') : 0
             });
         } catch (_) { }
@@ -4658,8 +4662,87 @@ function setupIPC() {
             let observedOutputBytes = 0;
             let outputLimitExceeded = false;
             let outputLimitTriggered = false;
+            let peakMemoryBytes = 0;
+            let memoryLimitExceeded = false;
+            let memoryLimitTriggered = false;
+            let memoryTimer = null;
+            let memorySamplePromise = null;
             let timeout = false;
             let startTime = null;
+
+            const parsedMemoryLimit = Number(memoryLimit);
+            const effectiveMemoryLimitMb = Number.isFinite(parsedMemoryLimit) && parsedMemoryLimit > 0
+                ? parsedMemoryLimit
+                : 0;
+            const memoryLimitBytes = effectiveMemoryLimitMb > 0
+                ? effectiveMemoryLimitMb * 1024 * 1024
+                : 0;
+
+            const readMemoryBytes = () => new Promise((resolve) => {
+                const pid = childProcess?.pid;
+                if (!pid) return resolve(0);
+                if (process.platform === 'linux') {
+                    fs.readFile(`/proc/${pid}/status`, 'utf8', (error, content) => {
+                        if (error) return resolve(0);
+                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
+                        resolve(match ? Number(match[1]) * 1024 : 0);
+                    });
+                    return;
+                }
+                if (process.platform === 'win32') {
+                    const tasklist = spawn('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true });
+                    let output = '';
+                    tasklist.stdout.on('data', chunk => { output += chunk.toString(); });
+                    tasklist.on('close', () => {
+                        const match = output.match(/"([\d,.]+)\s*K"/i);
+                        resolve(match ? Number(match[1].replace(/[^\d]/g, '')) * 1024 : 0);
+                    });
+                    tasklist.on('error', () => resolve(0));
+                    return;
+                }
+                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
+                let output = '';
+                ps.stdout.on('data', chunk => { output += chunk.toString(); });
+                ps.on('close', () => resolve((Number(output.trim()) || 0) * 1024));
+                ps.on('error', () => resolve(0));
+            });
+
+            const sampleMemory = () => {
+                if (memorySamplePromise) {
+                    return memorySamplePromise;
+                }
+                memorySamplePromise = readMemoryBytes()
+                    .then((bytes) => {
+                        peakMemoryBytes = Math.max(peakMemoryBytes, bytes);
+                        if (memoryLimitBytes > 0 && bytes > memoryLimitBytes && !memoryLimitTriggered) {
+                            memoryLimitTriggered = true;
+                            memoryLimitExceeded = true;
+                            if (tleTimer) {
+                                clearTimeout(tleTimer);
+                            }
+                            if (killTimer) {
+                                clearTimeout(killTimer);
+                            }
+                            try {
+                                logWarn('[运行程序][MLE触发]', {
+                                    limitBytes: memoryLimitBytes,
+                                    observedBytes: bytes
+                                });
+                            } catch (_) { }
+                            try {
+                                if (childProcess && !childProcess.killed) {
+                                    childProcess.kill('SIGKILL');
+                                }
+                            } catch (e) {
+                                logError('[主进程-程序调试] 终止进程(内存限制)出错:', e?.message || String(e));
+                            }
+                        }
+                    })
+                    .finally(() => {
+                        memorySamplePromise = null;
+                    });
+                return memorySamplePromise;
+            };
 
             let effectiveTimeLimit = Number(timeLimit);
             const useTimeouts = Number.isFinite(effectiveTimeLimit) && effectiveTimeLimit > 0;
@@ -4683,7 +4766,7 @@ function setupIPC() {
             }, Math.floor(effectiveTimeLimit * 1.1)) : null; // 110%时杀进程
 
             const handleOutputLimit = (streamName) => {
-                if (outputLimitTriggered) {
+                if (outputLimitTriggered || memoryLimitExceeded) {
                     return;
                 }
                 outputLimitTriggered = true;
@@ -4736,6 +4819,8 @@ function setupIPC() {
 
             childProcess.on('spawn', () => {
                 startTime = performance.now();
+                sampleMemory();
+                memoryTimer = setInterval(sampleMemory, 200);
                 try { logInfo('[运行程序][启动] 子进程已启动'); } catch (_) { }
             });
 
@@ -4747,9 +4832,13 @@ function setupIPC() {
                 pushChunkWithLimit(data, stderrChunks, 'stderr');
             });
 
-            childProcess.on('close', (code) => {
+            childProcess.on('close', async (code) => {
                 if (tleTimer) clearTimeout(tleTimer);
                 if (killTimer) clearTimeout(killTimer);
+                if (memoryTimer) clearInterval(memoryTimer);
+                if (memorySamplePromise) {
+                    try { await memorySamplePromise; } catch (_) { }
+                }
                 const endTime = performance.now();
 
                 let executionTime = 0;
@@ -4780,6 +4869,15 @@ function setupIPC() {
                         finalOutput = notice;
                     }
                 }
+                if (memoryLimitExceeded) {
+                    const notice = '内存超过限制 (' + effectiveMemoryLimitMb + ' MB)，程序已被终止。';
+                    if (finalOutput) {
+                        finalOutput = finalOutput.endsWith('\n') ? finalOutput + notice : finalOutput + '\n' + notice;
+                    } else {
+                        finalOutput = notice;
+                    }
+                }
+
                 const effectiveExitCode = outputLimitExceeded ? (code ?? -3) : code;
                 const measuredTime = useTimeouts ? Math.max(0, Math.min(executionTime, effectiveTimeLimit + 100)) : Math.max(0, executionTime);
                 const timedOut = outputLimitExceeded ? false : (useTimeouts ? timeout : false);
@@ -4792,6 +4890,9 @@ function setupIPC() {
                     stdout: output,
                     stderr: errorOutput,
                     outputLimitExceeded,
+                    memoryLimitExceeded,
+                    memoryLimitBytes,
+                    memoryBytes: peakMemoryBytes,
                     outputLimitBytes: OUTPUT_LIMIT_BYTES,
                     capturedOutputBytes: combinedOutputBytes,
                     observedOutputBytes
@@ -4830,6 +4931,8 @@ function setupIPC() {
                     stdout: '',
                     stderr: error.message,
                     outputLimitExceeded: false,
+                    memoryLimitExceeded: false,
+                    memoryLimitBytes,
                     outputLimitBytes: OUTPUT_LIMIT_BYTES,
                     capturedOutputBytes: combinedOutputBytes,
                     observedOutputBytes
@@ -4843,6 +4946,281 @@ function setupIPC() {
                 childProcess.stdin.write(input);
             }
             childProcess.stdin.end();
+        });
+    });
+
+    ipcMain.handle('run-interactive', async (event, options = {}) => {
+        const { spawn } = require('child_process');
+        const contestantPath = options?.contestantExecutablePath;
+        const graderPath = options?.graderExecutablePath;
+        const inputFilePath = options?.inputFilePath;
+        const timeLimit = Number(options?.timeLimit);
+        const memoryLimit = Number(options?.memoryLimit);
+        if (!contestantPath || !graderPath || !inputFilePath || !fs.existsSync(inputFilePath)) {
+            throw new Error('交互题运行参数不完整');
+        }
+
+        const runtimeEnv = { ...process.env };
+        const compilerPath = settings.compilerPath || '';
+        if (compilerPath && fs.existsSync(compilerPath)) {
+            const compilerDir = path.dirname(compilerPath);
+            const compilerRoot = path.dirname(compilerDir);
+            const compilerPaths = [
+                compilerDir,
+                path.join(compilerRoot, 'bin'),
+                path.join(compilerRoot, 'mingw64', 'bin'),
+                path.join(compilerRoot, 'mingw32', 'bin')
+            ].filter(p => fs.existsSync(p));
+            if (compilerPaths.length > 0) {
+                runtimeEnv.PATH = [...compilerPaths, process.env.PATH].join(path.delimiter);
+            }
+        }
+
+        const spawnChild = (target, args, cwd) => spawn(
+            path.resolve(target),
+            Array.isArray(args) ? args : [],
+            {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: {
+                    ...runtimeEnv,
+                    OICPP_INTERACTIVE_INPUT: inputFilePath,
+                    OICPP_CONTESTANT_EXECUTABLE: contestantPath
+                },
+                cwd: cwd || undefined
+            }
+        );
+
+        return new Promise((resolve) => {
+            let contestant;
+            let grader;
+            try {
+                contestant = spawnChild(
+                    contestantPath,
+                    [],
+                    options?.contestantWorkingDirectory || path.dirname(path.resolve(contestantPath))
+                );
+                grader = spawnChild(
+                    graderPath,
+                    [inputFilePath],
+                    options?.graderWorkingDirectory || path.dirname(path.resolve(graderPath))
+                );
+            } catch (error) {
+                resolve({
+                    output: error?.message || String(error),
+                    time: 0,
+                    timeout: false,
+                    exitCode: -1,
+                    contestantExitCode: -1,
+                    graderExitCode: -1,
+                    stdout: '',
+                    stderr: error?.message || String(error),
+                    outputLimitExceeded: false,
+                    memoryLimitExceeded: false,
+                    memoryBytes: 0
+                });
+                return;
+            }
+
+            const contestantOut = [];
+            const contestantErr = [];
+            const graderOut = [];
+            const graderErr = [];
+            const outputLimitBytes = 256 * 1024 * 1024;
+            let capturedBytes = 0;
+            let observedBytes = 0;
+            let outputLimitExceeded = false;
+            let memoryLimitExceeded = false;
+            let peakMemoryBytes = 0;
+            let timeout = false;
+            let contestantClosed = false;
+            let graderClosed = false;
+            let contestantExitCode = null;
+            let graderExitCode = null;
+            let memoryTimer = null;
+            let memoryPromise = null;
+            let timeoutTimer = null;
+            let killTimer = null;
+            let settled = false;
+            let processError = '';
+            const startTime = performance.now();
+
+            const closeInput = stream => {
+                try {
+                    if (stream && !stream.destroyed && !stream.writableEnded) stream.end();
+                } catch (_) { }
+            };
+            const kill = child => {
+                try {
+                    if (child && !child.killed && child.exitCode === null) child.kill('SIGKILL');
+                } catch (_) { }
+            };
+            const terminate = () => {
+                closeInput(contestant?.stdin);
+                closeInput(grader?.stdin);
+                kill(contestant);
+                kill(grader);
+            };
+            const clearTimers = () => {
+                if (memoryTimer) clearInterval(memoryTimer);
+                if (timeoutTimer) clearTimeout(timeoutTimer);
+                if (killTimer) clearTimeout(killTimer);
+                memoryTimer = null;
+                timeoutTimer = null;
+                killTimer = null;
+            };
+
+            const readMemory = () => new Promise((done) => {
+                const pid = contestant?.pid;
+                if (!pid) return done(0);
+                if (process.platform === 'linux') {
+                    fs.readFile('/proc/' + pid + '/status', 'utf8', (error, content) => {
+                        if (error) return done(0);
+                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
+                        done(match ? Number(match[1]) * 1024 : 0);
+                    });
+                    return;
+                }
+                if (process.platform === 'win32') {
+                    const tasklist = spawn('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'], { windowsHide: true });
+                    let output = '';
+                    tasklist.stdout.on('data', chunk => { output += chunk.toString(); });
+                    tasklist.on('close', () => {
+                        const match = output.match(/([\d,.]+)\s*K/i);
+                        done(match ? Number(match[1].replace(/[^\d]/g, '')) * 1024 : 0);
+                    });
+                    tasklist.on('error', () => done(0));
+                    return;
+                }
+                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
+                let output = '';
+                ps.stdout.on('data', chunk => { output += chunk.toString(); });
+                ps.on('close', () => done((Number(output.trim()) || 0) * 1024));
+                ps.on('error', () => done(0));
+            });
+
+            const memoryLimitBytes = Number.isFinite(memoryLimit) && memoryLimit > 0
+                ? memoryLimit * 1024 * 1024
+                : 0;
+            const sampleMemory = () => {
+                if (memoryPromise) return memoryPromise;
+                memoryPromise = readMemory().then((bytes) => {
+                    peakMemoryBytes = Math.max(peakMemoryBytes, bytes);
+                    if (memoryLimitBytes > 0 && bytes > memoryLimitBytes && !memoryLimitExceeded) {
+                        memoryLimitExceeded = true;
+                        if (timeoutTimer) clearTimeout(timeoutTimer);
+                        if (killTimer) clearTimeout(killTimer);
+                        terminate();
+                    }
+                }).finally(() => {
+                    memoryPromise = null;
+                });
+                return memoryPromise;
+            };
+
+            const append = (chunk, target) => {
+                const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                observedBytes += buffer.length;
+                if (outputLimitExceeded) return;
+                const available = outputLimitBytes - capturedBytes;
+                if (available <= 0) {
+                    outputLimitExceeded = true;
+                    terminate();
+                    return;
+                }
+                target.push(buffer.slice(0, available));
+                capturedBytes += Math.min(buffer.length, available);
+                if (buffer.length > available) {
+                    outputLimitExceeded = true;
+                    terminate();
+                }
+            };
+            const forward = (data, targetProcess, targetChunks) => {
+                append(data, targetChunks);
+                if (outputLimitExceeded) return;
+                try {
+                    if (targetProcess?.stdin && !targetProcess.stdin.destroyed && !targetProcess.stdin.writableEnded) {
+                        targetProcess.stdin.write(data);
+                    }
+                } catch (_) { }
+            };
+            const decode = chunks => decodeBufferAuto(Buffer.concat(chunks));
+
+            const finish = async () => {
+                if (settled || !contestantClosed || !graderClosed) return;
+                settled = true;
+                clearTimers();
+                if (memoryPromise) {
+                    try { await memoryPromise; } catch (_) { }
+                }
+                const contestantStdout = decode(contestantOut);
+                const contestantStderr = decode(contestantErr);
+                const graderStdout = decode(graderOut);
+                const graderStderr = decode(graderErr);
+                const parts = [];
+                if (graderStdout) parts.push('[grader stdout]\n' + graderStdout);
+                if (contestantStdout) parts.push('[contestant stdout]\n' + contestantStdout);
+                if (graderStderr) parts.push('[grader stderr]\n' + graderStderr);
+                if (contestantStderr) parts.push('[contestant stderr]\n' + contestantStderr);
+                if (processError) parts.push(processError);
+                const elapsed = Math.round(performance.now() - startTime);
+                resolve({
+                    output: parts.join('\n'),
+                    time: elapsed,
+                    timeout: outputLimitExceeded || memoryLimitExceeded ? false : timeout,
+                    exitCode: contestantExitCode,
+                    contestantExitCode,
+                    graderExitCode,
+                    stdout: contestantStdout,
+                    stderr: [graderStderr, contestantStderr].filter(Boolean).join('\n'),
+                    graderStdout,
+                    graderStderr,
+                    outputLimitExceeded,
+                    outputLimitBytes,
+                    capturedOutputBytes: capturedBytes,
+                    observedOutputBytes: observedBytes,
+                    memoryLimitExceeded,
+                    memoryLimitBytes,
+                    memoryBytes: peakMemoryBytes
+                });
+            };
+
+            if (Number.isFinite(timeLimit) && timeLimit > 0) {
+                timeoutTimer = setTimeout(() => { timeout = true; }, timeLimit);
+                killTimer = setTimeout(terminate, Math.floor(timeLimit * 1.1));
+            }
+
+            contestant.stdout.on('data', data => forward(data, grader, contestantOut));
+            contestant.stderr.on('data', data => append(data, contestantErr));
+            grader.stdout.on('data', data => forward(data, contestant, graderOut));
+            grader.stderr.on('data', data => append(data, graderErr));
+            contestant.stdin.on('error', () => { });
+            grader.stdin.on('error', () => { });
+            contestant.on('error', error => {
+                processError = error?.message || String(error);
+                terminate();
+            });
+            grader.on('error', error => {
+                processError = error?.message || String(error);
+                terminate();
+            });
+            contestant.on('close', code => {
+                contestantClosed = true;
+                contestantExitCode = code;
+                closeInput(grader.stdin);
+                finish();
+            });
+            grader.on('close', code => {
+                graderClosed = true;
+                graderExitCode = code;
+                closeInput(contestant.stdin);
+                if (code !== 0 && !timeout && !memoryLimitExceeded && !outputLimitExceeded) {
+                    kill(contestant);
+                }
+                finish();
+            });
+
+            memoryTimer = setInterval(sampleMemory, 200);
+            sampleMemory();
         });
     });
 
@@ -7289,7 +7667,7 @@ function resetSettings(settingsType = null) {
 function exportSettings(filePath) {
     try {
         const exportData = {
-            version: '1.5.3 (v48)',
+            version: '1.5.4 (v49)',
             timestamp: new Date().toISOString(),
             settings: settings
         };

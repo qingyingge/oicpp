@@ -415,6 +415,25 @@ class TabManager {
         const groupId = tabBar.dataset.groupId || tabBar.closest('.editor-group')?.dataset.groupId || this.activeGroupId || 'group-1';
         tabBar.dataset.groupId = groupId;
         this.ensureTabBarDragHandlers(tabBar);
+        if (!tabBar._horizontalWheelHandlerBound) {
+            tabBar.addEventListener('wheel', (event) => {
+                if (event.altKey || event.ctrlKey || event.metaKey) {
+                    return;
+                }
+
+                const deltaY = Number(event.deltaY) || 0;
+                const deltaX = Number(event.deltaX) || 0;
+                const scrollDelta = Math.abs(deltaY) >= 1 ? deltaY : deltaX;
+                const maxScrollLeft = Math.max(0, tabBar.scrollWidth - tabBar.clientWidth);
+                if (!scrollDelta || maxScrollLeft <= 0) {
+                    return;
+                }
+
+                tabBar.scrollLeft += scrollDelta;
+                event.preventDefault();
+            }, { passive: false });
+            tabBar._horizontalWheelHandlerBound = true;
+        }
         tabBar._tabBarEventsBound = true;
     }
 
@@ -4728,7 +4747,7 @@ class TabManager {
                     <img class="welcome-logo-image" alt="OICPP Logo">
                     <div class="welcome-logo">OICPP IDE</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
-                    <div class="welcome-version">版本 1.5.3 (v48)</div>
+                    <div class="welcome-version">版本 1.5.4 (v49)</div>
                 </div>
                 
                 <div class="welcome-content">
@@ -5149,7 +5168,7 @@ void hello() {
                     <img class="welcome-logo-image" alt="OICPP Logo">
                     <div class="welcome-logo">OICPP IDE</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
-                    <div class="welcome-version">版本 1.5.3 (v48)</div>
+                    <div class="welcome-version">版本 1.5.4 (v49)</div>
                 </div>
                 
                 <div class="welcome-content">
@@ -5177,7 +5196,7 @@ void hello() {
                 
                 <div class="welcome-footer">
                     <p>OICPP IDE - 为 OIer 优化的 C++ 编程环境</p>
-                    <p>版本 1.5.3 (v48), Copyright (C) 2025 mywwzh.</p>
+                    <p>版本 1.5.4 (v49), Copyright (C) 2025 mywwzh.</p>
                 </div>
             </div>
         `;

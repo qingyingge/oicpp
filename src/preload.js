@@ -495,7 +495,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     compileFile: (options) => ipcRenderer.invoke('compile-file', options),
     runExecutable: (options) => ipcRenderer.invoke('run-executable', options),
-    runProgram: (executablePath, input, timeLimit) => ipcRenderer.invoke('run-program', executablePath, input, timeLimit),
+    runProgram: (executablePath, input, timeLimit, memoryLimit) => ipcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
+    runInteractive: (options) => ipcRenderer.invoke('run-interactive', options),
 
     startCompare: (config) => ipcRenderer.invoke('compare-start', config),
     stopCompare: () => ipcRenderer.invoke('compare-stop'),
