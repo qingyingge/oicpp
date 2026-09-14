@@ -1805,7 +1805,7 @@ function promptForPendingUpdateInstallQuit() {
     dialog.showMessageBox({
         type: 'info',
         title: '即将安装更新',
-        message: 'OICPP 将在退出后自动安装更新',
+        message: 'OICPP-Plus 将在退出后自动安装更新',
         detail: '请不要关闭电脑，安装过程将自动完成，预计需要 1-2 分钟。',
         buttons: ['继续退出并安装', '取消'],
         defaultId: 0,
@@ -6839,7 +6839,7 @@ async function checkForUpdates(isManual = false) {
                     type: 'info',
                     title: '检查更新',
                     message: '已有更新等待安装',
-                    detail: '请先退出 OICPP 完成当前更新安装，安装完成后再检查更新。'
+                    detail: '请先退出 OICPP-Plus 完成当前更新安装，安装完成后再检查更新。'
                 });
             }
             return;
@@ -7125,7 +7125,7 @@ async function downloadAndInstallUpdate(updateInfo = null, options = {}) {
                 await downloader.download(installerFile.downloadUrl, installerPath);
                 logInfo('[更新] 静默下载完成');
                 if (process.platform === 'win32') {
-                    notifyUser('更新下载完成', `版本 ${latestVersion} 已下载完成，关闭 OICPP 后将自动安装。`, 'success');
+                    notifyUser('更新下载完成', `版本 ${latestVersion} 已下载完成，关闭 OICPP-Plus 后将自动安装。`, 'success');
                 } else {
                     notifyUser('更新下载完成', `版本 ${latestVersion} 已下载完成，请手动运行安装包完成更新。`, 'success');
                 }
@@ -7228,7 +7228,7 @@ function runInstaller(installerPath) {
             dialog.showMessageBoxSync({
                 type: 'info',
                 title: '即将安装更新',
-                message: 'OICPP 将在退出后自动安装更新',
+                message: 'OICPP-Plus 将在退出后自动安装更新',
                 detail: '请不要关闭电脑，安装过程将自动完成，预计需要 1-2 分钟。',
                 buttons: ['确定'],
                 defaultId: 0
@@ -7314,7 +7314,7 @@ function checkPendingUpdate() {
         if (fs.existsSync(pendingUpdate.installerPath)) {
             if (process.platform === 'win32') {
                 armPendingUpdateSilentInstallOnQuit('启动恢复待安装更新');
-                notifyUser('更新已准备就绪', `版本 ${pendingUpdate.version || ''} 将在退出 OICPP 时自动安装。`, 'info');
+                notifyUser('更新已准备就绪', `版本 ${pendingUpdate.version || ''} 将在退出 OICPP-Plus 时自动安装。`, 'info');
             } else {
                 setTimeout(() => {
                     promptLinuxManualInstall(pendingUpdate);

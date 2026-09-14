@@ -4744,7 +4744,7 @@ class TabManager {
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
-                    <img class="welcome-logo-image" alt="OICPP Logo">
+                    <img class="welcome-logo-image" alt="OICPP-Plus Logo">
                     <div class="welcome-logo">OICPP-Plus</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
                     <div class="welcome-version">版本 1.5.4 (v49)</div>
@@ -5165,7 +5165,7 @@ void hello() {
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
-                    <img class="welcome-logo-image" alt="OICPP Logo">
+                    <img class="welcome-logo-image" alt="OICPP-Plus Logo">
                     <div class="welcome-logo">OICPP-Plus</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
                     <div class="welcome-version">版本 1.5.4 (v49)</div>

@@ -1,4 +1,4 @@
-﻿class OICPPApp {
+class OICPPApp {
     constructor() {
         this.currentFile = null;
         this.files = new Map();
@@ -55,7 +55,7 @@
 
     async init() {
         try {
-            logInfo('开始初始化 OICPP App...');
+            logInfo('开始初始化 OICPP-Plus App...');
             if (typeof MonacoEditorManager !== 'undefined') {
                 this.editorManager = new MonacoEditorManager();
                 window.editorManager = this.editorManager;
@@ -110,9 +110,9 @@
             // 监听 Monaco 标记变化，实时更新状态栏
             this._setupMarkerChangeListener();
             
-            logInfo('OICPP App 初始化完成');
+            logInfo('OICPP-Plus App 初始化完成');
         } catch (error) {
-            logError('OICPP App 初始化失败', error);
+            logError('OICPP-Plus App 初始化失败', error);
         }
     }
 
@@ -178,7 +178,7 @@
                     const blockedAction = menuItem.dataset.action;
                     if (blockedAction === 'check-update') {
                         if (this.updateDownloadState.pendingInstall) {
-                            this.showMessage(window.i18n ? window.i18n.t('message.updatePendingInstall') : '已有更新等待安装，请先退出 OICPP 完成安装', 'info');
+                            this.showMessage(window.i18n ? window.i18n.t('message.updatePendingInstall') : '已有更新等待安装，请先退出 OICPP-Plus 完成安装', 'info');
                             return;
                         }
                         if (this.updateDownloadState.autoChecking) {
@@ -498,7 +498,7 @@
             menuItem.classList.add('disabled');
             menuItem.setAttribute('aria-disabled', 'true');
             if (pendingInstall) {
-                menuItem.setAttribute('title', this.t('message.updatePendingInstall', null, 'An update is ready to install. Quit OICPP to finish installation.'));
+                menuItem.setAttribute('title', this.t('message.updatePendingInstall', null, 'An update is ready to install. Quit OICPP-Plus to finish installation.'));
             } else if (autoChecking) {
                 menuItem.setAttribute('title', this.t('message.updateAutoChecking', null, 'The startup update check is in progress.'));
             } else {

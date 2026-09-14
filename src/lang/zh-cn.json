@@ -218,7 +218,7 @@
     "runAllSamples": "运行所有样例"
   },
   "message": {
-    "updatePendingInstall": "已有更新等待安装，请先退出 OICPP 完成安装",
+    "updatePendingInstall": "已有更新等待安装，请先退出 OICPP-Plus 完成安装",
     "updateAutoChecking": "正在执行启动自动检查，请稍后再手动检查更新",
     "updateDownloading": "更新正在后台下载{version}，当前进度 {progress}%",
     "updateChecking": "正在检查更新，请稍候...",
