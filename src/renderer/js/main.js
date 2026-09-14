@@ -3415,7 +3415,7 @@ ${data.message || '程序已加载，等待开始执行'}
             <div class="about-dialog">
                 <div class="about-header">
                     <div class="about-logo">
-                        <img id="feedback-dialog-icon" src="" width="48" height="48" alt="OICPP IDE">
+                        <img id="feedback-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
                     <h2>${t('feedback.title', null, 'Feedback')}</h2>
                 </div>
@@ -3744,9 +3744,9 @@ ${data.message || '程序已加载，等待开始执行'}
             <div class="about-dialog">
                 <div class="about-header">
                     <div class="about-logo">
-                        <img id="about-dialog-icon" src="" width="48" height="48" alt="OICPP IDE">
+                        <img id="about-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
-                    <h2>${this.t('app.about', null, 'About OICPP IDE')}</h2>
+                    <h2>${this.t('app.about', null, 'About OICPP-Plus')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="about-info">
@@ -3819,7 +3819,7 @@ ${data.message || '程序已加载，等待开始执行'}
                     <h2>${t('openSource.title', null, 'Open Source Licenses')}</h2>
                 </div>
                 <div class="about-content oss-content">
-                    <p class="oss-intro">${t('openSource.intro', null, 'OICPP IDE uses the following open-source software. We thank their developers and contributors.')}</p>
+                    <p class="oss-intro">${t('openSource.intro', null, 'OICPP-Plus uses the following open-source software. We thank their developers and contributors.')}</p>
                     <div class="oss-table-wrap">
                         <table class="oss-table">
                             <thead>

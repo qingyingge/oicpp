@@ -6,8 +6,8 @@
     "version": "1.0"
   },
   "app": {
-    "title": "OICPP IDE",
-    "about": "About OICPP IDE",
+    "title": "OICPP-Plus",
+    "about": "About OICPP-Plus",
     "version": "Version",
     "buildTime": "Build Time",
     "developer": "Developer",
@@ -816,7 +816,7 @@
   },
   "openSource": {
     "title": "Open Source Licenses",
-    "intro": "OICPP IDE uses the following open-source software. We thank their developers and contributors.",
+    "intro": "OICPP-Plus uses the following open-source software. We thank their developers and contributors.",
     "name": "Name",
     "license": "License",
     "projectUrl": "Project URL"

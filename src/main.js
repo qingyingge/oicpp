@@ -905,9 +905,9 @@ const terminalManager = new IntegratedTerminalManager({
 });
 
 const AUTH_BASE = 'https://auth.mywwzh.top';
-const AUTH_LOGIN_PATH = '/oicpp_ide_login';
+const AUTH_LOGIN_PATH = '/oicpp_plus_login';
 const AUTH_VERIFY_PATH = '/api/verify_token';
-const AUTH_SERVICE = 'oicpp-ide';
+const AUTH_SERVICE = 'oicpp-plus';
 const IDE_LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 let ideLoginServer = null;
@@ -1187,7 +1187,7 @@ function startIdeLoginFlow() {
 }
 
 logger.init();
-logger.logInfo('OICPP IDE 启动');
+logger.logInfo('OICPP-Plus 启动');
 
 process.on('uncaughtException', (err) => {
     try { logger.logerror('[uncaughtException]', err); } catch (_) { }
@@ -1776,7 +1776,7 @@ function showPostInstallNoticeIfNeeded() {
             dialog.showMessageBox(mainWindow, {
                 type: 'info',
                 title: '更新完成',
-                message: `OICPP IDE 已更新到 ${APP_VERSION}`,
+                message: `OICPP-Plus 已更新到 ${APP_VERSION}`,
                 detail
             });
         } catch (_) { }
@@ -1830,7 +1830,7 @@ function promptForPendingUpdateInstallQuit() {
 }
 
 function notifyUser(title, body, level = 'info') {
-    const safeTitle = String(title || 'OICPP IDE');
+    const safeTitle = String(title || 'OICPP-Plus');
     const safeBody = String(body || '');
     if (mainWindow && !mainWindow.isDestroyed()) {
         try {
@@ -9085,7 +9085,7 @@ app.on('open-file', (event, filePath) => {
     }
 });
 
-logInfo('OICPP IDE 主进程启动完成');
+logInfo('OICPP-Plus 主进程启动完成');
 
 
 

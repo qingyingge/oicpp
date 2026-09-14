@@ -1,4 +1,4 @@
-<h1 align="center">OICPP IDE</h1>
+<h1 align="center">OICPP-Plus IDE</h1>
 
 <p align="center">
   <a href="https://github.com/mywwzh/oicpp/stargazers"><img src="https://img.shields.io/github/stars/mywwzh/oicpp.svg?style=for-the-badge&new=1" alt="Stargazers"></a>
@@ -12,10 +12,9 @@
   <img src="https://img.shields.io/badge/Monaco_Editor-0.52+-007ACC?style=flat&logo=visual-studio-code&logoColor=white" alt="Monaco Editor"/>
 </p>
 <br>
-<p>OICPP IDE 起源于一个退役高中 OIer 对信息学竞赛的热爱与对编程工具的思考。</p>
+<p>OICPP IDE Plus 也起源于一个现役初中 OIer 对信息学竞赛的热爱与对编程工具的思考。</p>
 
-<p>我们采访了 Genius_Star、__Cby___、水星湖 等现役 OIer，了解了更多需求， 专门打造了这款针对性极强的集成开发环境。
-从代码编写到调试测试，从算法验证到性能优化，OICPP IDE 力求在每一个环节都能为选手提供最大的便利， 让大家能够更专注于算法思维的培养和编程技能的提升</p>
+<p>OICPP-Plus 在保持与 OICPP 功能完全对齐的基础上，对性能、安全性、稳定性和开发者体验做了进一步提升。</p>
 <br>
 
 ## 支持的功能

@@ -799,7 +799,7 @@
   },
   "openSource": {
     "title": "开源软件使用声明",
-    "intro": "OICPP IDE 使用了以下开源软件，在此向这些项目的开发者和贡献者表示感谢。",
+    "intro": "OICPP-Plus 使用了以下开源软件，在此向这些项目的开发者和贡献者表示感谢。",
     "name": "名称",
     "license": "许可证",
     "projectUrl": "项目地址"
@@ -877,8 +877,8 @@
     "springFestivalButton": "开工！"
   },
   "app": {
-    "title": "OICPP IDE",
-    "about": "关于 OICPP IDE",
+    "title": "OICPP-Plus",
+    "about": "关于 OICPP-Plus",
     "version": "版本",
     "buildTime": "构建时间",
     "developer": "开发者",

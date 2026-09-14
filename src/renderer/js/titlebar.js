@@ -1,7 +1,7 @@
 class TitlebarManager {
     constructor() {
         this.titlebar = null;
-        this.currentTitle = 'OICPP IDE';
+        this.currentTitle = 'OICPP-Plus';
         this.isMaximized = false;
         this._closeConfirmInProgress = false;
         this.isMacPlatform = this.detectMacPlatform();

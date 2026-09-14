@@ -1,7 +1,7 @@
 /**
  * Language Manager (i18n)
  *
- * Provides multi-language support for the OICPP IDE.
+ * Provides multi-language support for the OICPP-Plus.
  * Usage:
  *   const lang = require('./lang');
  *   lang.setLanguage('en');

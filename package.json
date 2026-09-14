@@ -1,7 +1,7 @@
 {
-  "name": "oicpp-ide",
+  "name": "oicpp-plus",
   "version": "1.5.4",
-  "description": "OICPP IDE for competitive programming",
+  "description": "OICPP-Plus for competitive programming",
   "author": {
     "name": "mywwzh",
     "email": "mywwzh@163.com"
@@ -52,7 +52,7 @@
   },
   "build": {
     "appId": "com.oicpp.ide",
-    "productName": "OICPP IDE",
+    "productName": "OICPP-Plus",
     "directories": {
       "output": "dist"
     },

@@ -4745,7 +4745,7 @@ class TabManager {
             <div class="welcome-page">
                 <div class="welcome-header">
                     <img class="welcome-logo-image" alt="OICPP Logo">
-                    <div class="welcome-logo">OICPP IDE</div>
+                    <div class="welcome-logo">OICPP-Plus</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
                     <div class="welcome-version">版本 1.5.4 (v49)</div>
                 </div>
@@ -4771,7 +4771,7 @@ class TabManager {
                 </div>
                 
                 <div class="welcome-footer">
-                    <p>OICPP IDE - 为竞赛编程而生</p>
+                    <p>OICPP-Plus - 为竞赛编程而生</p>
                     <p><a href="#">使用文档</a> | <a href="#">快捷键</a> | <a href="#">关于</a></p>
                 </div>
             </div>
@@ -5166,7 +5166,7 @@ void hello() {
             <div class="welcome-page">
                 <div class="welcome-header">
                     <img class="welcome-logo-image" alt="OICPP Logo">
-                    <div class="welcome-logo">OICPP IDE</div>
+                    <div class="welcome-logo">OICPP-Plus</div>
                     <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
                     <div class="welcome-version">版本 1.5.4 (v49)</div>
                 </div>
@@ -5195,7 +5195,7 @@ void hello() {
                 </div>
                 
                 <div class="welcome-footer">
-                    <p>OICPP IDE - 为 OIer 优化的 C++ 编程环境</p>
+                    <p>OICPP-Plus - 为 OIer 优化的 C++ 编程环境</p>
                     <p>版本 1.5.4 (v49), Copyright (C) 2025 mywwzh.</p>
                 </div>
             </div>
