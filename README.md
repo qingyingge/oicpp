@@ -1,10 +1,8 @@
-<h1 align="center">OICPP-Plus IDE</h1>
-
 <p align="center">
-  <a href="https://github.com/mywwzh/oicpp/stargazers"><img src="https://img.shields.io/github/stars/mywwzh/oicpp.svg?style=for-the-badge&new=1" alt="Stargazers"></a>
-  <a href="https://github.com/mywwzh/oicpp/issues"><img src="https://img.shields.io/github/issues/mywwzh/oicpp.svg?style=for-the-badge&new=1" alt="Issues"></a>
-  <a href="https://github.com/mywwzh/oicpp/network/members"><img src="https://img.shields.io/github/forks/mywwzh/oicpp.svg?style=for-the-badge&new=1" alt="Forks"></a>
-  <a href="https://github.com/mywwzh/oicpp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/mywwzh/oicpp.svg?style=for-the-badge&new=1" alt="License"></a>
+  <a href="https://github.com/qingyingge/oicpp-plus/stargazers"><img src="https://img.shields.io/github/stars/qingyingge/oicpp-plus.svg?style=for-the-badge&new=1" alt="Stargazers"></a>
+  <a href="https://github.com/qingyingge/oicpp-plus/issues"><img src="https://img.shields.io/github/issues/qingyingge/oicpp-plus.svg?style=for-the-badge&new=1" alt="Issues"></a>
+  <a href="https://github.com/qingyingge/oicpp-plus/network/members"><img src="https://img.shields.io/github/forks/qingyingge/oicpp-plus.svg?style=for-the-badge&new=1" alt="Forks"></a>
+  <a href="https://github.com/qingyingge/oicpp-plus/blob/main/LICENSE"><img src="https://img.shields.io/github/license/qingyingge/oicpp-plus.svg?style=for-the-badge&new=1" alt="License"></a>
   <br>
   <img src="https://img.shields.io/badge/Electron-37.2+-47848F?style=flat&logo=electron&logoColor=white" alt="Electron"/> 
   <img src="https://img.shields.io/badge/Node.js-20+-339933?style=flat&logo=node.js&logoColor=white" alt="Node.js"/> 
@@ -12,7 +10,7 @@
   <img src="https://img.shields.io/badge/Monaco_Editor-0.52+-007ACC?style=flat&logo=visual-studio-code&logoColor=white" alt="Monaco Editor"/>
 </p>
 <br>
-<p>OICPP IDE Plus 也起源于一个现役初中 OIer 对信息学竞赛的热爱与对编程工具的思考。</p>
+<p>OICPP-Plus IDE 也起源于一个现役初中 OIer 对信息学竞赛的热爱与对编程工具的思考。</p>
 
 <p>OICPP-Plus 在保持与 OICPP 功能完全对齐的基础上，对性能、安全性、稳定性和开发者体验做了进一步提升。</p>
 <br>
@@ -44,12 +42,12 @@
 
 ## 下载
 
-您可以在[官网](https://oicpp.mywwzh.top)下载或在右侧 release 中下载最新版本安装包。
+您可以在[右侧 release](https://github.com/qingyingge/oicpp-plus/releases) 中下载最新版本安装包。
 
 ## 反馈建议 📢
 
-- 可以提交 [issue](https://github.com/mywwzh/oicpp/issues)
-  或者 [pull request](https://github.com/mywwzh/oicpp/pulls)。
+- 可以提交 [issue](https://github.com/qingyingge/oicpp-plus/issues)
+  或者 [pull request](https://github.com/qingyingge/oicpp-plus/pulls)。
 
 ## 许可证 📝
 
@@ -57,4 +55,4 @@
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mywwzh/oicpp&type=Date)](https://star-history.com/#mywwzh/oicpp&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=qingyingge/oicpp-plus&type=Date)](https://star-history.com/#qingyingge/oicpp-plus&Date)
