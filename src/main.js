@@ -2271,7 +2271,7 @@ ipcMain.handle('get-build-info', () => {
     } catch (error) {
         logger.logwarn('读取构建信息失败:', error);
     }
-    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh' };
+    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'qingyingge' };
 });
 
 function requestSaveAllAndClose(context = '关闭窗口') {
@@ -6833,6 +6833,17 @@ function openBackupSettings() {
 
 async function checkForUpdates(isManual = false) {
     try {
+        // OICPP-Plus: 暂未提供独立更新服务，禁用更新检查（避免误用官方服务器被覆盖）
+        if (isManual) {
+            dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: '检查更新',
+                message: '更新检查功能暂不可用',
+                detail: 'OICPP-Plus 暂时没有独立的更新服务。请前往 GitHub Releases 页面下载新版本：https://github.com/qingyingge/oicpp-plus/releases'
+            });
+        }
+        return;
+
         if (hasPendingUpdateToInstall()) {
             if (isManual) {
                 dialog.showMessageBox(mainWindow, {

@@ -51,7 +51,7 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "build": {
-    "appId": "com.oicpp.ide",
+    "appId": "com.oicpp.plus.ide",
     "productName": "OICPP-Plus",
     "directories": {
       "output": "dist"
@@ -87,7 +87,8 @@
       "selectPerMachineByDefault": false,
       "allowToChangeInstallationDirectory": true,
       "allowElevation": true
-    },    "mac": {
+    },
+    "mac": {
       "icon": "build/icons/png",
       "extraResources": [
         {

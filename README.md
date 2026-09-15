@@ -40,6 +40,10 @@
 - [x] 支持内置终端
 - [x] 文件历史记录与标签页自动恢复 
 
+## 云服务说明
+
+OICPP-Plus 的云同步、云编译、更新检查、账号认证等服务与 OICPP 官方**共用同一套云服务**（由 OICPP 官方提供），以保证功能完全兼容、数据互通。使用云功能即表示同意 OICPP 官方的服务条款。 
+
 ## 下载
 
 您可以在[右侧 release](https://github.com/qingyingge/oicpp-plus/releases) 中下载最新版本安装包。
