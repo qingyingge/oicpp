@@ -212,6 +212,9 @@ type OicppTextModel = monaco.editor.ITextModel & {
     __oicppLspContentListener?: monaco.IDisposable;
     __oicppLspDisposeListener?: monaco.IDisposable;
     __oicppVirtualName?: string;
+    __oicppFilePath?: string | null;
+    __oicppLspUri?: string;
+    __oicppLspCompletionFallbackUntil?: number;
 };
 
 // identifySymbolAtPosition 的三种识别结果：外链 URL、#include 头文件、普通标识符。
@@ -299,6 +302,7 @@ type OicppCodeEditor = monaco.editor.IStandaloneCodeEditor & {
     __oicppTryRedirectMarkerWidget?: ((marker: monaco.editor.IMarker) => boolean) | undefined;
     getOverflowWidgetsDomNode?: () => HTMLElement | null;
     isDisposed?: () => boolean;
+    __markdownPreviewContextKey?: { set: (value: boolean) => void };
 };
 
 // _initBreakpointSupport 在编辑器实例上挂的调试运行时属性：断点装饰 id、
@@ -7252,7 +7256,7 @@ class MonacoEditorManager {
                     const range = symbol.selectionRange || symbol.range || symbol.location?.range;
                     const locationUri = symbol.location?.uri || '';
                     if (name && [6, 9, 12].includes(kind) && range && (!locationUri || locationUri === uri)) {
-                        const start = range.start || {};
+                        const start = range.start || { line: 0, character: 0 };
                         entries.push({
                             name,
                             detail: symbol.detail || `${container}${name}()`,

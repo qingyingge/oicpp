@@ -434,7 +434,7 @@ class FileExplorer {
         if (!this.currentPath) {
 
             this.showEmptyState();
-            return;
+            return Promise.resolve();
         }
 
         const requestedPath = this.currentPath;

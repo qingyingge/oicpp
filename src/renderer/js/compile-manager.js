@@ -1,8 +1,27 @@
+"use strict";
 class CompilerManager {
-    t(key, params, fallback) {
-        return window.i18n?.t?.(key, params) || fallback || key;
-    }
-
+    settings;
+    isCompiling;
+    isRunning;
+    compileOutput;
+    _outputHideTimer;
+    shouldRunAfterCompile;
+    isCloudCompiling;
+    cloudCompileTaskId;
+    cloudCompilePollTimer;
+    cloudCompileAbortController;
+    cloudProgressLine;
+    cloudQueueLastCount;
+    cloudCompileStartTime;
+    analysisList;
+    analysisEmptyState;
+    activePane;
+    analysisHasContent;
+    tabButtons;
+    analysisHint;
+    analysisAvailable;
+    _onWindowResize;
+    _ipcListeners;
     constructor() {
         this.settings = {
             compilerPath: '',
@@ -10,10 +29,10 @@ class CompilerManager {
             runMode: 'popup',
             workingDirectory: ''
         };
-        
         this.isCompiling = false;
         this.isRunning = false;
         this.compileOutput = null;
+        this._outputHideTimer = null;
         this.shouldRunAfterCompile = false;
         this.isCloudCompiling = false;
         this.cloudCompileTaskId = null;
@@ -22,7 +41,6 @@ class CompilerManager {
         this.cloudProgressLine = null;
         this.cloudQueueLastCount = null;
         this.cloudCompileStartTime = null;
-        this.cloudCompileRunId = 0;
         this.analysisList = null;
         this.analysisEmptyState = null;
         this.activePane = 'raw';
@@ -30,35 +48,34 @@ class CompilerManager {
         this.tabButtons = [];
         this.analysisHint = null;
         this.analysisAvailable = false;
-
+        this._onWindowResize = null;
+        this._ipcListeners = null;
         if (window.i18n?.onChange) {
             window.i18n.onChange(() => {
-                if (!this.compileOutput) return;
+                if (!this.compileOutput)
+                    return;
                 this.updateAnalysisVisibility();
             });
         }
     }
-
     init() {
         logInfo('编译管理器初始化...');
         this.createCompileOutputWindow();
         this.setupEventListeners();
         this.loadSettings();
     }
-
     createCompileOutputWindow() {
-        let existingWindow = document.querySelector('.compile-output-window');
+        let existingWindow = (document.querySelector('.compile-output-window'));
         if (existingWindow) {
             existingWindow.remove();
         }
-
         this.compileOutput = document.createElement('div');
         this.compileOutput.className = 'compile-output-window hidden';
         this.compileOutput.id = 'compile-output-panel';
         this.compileOutput.innerHTML = `
             <div class="compile-output-header">
                 <div class="compile-output-title">
-                    <span class="compile-status" id="compile-status-text">编译输出</span>
+                    <span class="compile-status" id="compile-status-text" data-i18n="compileOutput.title">Compile Output</span>
                 </div>
                 <div class="compile-output-controls">
                     <button class="compile-output-clear" id="clear-compile-output" data-i18n-title="panel.clearOutput" title="清空输出">
@@ -71,7 +88,7 @@ class CompilerManager {
             </div>
             <div class="compile-output-content">
                 <div class="compile-output-toolbar">
-                    <div class="compile-output-tabs" role="tablist" aria-label="${this.t('panel.compileOutputView', null, 'Toggle compile output view')}">
+                    <div class="compile-output-tabs" role="tablist" aria-label="${window.i18n?.t?.('panel.compileOutputView')}">
                         <button class="compile-tab-btn active" data-pane="raw" role="tab" aria-selected="true"><span data-i18n="panel.rawOutput">原始输出</span></button>
                         <button class="compile-tab-btn" data-pane="analysis" role="tab" aria-selected="false"><span data-i18n="panel.errorParsing">报错解析</span></button>
                     </div>
@@ -84,51 +101,48 @@ class CompilerManager {
                         </div>
                     </div>
                     <div class="compile-pane compile-pane-analysis" data-pane="analysis">
-                        <div class="analysis-empty" id="compile-analysis-empty">暂无可解析的内容，先查看原始输出或等待下一次编译。</div>
+                        <div class="analysis-empty" id="compile-analysis-empty">${window.i18n?.t?.('panel.noParseContent')}</div>
                         <div class="analysis-list" id="compile-analysis-list"></div>
                     </div>
                 </div>
             </div>
             <div class="compile-output-resizer" data-i18n-title="panel.dragResize" title="拖拽调整高度"></div>
         `;
-
-        const editorContainer = document.querySelector('.editor-container');
+        const editorContainer = (document.querySelector('.editor-container'));
         if (editorContainer) {
             editorContainer.appendChild(this.compileOutput);
-        } else {
+        }
+        else {
             document.body.appendChild(this.compileOutput);
         }
-
         this.compileOutput.querySelector('.compile-output-clear').addEventListener('click', () => {
             this.clearOutput();
         });
-
         this.compileOutput.querySelector('.compile-output-close').addEventListener('click', () => {
             this.hideOutput();
         });
-
         this.analysisList = this.compileOutput.querySelector('#compile-analysis-list');
         this.analysisEmptyState = this.compileOutput.querySelector('#compile-analysis-empty');
         this.analysisHint = this.compileOutput.querySelector('.compile-output-hint');
         this.tabButtons = Array.from(this.compileOutput.querySelectorAll('.compile-tab-btn'));
         this.tabButtons.forEach(btn => {
             btn.addEventListener('click', () => {
-                const target = btn.dataset.pane === 'analysis' ? 'analysis' : 'raw';
+                const target = btn.dataset['pane'] === 'analysis' ? 'analysis' : 'raw';
                 this.switchOutputPane(target);
             });
         });
-
         try {
             const savedH = localStorage.getItem('oicpp.compileOutput.height');
             this.setCompileOutputHeight(savedH || 300, Boolean(savedH));
-        } catch {}
-
+        }
+        catch { }
         const resizer = this.compileOutput.querySelector('.compile-output-resizer');
         if (resizer) {
             let startY = 0;
             let startH = 0;
             const onMove = (e) => {
-                const dy = (e.touches ? e.touches[0].clientY : e.clientY) - startY;
+                const touch = e.touches ? e.touches[0] : undefined;
+                const dy = (touch ? touch.clientY : e.clientY) - startY;
                 this.setCompileOutputHeight(startH - dy);
             };
             const onUp = () => {
@@ -139,7 +153,8 @@ class CompilerManager {
                 this.persistCompileOutputHeight();
             };
             const onDown = (e) => {
-                startY = e.touches ? e.touches[0].clientY : e.clientY;
+                const touch = e.touches ? e.touches[0] : undefined;
+                startY = touch ? touch.clientY : e.clientY;
                 startH = this.compileOutput.getBoundingClientRect().height;
                 window.addEventListener('mousemove', onMove);
                 window.addEventListener('mouseup', onUp);
@@ -149,17 +164,19 @@ class CompilerManager {
             resizer.addEventListener('mousedown', onDown);
             resizer.addEventListener('touchstart', onDown);
         }
-
-        window.addEventListener('resize', () => {
-            if (!this.compileOutput) return;
+        if (this._onWindowResize) {
+            window.removeEventListener('resize', this._onWindowResize);
+        }
+        this._onWindowResize = () => {
+            if (!this.compileOutput)
+                return;
             const currentHeight = Number.parseFloat(this.compileOutput.style.height) || 300;
             this.setCompileOutputHeight(currentHeight, true);
-        });
-
+        };
+        window.addEventListener('resize', this._onWindowResize);
         this.switchOutputPane(this.activePane || 'raw');
         this.updateAnalysisVisibility();
     }
-
     getCompileOutputHeightBounds() {
         const hostHeight = this.compileOutput?.parentElement?.clientHeight || window.innerHeight || 300;
         const maxHeight = Math.max(1, Math.floor(hostHeight - 48));
@@ -168,74 +185,66 @@ class CompilerManager {
             maxHeight
         };
     }
-
     setCompileOutputHeight(height, persist = false) {
-        if (!this.compileOutput) return;
-
+        if (!this.compileOutput)
+            return;
         const { minHeight, maxHeight } = this.getCompileOutputHeightBounds();
-        const requestedHeight = Number.parseFloat(height);
+        const requestedHeight = Number.parseFloat(String(height));
         const fallbackHeight = Math.min(300, maxHeight);
-        const nextHeight = Math.max(
-            minHeight,
-            Math.min(maxHeight, Number.isFinite(requestedHeight) ? Math.round(requestedHeight) : fallbackHeight)
-        );
+        const nextHeight = Math.max(minHeight, Math.min(maxHeight, Number.isFinite(requestedHeight) ? Math.round(requestedHeight) : fallbackHeight));
         this.compileOutput.style.height = `${nextHeight}px`;
-
-        if (persist) this.persistCompileOutputHeight();
+        if (persist)
+            this.persistCompileOutputHeight();
     }
-
     persistCompileOutputHeight() {
-        if (!this.compileOutput) return;
-
+        if (!this.compileOutput)
+            return;
         try {
             const inlineHeight = Number.parseFloat(this.compileOutput.style.height);
-            const height = Math.round(
-                Number.isFinite(inlineHeight)
-                    ? inlineHeight
-                    : this.compileOutput.getBoundingClientRect().height
-            );
+            const height = Math.round(Number.isFinite(inlineHeight)
+                ? inlineHeight
+                : this.compileOutput.getBoundingClientRect().height);
             localStorage.setItem('oicpp.compileOutput.height', String(height));
-        } catch {}
+        }
+        catch { }
     }
-
     setupEventListeners() {
         if (window.electron && window.electron.ipcRenderer) {
             const ipcRenderer = window.electron.ipcRenderer;
-
-            ipcRenderer.on('compile-result', (result) => {
-                this.handleCompileResult(result);
-            });
-
-            ipcRenderer.on('compile-error', (error) => {
-                this.handleCompileError(error);
-            });
-
-            ipcRenderer.on('run-result', (result) => {
-                this.handleRunResult(result);
-            });
-
-            ipcRenderer.on('run-error', (error) => {
-                this.handleRunError(error);
-            });
-
-            ipcRenderer.on('settings-changed', (_event, _settingsType, newSettings) => {
-                logInfo('编译管理器收到设置变化通知:', newSettings);
-                if (newSettings && (newSettings.compilerPath !== undefined || newSettings.compilerArgs !== undefined || newSettings.runMode !== undefined)) {
-                    this.updateSettings({
-                        compilerPath: newSettings.compilerPath !== undefined ? newSettings.compilerPath : this.settings.compilerPath,
-                        compilerArgs: newSettings.compilerArgs !== undefined ? newSettings.compilerArgs : this.settings.compilerArgs,
-                        runMode: newSettings.runMode !== undefined ? newSettings.runMode : this.settings.runMode
-                    });
-                    logInfo('编译管理器设置已更新:', this.settings);
+            // 注：compile-result / compile-error / run-result / run-error 四个 IPC 通道已无任何发送方
+            // （编译走 invoke('compile-file')，运行走 invoke('run-program')，结果经 window CustomEvent 分发），
+            // 监听它们恒不触发，已随死代码一并移除。
+            this._ipcListeners = {
+                'settings-changed': (_event, _settingsType, newSettings) => {
+                    logInfo('编译管理器收到设置变化通知:', newSettings);
+                    if (newSettings && (newSettings.compilerPath !== undefined || newSettings.compilerArgs !== undefined || newSettings.runMode !== undefined)) {
+                        this.updateSettings({
+                            compilerPath: newSettings.compilerPath !== undefined ? newSettings.compilerPath : this.settings.compilerPath,
+                            compilerArgs: newSettings.compilerArgs !== undefined ? newSettings.compilerArgs : this.settings.compilerArgs,
+                            runMode: newSettings.runMode !== undefined ? newSettings.runMode : this.settings.runMode
+                        });
+                        logInfo('编译管理器设置已更新:', this.settings);
+                    }
                 }
-            });
-
+            };
+            for (const [channel, handler] of Object.entries(this._ipcListeners)) {
+                ipcRenderer.on(channel, handler);
+            }
             logInfo('编译管理器 IPC 监听器已设置');
-        } else {
+        }
+        else {
             logWarn('Electron 环境不可用，跳过 IPC 监听器设置');
         }
     }
-
+    removeEventListeners() {
+        if (!this._ipcListeners || !window.electron || !window.electron.ipcRenderer)
+            return;
+        const ipcRenderer = window.electron.ipcRenderer;
+        for (const [channel, handler] of Object.entries(this._ipcListeners)) {
+            ipcRenderer.removeListener(channel, handler);
+        }
+        this._ipcListeners = null;
+    }
     async loadSettings() {
         try {
             const isIntegratedOnlyPlatform = !!(typeof window !== 'undefined' && window.process && (window.process.platform === 'darwin' || window.process.platform === 'linux'));
@@ -253,7 +262,8 @@ class CompilerManager {
                     });
                     logInfo('编译器设置已加载:', this.settings);
                 }
-            } else {
+            }
+            else {
                 logInfo('window.electronAPI 不可用，使用默认编译器设置');
                 const savedSettings = localStorage.getItem('oicpp-settings');
                 if (savedSettings) {
@@ -269,76 +279,72 @@ class CompilerManager {
                     logInfo('从本地存储加载编译器设置:', this.settings);
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('加载编译器设置失败:', error);
         }
     }
-
     updateSettings(newSettings) {
         this.settings = { ...this.settings, ...newSettings };
     }
-
     async compileCurrentFile(options = {}) {
-        if (this.isCompiling) {
-            this.showMessage(this.t('message.compilingInProgress', null, '正在编译，请稍候'), 'info');
-            return;
-        }
-        // 必须在任何 await 之前占位，避免 F9 连按并发启动多个编译器写同一输出文件。
-        this.isCompiling = true;
         try {
             await this.autoSaveCurrentFile();
             logInfo('compileCurrentFile 被调用，自动保存当前文件');
             await this.loadSettings();
             logInfo('重新加载设置后的编译器设置:', this.settings);
-
             if (!this.settings.compilerPath) {
                 logInfo('编译器路径为空，显示设置提示');
-                this.showMessage(this.t('message.setCompilerFirst', null, 'Please configure the compiler first'), 'error');
+                this.showMessage(window.i18n?.t?.('message.setCompilerFirst'), 'error');
                 this.openCompilerSettings();
-                return;
+                return false;
             }
-
             logInfo('使用编译器路径:', this.settings.compilerPath);
-
             const currentEditor = window.editorManager?.getCurrentEditor();
             if (!currentEditor) {
-                this.showMessage(this.t('message.noOpenFile', null, 'No file is open'), 'error');
-                return;
+                this.showMessage(window.i18n?.t?.('message.noOpenFile'), 'error');
+                return false;
             }
-
             let filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
-            const content = currentEditor.getValue();
-
+            // 原先在这里取一次 getValue() 赋给 content 却从不使用：非 monaco 编辑器
+            // 缺该方法时抛错，被外层 catch 吞成「编译失败」，把「取内容失败」
+            // 误报成「编译失败」
             logInfo('[编译管理器] 获取到的文件路径:', filePath);
             logInfo('[编译管理器] 文件路径类型:', typeof filePath);
             logInfo('[编译管理器] currentEditor.filePath:', currentEditor.filePath);
             if (!filePath || filePath === 'null' || filePath === 'undefined' || filePath.toString().startsWith('untitled')) {
                 logInfo('[编译管理器] 文件路径无效，提示保存文件');
-                this.showMessage(this.t('message.saveFileFirst', null, 'Please save the file first'), 'error');
-                return;
+                this.showMessage(window.i18n?.t?.('message.saveFileFirst'), 'error');
+                return false;
             }
-
             if (filePath && typeof filePath === 'string') {
-                 const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-                 if (isWin) {
-                     filePath = filePath.replace(/\//g, '\\');
-                 }
+                const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
+                if (isWin) {
+                    filePath = filePath.replace(/\//g, '\\');
+                }
             }
-
-            this.isCompiling = true;
+            // 重入保护：原先 isCompiling 只写不读，连按两次 F9 会让两个编译器并发写
+            // 同一个 outputFile（Windows 下后一个直接失败），
+            // 且状态栏先显示「成功」再被后到的失败覆盖
+            if (this.isCompiling) {
+                this.appendOutput((window.i18n?.t?.('compileOutput.alreadyRunning')) + '\n', 'warning');
+                // 显式告知调用方本次被拒：否则 compileAndRun 里的
+                // `if (!this.isCompiling)` 因 isCompiling 恰为 true 而不成立，
+                // shouldRunAfterCompile 残留到下一次编译完成，把「编译」
+                // 意外变成「编译并运行」
+                return false;
+            }
             this.isCompiling = true;
             this.showOutput();
-            this.setStatus(this.t('compileOutput.compiling', null, 'Compiling...'));
+            this.setStatus(window.i18n?.t?.('compileOutput.compiling'));
             this.clearOutput();
-
             const inputFile = filePath;
             const outputFile = this.getExecutablePath(filePath);
-
             let compilerArgs = this.settings.compilerArgs;
             const isMacPlatform = !!(typeof window !== 'undefined' && window.process && window.process.platform === 'darwin');
             if (isMacPlatform && /\s-static\b/.test(` ${compilerArgs}`)) {
                 compilerArgs = compilerArgs.replace(/\s-static\b/g, ' ').replace(/\s+/g, ' ').trim();
-                this.appendOutput('检测到 macOS 平台，已自动移除不兼容参数 -static\n', 'warning');
+                this.appendOutput(window.i18n?.t?.('cloudCompile.detectMacOS') + '\n', 'warning');
             }
             if (options.forDebug) {
                 if (!compilerArgs.includes('-g')) {
@@ -351,24 +357,20 @@ class CompilerManager {
                 }
                 compilerArgs = compilerArgs.replace(/-s\b/g, '');
                 compilerArgs = compilerArgs.replace(/\s+/g, ' ').trim();
-                this.appendOutput(this.t('compileOutput.modeDebug', null, 'Compilation mode: Debug (debug info, optimizations disabled)') + '\n', 'info');
-            } else {
-                if (!compilerArgs.includes('-g')) {
-                    compilerArgs = compilerArgs + ' -g';
-                    this.appendOutput(this.t('compileOutput.modeNormal', null, 'Compilation mode: Normal (with debug info)') + '\n', 'info');
-                }
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeDebug')) + '\n', 'info');
             }
-
+            else {
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal')) + '\n', 'info');
+            }
             const compileCommand = this.buildCompileCommand(inputFile, outputFile, compilerArgs);
-
             logInfo(`源文件: ${inputFile}`);
             logInfo(`目标文件: ${outputFile}`);
             logInfo(`编译命令: ${compileCommand}`);
-
-            this.appendOutput(this.t('compileOutput.command', { command: compileCommand }, `Compilation command: ${compileCommand}`) + '\n', 'command');
-            this.appendOutput(this.t('compileOutput.targetFile', { file: outputFile }, `Output file: ${outputFile}`) + '\n', 'info');
-            this.appendOutput(this.t('compileOutput.compiling', null, 'Compiling...') + '\n', 'info');
-
+            // 换行必须无条件生效：写成 `t(...) || 'fallback' + '\n'` 时，
+            // '+' 只作用于 fallback 分支，i18n 一旦就绪相邻行就会黏成一行
+            this.appendOutput((window.i18n?.t?.('compileOutput.command', { command: compileCommand })) + '\n', 'command');
+            this.appendOutput((window.i18n?.t?.('compileOutput.targetFile', { file: outputFile })) + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.compiling')) + '\n', 'info');
             if (typeof require !== 'undefined') {
                 try {
                     const { ipcRenderer } = require('electron');
@@ -380,278 +382,116 @@ class CompilerManager {
                         workingDirectory: this.getWorkingDirectory(filePath)
                     });
                     this.handleCompileResult(result);
-                } catch (error) {
-                    this.handleCompileError('IPC 调用失败: ' + error.message);
                 }
-            } else {
-                this.handleCompileError('Electron 环境不可用');
+                catch (error) {
+                    this.handleCompileError(window.i18n?.t?.('cloudCompile.ipcFailed') + ': ' + error.message);
+                }
             }
-
-        } catch (error) {
+            else {
+                this.handleCompileError(window.i18n?.t?.('cloudCompile.electronUnavailable'));
+            }
+        }
+        catch (error) {
             logError('编译失败:', error);
             this.handleCompileError(error.message);
-        } finally {
-            this.isCompiling = false;
         }
+        return true; // 本次确实启动��编译
     }
-
     async cloudCompileCurrentFile() {
-        let runId = null;
-        try {
-            if (!this.isWindowsPlatform()) {
-                this.showMessage(this.t('message.cloudCompileWindowsOnly', null, 'Cloud compilation is currently available only on Windows'), 'warning');
-                return;
-            }
-
-            const currentEditor = window.editorManager?.getCurrentEditor();
-            if (!currentEditor) {
-                this.showMessage(this.t('message.noOpenFile', null, 'No file is open'), 'error');
-                return;
-            }
-
-            const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
-            if (!filePath || filePath === 'null' || filePath === 'undefined' || filePath.toString().startsWith('untitled')) {
-                this.showMessage(this.t('message.saveFileFirst', null, 'Please save the file first'), 'error');
-                return;
-            }
-
-            if (!/\.cpp$/i.test(filePath)) {
-                this.showMessage(this.t('message.cloudCompileCppOnly', null, 'Cloud compilation currently supports only .cpp files'), 'error');
-                return;
-            }
-
-            this.shouldRunAfterCompile = false;
-
-            await this.autoSaveCurrentFile();
-
-            const codeContent = currentEditor.getValue() ?? '';
-            const encoder = new TextEncoder();
-            const byteLength = encoder.encode(codeContent).length;
-
-            if (byteLength > 20 * 1024) {
-                this.showOutput();
-                this.clearOutput();
-                this.setStatus('云编译失败');
-                const sizeText = this.formatByteSize(byteLength);
-                this.appendOutput(`代码长度为 ${sizeText}，超出云编译 20KB 限制。`, 'error');
-                return;
-            }
-
-            runId = ++this.cloudCompileRunId;
-            this.cancelCloudCompilationPolling();
-            if (this.cloudCompileAbortController) {
-                try {
-                    this.cloudCompileAbortController.abort();
-                } catch (_) {}
-            }
-            this.cloudCompileAbortController = new AbortController();
-
-            this.isCompiling = true;
-            this.isCloudCompiling = true;
-            this.cloudCompileTaskId = null;
-            this.cloudQueueLastCount = null;
-            this.cloudProgressLine = null;
-            this.cloudCompileStartTime = Date.now();
-
-            this.showOutput();
-            this.clearOutput();
-            this.setStatus('正在云编译...');
-            this.appendOutput('正在将代码发送至 Linux 云编译服务...', 'info');
-
-            let token = '';
-            let loginToken = '';
-            try {
-                if (window.electronAPI && window.electronAPI.getEncodedToken) {
-                    token = await window.electronAPI.getEncodedToken();
-                }
-                if (window.electronAPI && window.electronAPI.getIdeLoginStatus) {
-                    const status = await window.electronAPI.getIdeLoginStatus();
-                    loginToken = status?.loginToken || '';
-                }
-            } catch (e) { logWarn('获取编码 token 失败:', e); }
-
-            const payload = {
-                cpp: codeContent,
-                token: token || ''
-            };
-
-            if (loginToken) {
-                payload.login_token = loginToken;
-            }
-
-            const response = await fetch(`https://oicppide.com/api/cloudCompilation`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload),
-                signal: this.cloudCompileAbortController.signal
-            });
-
-            let data = null;
-            try {
-                data = await response.json();
-            } catch (error) {
-                logWarn('解析云编译响应失败:', error);
-            }
-
-            if (!data) {
-                throw new Error(`云编译服务响应异常 (HTTP ${response.status})`);
-            }
-
-            // 等待响应期间可能已经启动了新一轮云编译，旧响应必须丢弃。
-            if (runId !== this.cloudCompileRunId) return;
-
-            if (data.code === 200 && data.task_id) {
-                this.cloudCompileTaskId = data.task_id;
-                this.appendOutput(`云编译任务创建成功，任务编号: ${data.task_id}`, 'info');
-                this.setCloudProgressMessage('云编译任务已提交，正在等待排队结果...', 'info');
-                this.pollCloudCompilationResult(data.task_id, 0, runId);
-                return;
-            }
-
-            if (data.code === 400) {
-                this.setStatus('云编译失败');
-                if (data.msg) {
-                    this.appendMultilineOutput(data.msg, 'error');
-                }
-                this.showMessage(data.msg || '云编译失败：代码长度超出限制', 'error');
-                this.resetCloudCompileState();
-                return;
-            }
-
-            if (data.code === 429) {
-                this.setStatus('云编译受限');
-                this.appendOutput('云编译请求过于频繁，请稍后再试。', 'warning');
-                if (data.msg) {
-                    this.appendMultilineOutput(data.msg, 'warning');
-                }
-                this.showMessage(data.msg || '云编译请求过于频繁，请稍后再试', 'warning');
-                this.resetCloudCompileState();
-                return;
-            }
-
-            const message = data.msg || `云编译服务返回未知状态: ${data.code}`;
-            this.setStatus('云编译失败');
-            this.appendOutput(message, 'error');
-            this.showMessage(message, 'error');
-            this.resetCloudCompileState();
-        } catch (error) {
-            if (runId === null || runId !== this.cloudCompileRunId) {
-                return;
-            }
-            if (error?.name === 'AbortError') {
-                this.appendOutput('云编译请求已取消。', 'warning');
-            } else {
-                const message = error?.message || '云编译请求失败';
-                this.setStatus('云编译失败');
-                this.appendOutput(message, 'error');
-                this.showMessage(message, 'error');
-            }
-            this.resetCloudCompileState();
-        }
+        this.showMessage(window.i18n?.t?.('cloudCompile.disabled'), 'warning');
     }
-
     async runCurrentFile() {
         try {
             await this.autoSaveCurrentFile();
-
             const currentEditor = window.editorManager?.getCurrentEditor();
             if (!currentEditor) {
-                this.showMessage(this.t('message.noOpenFile', null, 'No file is open'), 'error');
+                this.showMessage(window.i18n?.t?.('message.noOpenFile'), 'error');
                 return;
             }
-
             const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
             if (!filePath || filePath.startsWith('untitled')) {
-                this.showMessage(this.t('message.saveFileFirst', null, 'Please save the file first'), 'error');
+                this.showMessage(window.i18n?.t?.('message.saveFileFirst'), 'error');
                 return;
             }
-
             const executablePath = this.getExecutablePath(filePath);
             logInfo(`检查可执行文件路径: ${executablePath}`);
-            
             const exists = await this.checkFileExists(executablePath);
             logInfo(`可执行文件存在性检查结果: ${exists}`);
-            
             if (!exists) {
-                this.showMessage(this.t('message.compileBeforeRun', { file: executablePath }, `Please compile the program first (not found: ${executablePath})`), 'error');
+                this.showMessage(window.i18n?.t?.('message.compileBeforeRun', { file: executablePath }), 'error');
                 return;
             }
-
             this.isRunning = true;
             this.showOutput();
-            this.appendOutput(this.t('compileOutput.startingProgram', { file: executablePath }, `Starting program: ${executablePath}`) + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.startingProgram', { file: executablePath })) + '\n', 'info');
             this.runExecutable(executablePath);
-
-        } catch (error) {
+        }
+        catch (error) {
             logError('运行失败:', error);
-            this.showMessage(this.t('message.runFailed', { error: error.message }, `Failed to run: ${error.message}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.runFailed', { error: error.message }), 'error');
         }
     }
-
     async compileAndRun() {
         try {
             this.shouldRunAfterCompile = true;
-            await this.compileCurrentFile();
-        } catch (error) {
+            // compileCurrentFile 返回 false = 命中重入守卫、本次没启动编译。
+            // 此时 isCompiling 恰为 true，不能用 `if (!this.isCompiling)` 判断，
+            // 也不该让标志位残留（否则下一次编译完成会凭空多跑一次程序）。
+            const started = await this.compileCurrentFile();
+            if (started === false)
+                this.shouldRunAfterCompile = false;
+        }
+        catch (error) {
             logError('编译并运行失败:', error);
             this.shouldRunAfterCompile = false;
         }
     }
-
     buildCompileCommand(inputFile, outputFile, customArgs = null) {
         const args = [
             `"${inputFile}"`,
             customArgs || this.settings.compilerArgs,
             `-o "${outputFile}"`
         ].filter(arg => arg.trim()).join(' ');
-        
         return `"${this.settings.compilerPath}" ${args}`;
     }
-
     getExecutablePath(sourceFile) {
         const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        
         let normalizedPath = sourceFile;
         if (isWin) {
             normalizedPath = sourceFile.replace(/\//g, '\\');
-        } else {
+        }
+        else {
             normalizedPath = sourceFile.replace(/\\/g, '/');
         }
-
         const sep = isWin ? '\\' : '/';
         const lastSlash = normalizedPath.lastIndexOf(sep);
         const dir = lastSlash >= 0 ? normalizedPath.substring(0, lastSlash) : '';
         const fileName = lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
-        
         const dot = fileName.lastIndexOf('.');
         const nameWithoutExt = dot >= 0 ? fileName.substring(0, dot) : fileName;
-        
         const base = (dir ? (dir + (dir.endsWith(sep) ? '' : sep)) : '') + nameWithoutExt;
         return isWin ? base + '.exe' : base;
     }
-
     getWorkingDirectory(filePath) {
         const lastSlash = filePath.lastIndexOf('/') > filePath.lastIndexOf('\\') ?
             filePath.lastIndexOf('/') : filePath.lastIndexOf('\\');
         return filePath.substring(0, lastSlash);
     }
-
     async checkFileExists(filePath) {
         try {
             if (window.electronAPI && window.electronAPI.checkFileExists) {
                 return await window.electronAPI.checkFileExists(filePath);
             }
-
-            logWarn('无法检查文件存在性，假设文件存在:', filePath);
-            return true;
-        } catch (error) {
+            // 「查不到」不等于「存在」：原先在无法检查时返回 true，
+            // 用户点运行后看到的是「运行失败」，而不是「请先编译」
+            logWarn('无法检查文件存在性，按不存在处理:', filePath);
+            return false;
+        }
+        catch (error) {
             logError('检查文件存在性失败:', error);
-            return true;
+            return false;
         }
     }
-
     runExecutable(executablePath) {
         if (typeof require !== 'undefined') {
             try {
@@ -659,56 +499,50 @@ class CompilerManager {
                 ipcRenderer.invoke('run-executable', {
                     executablePath,
                     workingDirectory: this.getWorkingDirectory(executablePath)
-                }).then(result => {
+                }).then((result) => {
                     this.handleRunResult(result);
-                }).catch(error => {
+                }).catch((error) => {
                     this.handleRunError(error.message || error);
                 });
-            } catch (error) {
-                this.handleRunError('IPC 调用失败: ' + error.message);
             }
-        } else {
-            this.handleRunError('Electron API 不可用');
+            catch (error) {
+                this.handleRunError(window.i18n?.t?.('cloudCompile.ipcFailed') + ': ' + error.message);
+            }
+        }
+        else {
+            this.handleRunError(window.i18n?.t?.('cloudCompile.electronUnavailable'));
         }
     }
-
-    async pollCloudCompilationResult(taskId, attempt = 0, runId = this.cloudCompileRunId) {
-        if (runId !== this.cloudCompileRunId) return;
-        if (!taskId || !this.isCloudCompiling) return;
+    async pollCloudCompilationResult(taskId, attempt = 0) {
+        if (!taskId || !this.isCloudCompiling)
+            return;
         if (attempt >= 300) {
-            this.setStatus('云编译超时');
-            this.setCloudProgressMessage('云编译等待超时，请稍后再试。', 'error');
-            this.appendOutput('云编译等待超时，请稍后重试。', 'error');
-            this.showMessage(this.t('message.cloudCompileTimeout', null, 'Cloud compilation timed out. Please try again later.'), 'error');
+            this.setStatus(window.i18n?.t?.('cloudCompile.timedOut'));
+            this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.timedOutMsg'), 'error');
+            this.appendOutput(window.i18n?.t?.('cloudCompile.timedOutRetry'), 'error');
+            this.showMessage(window.i18n?.t?.('message.cloudCompileTimeout'), 'error');
             this.resetCloudCompileState();
             return;
         }
-
         try {
-            const response = await fetch(`https://oicppide.com/api/getCloudCompilationResult?task_id=${encodeURIComponent(taskId)}`, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-
+            const response = (await window.electronIPC.invoke('fetch-remote-json', {
+                path: '/api/getCloudCompilationResult?task_id=' + encodeURIComponent(taskId),
+                method: 'GET'
+            }));
             let data = null;
             try {
-                data = await response.json();
-            } catch (error) {
+                data = response.data;
+            }
+            catch (error) {
                 logWarn('解析云编译结果失败:', error);
             }
-
             if (!data) {
-                throw new Error(`云编译服务响应异常 (HTTP ${response.status})`);
+                throw new Error(window.i18n?.t?.('cloudCompile.serviceError', { status: response.status }));
             }
-
-            if (runId !== this.cloudCompileRunId) return;
-
             switch (data.code) {
                 case 200:
                     this.updateCloudQueueStatus(data.queueFrontCnt);
-                    this.scheduleCloudCompilationPoll(taskId, attempt + 1, runId);
+                    this.scheduleCloudCompilationPoll(taskId, attempt + 1);
                     break;
                 case 201:
                     this.handleCloudCompilationSuccess(data);
@@ -717,87 +551,87 @@ class CompilerManager {
                     this.handleCloudCompilationFailure(data);
                     break;
                 default:
-                    throw new Error(data.msg || `云编译服务返回未知状态: ${data.code}`);
+                    throw new Error(data.msg || window.i18n?.t?.('cloudCompile.unknownStatus', { code: data.code }));
             }
-        } catch (error) {
+        }
+        catch (error) {
             if (attempt + 1 >= 300) {
-                const message = `云编译状态查询失败：${error?.message || error}`;
-                this.setStatus('云编译失败');
-                this.setCloudProgressMessage('云编译状态查询失败，请稍后再试。', 'error');
+                const message = window.i18n?.t?.('cloudCompile.statusQueryFailed', { error: error?.message || error });
+                this.setStatus(window.i18n?.t?.('cloudCompile.failed'));
+                this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.statusQueryFailedRetry'), 'error');
                 this.appendOutput(message, 'error');
-                this.showMessage(this.t('message.cloudCompileStatusFailed', null, 'Failed to retrieve cloud compilation status. Please try again later.'), 'error');
+                this.showMessage(window.i18n?.t?.('message.cloudCompileStatusFailed'), 'error');
                 this.resetCloudCompileState();
                 return;
             }
-
-            this.appendOutput(`查询云编译状态失败 (${attempt + 1})：${error?.message || error}`, 'warning');
-            this.scheduleCloudCompilationPoll(taskId, attempt + 1, runId);
+            this.appendOutput(window.i18n?.t?.('cloudCompile.statusQueryFailedAttempt', { attempt: attempt + 1, error: error?.message || error }), 'warning');
+            this.scheduleCloudCompilationPoll(taskId, attempt + 1);
         }
     }
-
-    scheduleCloudCompilationPoll(taskId, nextAttempt, runId = this.cloudCompileRunId) {
-        if (runId !== this.cloudCompileRunId) return;
+    scheduleCloudCompilationPoll(taskId, nextAttempt) {
         this.cancelCloudCompilationPolling();
         this.cloudCompilePollTimer = setTimeout(() => {
-            this.pollCloudCompilationResult(taskId, nextAttempt, runId);
+            this.pollCloudCompilationResult(taskId, nextAttempt);
         }, 2000);
     }
-
     updateCloudQueueStatus(queueFrontCnt) {
-        if (!this.isCloudCompiling) return;
+        if (!this.isCloudCompiling)
+            return;
         if (typeof queueFrontCnt === 'number' && queueFrontCnt >= 0) {
-            this.setStatus(`云编译排队中 (前方 ${queueFrontCnt} 人)`);
+            this.setStatus(window.i18n?.t?.('cloudCompile.queuing', { count: queueFrontCnt }));
             if (this.cloudQueueLastCount !== queueFrontCnt) {
-                this.setCloudProgressMessage(`云编译排队中，前方还有 ${queueFrontCnt} 人。`, 'info');
+                this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.queuingAhead', { count: queueFrontCnt }), 'info');
                 this.cloudQueueLastCount = queueFrontCnt;
             }
-        } else {
-            this.setStatus('云编译排队中...');
-            this.setCloudProgressMessage('云编译排队中，请稍候...', 'info');
+        }
+        else {
+            this.setStatus(window.i18n?.t?.('cloudCompile.queuingWait'));
+            this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.queuingPlease'), 'info');
             this.cloudQueueLastCount = null;
         }
     }
-
     setCloudProgressMessage(text, type = 'info') {
-        if (!text) return;
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return;
+        if (!text)
+            return;
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return;
         if (!this.cloudProgressLine || !this.cloudProgressLine.parentElement) {
             this.cloudProgressLine = this.appendOutput(text, type);
-        } else {
+        }
+        else {
             this.cloudProgressLine.className = `output-line output-${type}`;
             this.cloudProgressLine.textContent = text;
         }
     }
-
     handleCloudCompilationSuccess(data) {
         const duration = this.cloudCompileStartTime ? ((Date.now() - this.cloudCompileStartTime) / 1000).toFixed(2) : null;
-        const status = duration ? `云编译成功 (${duration}s)` : '云编译成功';
+        const status = duration ? window.i18n?.t?.('cloudCompile.successWithTime', { time: duration }) : window.i18n?.t?.('cloudCompile.success');
         this.setStatus(status);
-        this.setCloudProgressMessage('云编译完成，结果：通过。', 'success');
-        this.appendOutput('云编译通过!', 'success');
+        this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.passResult'), 'success');
+        this.appendOutput(window.i18n?.t?.('cloudCompile.passed'), 'success');
         if (data.msg) {
-            this.appendOutput('编译器输出:', 'info');
+            this.appendOutput(window.i18n?.t?.('cloudCompile.compilerOutput'), 'info');
             this.appendMultilineOutput(data.msg, 'info');
         }
         this.resetCloudCompileState();
     }
-
     handleCloudCompilationFailure(data) {
         const duration = this.cloudCompileStartTime ? ((Date.now() - this.cloudCompileStartTime) / 1000).toFixed(2) : null;
-        const status = duration ? `云编译失败 (${duration}s)` : '云编译失败';
+        const status = duration ? window.i18n?.t?.('cloudCompile.failWithTime', { time: duration }) : window.i18n?.t?.('cloudCompile.failed');
         this.setStatus(status);
-        this.setCloudProgressMessage('云编译失败，请查看下方错误信息。', 'error');
-        this.appendOutput('云编译失败!', 'error');
+        this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.failCheckError'), 'error');
+        this.appendOutput(window.i18n?.t?.('cloudCompile.failedSimple'), 'error');
         if (data.msg) {
-            this.appendOutput('编译错误信息:', 'error');
+            this.appendOutput(window.i18n?.t?.('cloudCompile.compilerErrors'), 'error');
             this.appendMultilineOutput(data.msg, 'error');
         }
         this.resetCloudCompileState();
     }
-
     appendMultilineOutput(message, type = 'info') {
-        if (!message) return;
+        if (!message)
+            return;
         const lines = String(message).split(/\r?\n/);
         lines.forEach(line => {
             if (line.trim().length > 0) {
@@ -805,14 +639,12 @@ class CompilerManager {
             }
         });
     }
-
     cancelCloudCompilationPolling() {
         if (this.cloudCompilePollTimer) {
             clearTimeout(this.cloudCompilePollTimer);
             this.cloudCompilePollTimer = null;
         }
     }
-
     resetCloudCompileState() {
         this.cancelCloudCompilationPolling();
         this.isCompiling = false;
@@ -822,9 +654,9 @@ class CompilerManager {
         this.cloudQueueLastCount = null;
         this.cloudCompileStartTime = null;
     }
-
     formatByteSize(bytes) {
-        if (bytes < 1024) return `${bytes} 字节`;
+        if (bytes < 1024)
+            return window.i18n?.t?.('cloudCompile.formatBytes', { bytes, count: bytes });
         const kb = bytes / 1024;
         if (kb < 1024) {
             return kb >= 100 ? `${Math.round(kb)} KB` : `${kb.toFixed(2)} KB`;
@@ -832,167 +664,149 @@ class CompilerManager {
         const mb = kb / 1024;
         return mb >= 100 ? `${Math.round(mb)} MB` : `${mb.toFixed(2)} MB`;
     }
-
     extractFileName(filePath) {
-        if (!filePath) return '';
+        if (!filePath)
+            return '';
         const segments = filePath.split(/[\\/]/);
         return segments.pop() || '';
     }
-
     isWindowsPlatform() {
         try {
             return !!(window.process && window.process.platform === 'win32');
-        } catch (_) {
+        }
+        catch (_) {
             return false;
         }
     }
-
     switchOutputPane(pane) {
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return;
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return;
         let target = pane === 'analysis' ? 'analysis' : 'raw';
         if (target === 'analysis' && (!this.analysisAvailable || !this.isSmartAnalysisEnabled())) {
             target = 'raw';
         }
         this.activePane = target;
-
         const panes = this.compileOutput.querySelectorAll('.compile-pane');
         panes.forEach((p) => {
-            const isActive = p.dataset.pane === target;
+            if (!(p instanceof HTMLElement))
+                return;
+            const isActive = p.dataset['pane'] === target;
             p.classList.toggle('active', isActive);
             if (isActive) {
                 p.removeAttribute('aria-hidden');
-            } else {
+            }
+            else {
                 p.setAttribute('aria-hidden', 'true');
             }
         });
-
         this.tabButtons.forEach((btn) => {
-            const isActive = btn.dataset.pane === target;
+            const isActive = btn.dataset['pane'] === target;
             btn.classList.toggle('active', isActive);
             btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
-
         if (target === 'analysis' && this.analysisList) {
             this.analysisList.scrollTop = 0;
         }
     }
-
     updateAnalysisVisibility() {
         const analysisEnabled = this.isSmartAnalysisEnabled();
         const shouldShowAnalysis = analysisEnabled && this.analysisAvailable;
         const toolbar = this.compileOutput?.querySelector('.compile-output-toolbar');
-        if (toolbar) {
+        if (toolbar instanceof HTMLElement) {
             toolbar.style.display = analysisEnabled ? '' : 'none';
         }
-        const analysisBtn = this.tabButtons.find((btn) => btn.dataset.pane === 'analysis');
+        const analysisBtn = this.tabButtons.find((btn) => btn.dataset['pane'] === 'analysis');
         if (analysisBtn) {
             analysisBtn.style.display = shouldShowAnalysis ? '' : 'none';
         }
-        if (this.analysisHint) {
+        if (this.analysisHint instanceof HTMLElement) {
             this.analysisHint.style.display = shouldShowAnalysis ? '' : 'none';
         }
-
         if (!shouldShowAnalysis && this.activePane === 'analysis') {
             this.switchOutputPane('raw');
         }
     }
-
     isSmartAnalysisEnabled() {
         const language = window.i18n?.getCurrentLanguage?.() || document.documentElement.lang || 'zh-cn';
         return String(language).toLowerCase().startsWith('zh');
     }
-
     setAnalysisEmptyState(isEmpty) {
-        if (this.analysisEmptyState) {
+        if (this.analysisEmptyState instanceof HTMLElement) {
             this.analysisEmptyState.style.display = isEmpty ? '' : 'none';
         }
-        if (this.analysisList) {
+        if (this.analysisList instanceof HTMLElement) {
             this.analysisList.style.display = isEmpty ? 'none' : 'block';
         }
         this.analysisHasContent = !isEmpty;
         this.analysisAvailable = !isEmpty;
         this.updateAnalysisVisibility();
     }
-
     renderSmartAnalysis(payload = {}) {
-        if (!this.analysisList) this.createCompileOutputWindow();
-        if (!this.analysisList) return false;
-
+        if (!this.analysisList)
+            this.createCompileOutputWindow();
+        if (!this.analysisList)
+            return false;
         if (!this.isSmartAnalysisEnabled()) {
             this.analysisList.innerHTML = '';
             this.setAnalysisEmptyState(true);
             return false;
         }
-
         this.analysisList.innerHTML = '';
         const items = this.buildAnalysisItems(payload);
-
         if (!items.length) {
             this.setAnalysisEmptyState(true);
             this.analysisAvailable = false;
             this.updateAnalysisVisibility();
             return false;
         }
-
         this.setAnalysisEmptyState(false);
         this.analysisAvailable = true;
         this.updateAnalysisVisibility();
-
         items.forEach((item) => {
             const card = document.createElement('div');
             card.className = `analysis-card severity-${item.severity || 'info'}`;
-
             const header = document.createElement('div');
             header.className = 'analysis-card-header';
-
             const badge = document.createElement('span');
             badge.className = `analysis-badge severity-${item.severity || 'info'}`;
-            badge.textContent = item.severity === 'warning' ? '警告' : (item.severity === 'error' ? '错误' : '提示');
-
+            badge.textContent = item.severity === 'warning' ? window.i18n?.t?.('cloudCompile.warning') : (item.severity === 'error' ? window.i18n?.t?.('cloudCompile.error') : window.i18n?.t?.('cloudCompile.hint'));
             const location = document.createElement('span');
             location.className = 'analysis-location';
-            location.textContent = item.location || '位置未知';
-
+            location.textContent = item.location || window.i18n?.t?.('cloudCompile.locationUnknown');
             header.appendChild(badge);
             header.appendChild(location);
-
             const message = document.createElement('div');
             message.className = 'analysis-message';
             message.textContent = item.message || '';
-
             const hint = document.createElement('div');
             hint.className = 'analysis-hint';
-            hint.textContent = item.hint || '暂无更详细的提示，可查看原始输出。';
-
+            hint.textContent = item.hint || window.i18n?.t?.('cloudCompile.noHint');
             card.appendChild(header);
             card.appendChild(message);
             card.appendChild(hint);
-
             if (item.suggestion) {
                 const suggestion = document.createElement('div');
                 suggestion.className = 'analysis-suggestion';
                 suggestion.textContent = item.suggestion;
                 card.appendChild(suggestion);
             }
-
             this.analysisList.appendChild(card);
         });
-
         return true;
     }
-
     showCurrentEditorProblems() {
         try {
-            if (typeof monaco === 'undefined' || !monaco.editor) return false;
+            if (typeof monaco === 'undefined' || !monaco.editor)
+                return false;
             const editor = window.editorManager?.getCurrentEditor?.();
             const model = editor?.getModel ? editor.getModel() : null;
-            if (!model) return false;
-
+            if (!model)
+                return false;
             const markers = monaco.editor.getModelMarkers
                 ? monaco.editor.getModelMarkers({ resource: model.uri })
                 : [];
-
             const diagnostics = markers.map((marker) => ({
                 severity: marker.severity === monaco.MarkerSeverity.Warning
                     ? 'warning'
@@ -1003,9 +817,7 @@ class CompilerManager {
                 line: marker.startLineNumber || 1,
                 column: marker.startColumn || 1
             }));
-
             const rendered = this.renderSmartAnalysis({ diagnostics });
-
             // 确保编译面板可见
             if (!this.compileOutput) {
                 this.createCompileOutputWindow();
@@ -1014,18 +826,16 @@ class CompilerManager {
             this.analysisAvailable = rendered;
             this.updateAnalysisVisibility();
             this.switchOutputPane(rendered ? 'analysis' : 'raw');
-
             return rendered;
-        } catch (err) {
+        }
+        catch (err) {
             logWarn('显示当前编辑器问题失败:', err);
             return false;
         }
     }
-
     buildAnalysisItems(payload = {}) {
         const items = [];
         const seen = new Set();
-
         const diagnostics = Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
         diagnostics.forEach((diag) => {
             const rawMsg = diag.raw || diag.message || '';
@@ -1036,189 +846,175 @@ class CompilerManager {
                 locationParts.push(this.extractFileName(diag.file));
             }
             if (diag.line) {
-                locationParts.push(`行 ${diag.line}`);
+                locationParts.push(window.i18n?.t?.('cloudCompile.line', { line: diag.line }));
             }
             if (diag.column) {
-                locationParts.push(`列 ${diag.column}`);
+                locationParts.push(window.i18n?.t?.('cloudCompile.column', { col: diag.column }));
             }
-            const location = locationParts.join(' · ') || '位置未知';
+            const location = locationParts.join(' · ') || window.i18n?.t?.('cloudCompile.locationUnknown');
             const key = `${location}|${diag.message || diag.raw}|${diag.severity}`;
-            if (seen.has(key)) return;
+            if (seen.has(key))
+                return;
             seen.add(key);
             items.push({
                 severity: diag.severity === 'warning' ? 'warning' : (diag.severity === 'error' ? 'error' : 'info'),
                 location,
-                message: rawMsg || '未知信息',
+                message: rawMsg || window.i18n?.t?.('cloudCompile.unknownInfo'),
                 hint: translated || hint.title,
                 suggestion: hint.suggestion
             });
         });
-
         const rawLines = [...(payload.errors || []), ...(payload.warnings || [])];
         rawLines.forEach((line) => {
             const diag = this.parseLineToDiagnostic(line);
             const hint = this.buildHintFromMessage(diag.message);
             const translated = this.translateMessage(diag.message);
             const key = `${diag.location}|${diag.message}|${diag.severity}`;
-            if (seen.has(key)) return;
+            if (seen.has(key))
+                return;
             seen.add(key);
             items.push({
                 severity: diag.severity,
-                location: diag.location || (window.i18n ? window.i18n.t('compileOutput.title') : 'Compile Output'),
+                location: diag.location || window.i18n?.t?.('cloudCompile.locationUnknown'),
                 message: diag.message,
                 hint: translated || hint.title,
                 suggestion: hint.suggestion
             });
         });
-
         if (!items.length && (payload.stderr || payload.stdout)) {
             const text = (payload.stderr || payload.stdout || '').trim();
             if (text) {
                 const hint = this.buildHintFromMessage(text);
                 items.push({
                     severity: 'error',
-                    location: window.i18n ? window.i18n.t('compileOutput.title') : 'Compile Output',
+                    location: window.i18n?.t?.('cloudCompile.locationUnknown'),
                     message: this.translateMessage(text),
                     hint: hint.title,
                     suggestion: hint.suggestion
                 });
             }
         }
-
         return items.slice(0, 50);
     }
-
     buildHintFromMessage(message = '') {
         const lower = String(message).toLowerCase();
-
         if (/expected\s+'?;/.test(message)) {
             return {
-                title: '疑似缺少分号',
-                suggestion: '在提示行或上一行末尾补一个分号 ; ，或检查语句是否提前换行。'
+                title: window.i18n?.t?.('cloudCompile.missingSemicolon'),
+                suggestion: window.i18n?.t?.('cloudCompile.missingSemicolonHint')
             };
         }
-
         if (/expected\s+['"`]?\)/i.test(message) || /expected\s+['"`]?\}/i.test(message) || /expected\s+['"`]?\]/i.test(message)) {
             return {
-                title: '疑似缺少括号/花括号',
-                suggestion: '检查成对的 (), {}, [] 是否匹配，尤其是 if/for/while 或函数声明的位置。'
+                title: window.i18n?.t?.('cloudCompile.missingBrace'),
+                suggestion: window.i18n?.t?.('cloudCompile.missingBraceHint')
             };
         }
-
         if (/no such file or directory/.test(lower)) {
             const compilerPath = typeof this.settings?.compilerPath === 'string' ? this.settings.compilerPath.trim() : '';
             return {
-                title: compilerPath ? '包含的文件没找到' : '包含的文件没找到，请先设置编译器路径',
+                title: compilerPath ? window.i18n?.t?.('cloudCompile.fileNotFound') : window.i18n?.t?.('cloudCompile.fileNotFoundSetCompiler'),
                 suggestion: compilerPath
-                    ? '确认 #include 的头文件路径是否正确，或源文件/编译器路径中是否包含空格导致识别失败。'
-                    : '请先设置编译器路径，然后再确认 #include 的头文件路径是否正确。'
+                    ? window.i18n?.t?.('cloudCompile.fileNotFoundHint')
+                    : window.i18n?.t?.('cloudCompile.fileNotFoundSetHint')
             };
         }
-
         if (/was not declared in this scope/.test(lower)) {
             return {
-                title: '标识符未声明',
-                suggestion: '检查变量/函数是否拼写错误、是否在使用前声明，或需要添加对应的头文件。'
+                title: window.i18n?.t?.('cloudCompile.undeclared'),
+                suggestion: window.i18n?.t?.('cloudCompile.undeclaredHint')
             };
         }
-
         if (/redefinition of/.test(lower) || /has a previous declaration/.test(lower)) {
             return {
-                title: '重复定义',
-                suggestion: '同名的函数或变量被重复定义。检查是否在多个文件或多次包含头文件时缺少 include guard。'
+                title: window.i18n?.t?.('cloudCompile.redefined'),
+                suggestion: window.i18n?.t?.('cloudCompile.redefinedHint')
             };
         }
-
         if (/cannot open output file/.test(lower) && (/permission denied/.test(lower) || /access is denied/.test(lower))) {
             return {
-                title: '链接器无法写入输出文件',
-                suggestion: '目标可执行文件可能正被运行或被占用。先关闭已打开的程序/终端窗口，再重新编译。'
+                title: window.i18n?.t?.('cloudCompile.linkerError'),
+                suggestion: window.i18n?.t?.('cloudCompile.linkerErrorHint')
             };
         }
-
         if (/undefined reference to [`'"]?main/.test(lower)) {
             return {
-                title: '缺少 main 函数',
-                suggestion: '确认是否正确定义了 int main() 函数，或文件是否保存为 C++ 源文件后再编译。'
+                title: window.i18n?.t?.('cloudCompile.missingMain'),
+                suggestion: window.i18n?.t?.('cloudCompile.missingMainHint')
             };
         }
-
         if (/undefined reference/.test(lower)) {
             return {
-                title: '链接到未定义的符号',
-                suggestion: '对应的函数/变量未实现或缺少链接的库。检查函数是否写错、源文件是否编译、或需补充链接参数。'
+                title: window.i18n?.t?.('cloudCompile.undefinedRef'),
+                suggestion: window.i18n?.t?.('cloudCompile.undefinedRefHint')
             };
         }
-
         if (/expected (class|struct|union)/i.test(lower)) {
             return {
-                title: '类型/声明不完整',
-                suggestion: '可能缺少头文件或写错模板语法，检查该行前后的类型声明和模板尖括号。'
+                title: window.i18n?.t?.('cloudCompile.incompleteType'),
+                suggestion: window.i18n?.t?.('cloudCompile.incompleteTypeHint')
             };
         }
-
         if (/control reaches end of non-void function/i.test(lower)) {
             return {
-                title: '非 void 函数缺少返回值',
-                suggestion: '确保每个分支都返回值，或将函数声明改为 void。'
+                title: window.i18n?.t?.('cloudCompile.nonVoidReturn'),
+                suggestion: window.i18n?.t?.('cloudCompile.nonVoidReturnHint')
             };
         }
-
         if (/maybe uninitialized/i.test(lower)) {
             return {
-                title: '变量可能未初始化',
-                suggestion: '在使用前给变量赋初值，或在所有分支中确保赋值。'
+                title: window.i18n?.t?.('cloudCompile.uninitialized'),
+                suggestion: window.i18n?.t?.('cloudCompile.uninitializedHint')
             };
         }
-
         return {
-            title: '查看原始输出获取更多细节',
-            suggestion: '跳转到对应行查看上下文，必要时打开原始输出获取完整信息。'
+            title: window.i18n?.t?.('cloudCompile.checkRawOutput'),
+            suggestion: window.i18n?.t?.('cloudCompile.checkRawOutputHint')
         };
     }
-
     translateMessage(message = '') {
         const text = String(message);
         if (/no such file or directory/.test(text)) {
             const compilerPath = typeof this.settings?.compilerPath === 'string' ? this.settings.compilerPath.trim() : '';
             return compilerPath
-                ? '包含的文件没找到，请检查头文件路径是否正确。'
-                : '包含的文件没找到，请先设置编译器路径，再检查 #include 的头文件路径是否正确。';
+                ? window.i18n?.t?.('cloudCompile.translatedFileNotFound')
+                : window.i18n?.t?.('cloudCompile.translatedFileNotFoundSet');
         }
         if (/expected\s+['"`]?;/.test(text) || /expected\s+['"`]?;\s+or/.test(text)) {
-            return '可能缺少分号或冒号，检查报错位置前一行是否遗漏 ; 或语句被截断。';
+            return window.i18n?.t?.('cloudCompile.translatedMissingSemicolon');
         }
         const expectedBefore = text.match(/expected\s+(.+?)\s+before\s+(.+)/i);
         if (expectedBefore) {
-            return `可能缺少 ${expectedBefore[1]}，编译器提示它应在 ${expectedBefore[2]} 之前出现。看看这一行前的语法是否写完整。`;
+            return window.i18n?.t?.('cloudCompile.translatedExpectedBefore', { token: expectedBefore[1], before: expectedBefore[2] });
         }
         const notDeclared = text.match(/(.+?)\s+was not declared in this scope/i);
         if (notDeclared) {
-            const name = notDeclared[1].replace(/[`'"\s]/g, '').trim();
+            const name = notDeclared[1]?.replace(/[`'"\s]/g, '').trim();
             const suggest = (text.match(/did you mean\s+['"`]?(\w+)/i) || [])[1];
             if (name) {
-                const suffix = suggest ? `，可能想写 ${suggest}` : '';
-                return `未声明的标识符 ${name}${suffix}。检查拼写、是否包含对应头文件，或命名空间是否正确。`;
+                const suffix = suggest ? `, did you mean ${suggest}` : '';
+                return window.i18n?.t?.('cloudCompile.translatedUndeclared', { name, suffix });
             }
-            return '存在未声明的标识符。检查拼写、包含的头文件或作用域。';
+            return window.i18n?.t?.('cloudCompile.translatedUndeclaredSimple');
         }
         return text;
     }
-
     parseLineToDiagnostic(line) {
         const raw = typeof line === 'string' ? line : this._stringifyError(line);
         if (!raw) {
             return { severity: 'info', location: '', message: '' };
         }
-
         const m = String(raw).match(/^(.+?):(\d+):(?:(\d+):)?\s*(fatal error|error|warning|note):\s*(.+)$/i);
         if (m) {
             const [, file, lineNum, colNum, sevRaw, msg] = m;
-            const severity = /warning/i.test(sevRaw) ? 'warning' : (/error/i.test(sevRaw) || /fatal/i.test(sevRaw) ? 'error' : 'info');
+            const severity = /warning/i.test(sevRaw ?? '') ? 'warning' : (/error/i.test(sevRaw ?? '') || /fatal/i.test(sevRaw ?? '') ? 'error' : 'info');
             const locationParts = [];
-            if (file) locationParts.push(this.extractFileName(file));
-            if (lineNum) locationParts.push(`行 ${parseInt(lineNum, 10)}`);
-            if (colNum) locationParts.push(`列 ${parseInt(colNum, 10)}`);
+            if (file)
+                locationParts.push(this.extractFileName(file));
+            if (lineNum)
+                locationParts.push(window.i18n?.t?.('cloudCompile.line', { line: parseInt(lineNum, 10) }));
+            if (colNum)
+                locationParts.push(window.i18n?.t?.('cloudCompile.column', { col: parseInt(colNum, 10) }));
             return {
                 severity,
                 location: locationParts.join(' · '),
@@ -1228,7 +1024,6 @@ class CompilerManager {
                 column: colNum ? parseInt(colNum, 10) : undefined
             };
         }
-
         const severity = /warning/i.test(raw) ? 'warning' : (/error|fatal/i.test(raw) ? 'error' : 'info');
         return {
             severity,
@@ -1236,54 +1031,45 @@ class CompilerManager {
             message: raw
         };
     }
-
     handleCompileResult(result) {
         this.isCompiling = false;
-        
-            if (result.success) {
-            this.setStatus(this.t('compileOutput.successSimple', null, 'Compilation successful'));
-            this.appendOutput(this.t('compileOutput.successSimple', null, 'Compilation successful') + '!\n', 'success');
-            
+        if (result.success) {
+            this.setStatus(window.i18n?.t?.('compileOutput.successSimple'));
+            this.appendOutput((window.i18n?.t?.('compileOutput.successSimple')) + '!\n', 'success');
             if (result.warnings && result.warnings.length > 0) {
-                this.appendOutput(this.t('compileOutput.warningCount', { count: result.warnings.length }, `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
-                    result.warnings.forEach(warning => {
-                        this.appendOutput(`${warning}\n`, 'warning');
-                    });
+                this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length })) + '\n', 'warning');
+                result.warnings.forEach((warning) => {
+                    this.appendOutput(`${warning}\n`, 'warning');
+                });
             }
-
-                if (window.editorManager && window.editorManager.clearDiagnostics) {
-                    window.editorManager.clearDiagnostics();
-                }
-
+            if (window.editorManager && window.editorManager.clearDiagnostics) {
+                window.editorManager.clearDiagnostics();
+            }
             window.dispatchEvent(new CustomEvent('compile-success', {
                 detail: { result }
             }));
-
             if (this.shouldRunAfterCompile) {
                 this.shouldRunAfterCompile = false;
                 this.runCurrentFile();
             }
-            } else {
-            this.setStatus(this.t('compileOutput.failSimple', null, 'Compilation failed'));
-            this.appendOutput(this.t('compileOutput.failSimple', null, 'Compilation failed') + '!\n', 'error');
+        }
+        else {
+            this.setStatus(window.i18n?.t?.('compileOutput.failSimple'));
+            this.appendOutput((window.i18n?.t?.('compileOutput.failSimple')) + '!\n', 'error');
             this.shouldRunAfterCompile = false;
-            
             if (result.errors && result.errors.length > 0) {
-                this.appendOutput(this.t('compileOutput.errorInfo', null, 'Error information:') + '\n', 'error');
-                result.errors.forEach(error => {
+                this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo')) + '\n', 'error');
+                result.errors.forEach((error) => {
                     this.appendOutput(`${this._stringifyError(error)}\n`, 'error');
                 });
             }
-
-                if (result.diagnostics && window.editorManager && window.editorManager.applyDiagnostics) {
-                    window.editorManager.applyDiagnostics(result.diagnostics);
-                }
-
+            if (result.diagnostics && window.editorManager && window.editorManager.applyDiagnostics) {
+                window.editorManager.applyDiagnostics(result.diagnostics);
+            }
             window.dispatchEvent(new CustomEvent('compile-error', {
                 detail: { result }
             }));
         }
-
         const hasIssues = (result.errors && result.errors.length > 0) || (result.warnings && result.warnings.length > 0);
         const analysisRendered = this.renderSmartAnalysis({
             diagnostics: result.diagnostics,
@@ -1292,64 +1078,53 @@ class CompilerManager {
             stderr: result.stderr,
             stdout: result.stdout
         });
-
         if (hasIssues && analysisRendered && this.analysisAvailable) {
             this.switchOutputPane('analysis');
-        } else {
+        }
+        else {
             this.switchOutputPane('raw');
         }
     }
-
     handleCompileError(error) {
         this.isCompiling = false;
-        // “编译并运行”在失败后不能把标记留给下一次普通编译。
         this.shouldRunAfterCompile = false;
-        this.setStatus(this.t('compileOutput.failSimple', null, 'Compilation failed'));
+        this.setStatus(window.i18n?.t?.('compileOutput.failSimple'));
         const msg = this._stringifyError(error);
-        this.appendOutput(`${this.t('compileOutput.failSimple', null, 'Compilation failed')}: ${msg}\n`, 'error');
-
+        this.appendOutput(`${window.i18n?.t?.('compileOutput.failSimple')}: ${msg}\n`, 'error');
         this.renderSmartAnalysis({ errors: [msg] });
         if (this.analysisHasContent && this.analysisAvailable) {
             this.switchOutputPane('analysis');
         }
-        
         window.dispatchEvent(new CustomEvent('compile-error', {
             detail: { error }
         }));
     }
-
     showExternalCompileResult(result = {}, options = {}) {
-        const title = options.title || '样例编译';
+        const title = options.title || window.i18n?.t?.('cloudCompile.sampleCompile');
         this.showOutput();
         this.clearOutput();
-
         const success = !!result.success;
-        this.setStatus(success ? `${title}成功` : `${title}失败`);
-
+        this.setStatus(success ? `${title} ${window.i18n?.t?.('compileOutput.successSimple')}` : `${title} ${window.i18n?.t?.('compileOutput.failSimple')}`);
         if (result.stdout) {
-            this.appendOutput(this.t('compileOutput.standardOutput', null, 'Standard output:') + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardOutput')) + '\n', 'info');
             this.appendOutput(`${result.stdout}\n`, 'info');
         }
-
         if (result.stderr) {
-            this.appendOutput(this.t('compileOutput.standardError', null, 'Standard error:') + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardError')) + '\n', 'error');
             this.appendOutput(`${result.stderr}\n`, 'error');
         }
-
         if (result.errors && result.errors.length > 0) {
-            this.appendOutput(this.t('compileOutput.errorInfo', null, 'Error information:') + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo')) + '\n', 'error');
             result.errors.forEach((err) => {
                 this.appendOutput(`${this._stringifyError(err)}\n`, 'error');
             });
         }
-
         if (result.warnings && result.warnings.length > 0) {
-            this.appendOutput(this.t('compileOutput.warningCount', { count: result.warnings.length }, `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
+            this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length })) + '\n', 'warning');
             result.warnings.forEach((warning) => {
                 this.appendOutput(`${warning}\n`, 'warning');
             });
         }
-
         const analysisRendered = this.renderSmartAnalysis({
             diagnostics: result.diagnostics,
             errors: result.errors,
@@ -1357,14 +1132,13 @@ class CompilerManager {
             stderr: result.stderr,
             stdout: result.stdout
         });
-
         if (!success && analysisRendered && this.analysisAvailable) {
             this.switchOutputPane('analysis');
-        } else {
+        }
+        else {
             this.switchOutputPane('raw');
         }
     }
-
     handleRunResult(result) {
         this.isRunning = false;
         if (result && result.mode === 'integrated-terminal') {
@@ -1372,69 +1146,76 @@ class CompilerManager {
             return;
         }
         if (result.success) {
-            const message = this.t('compileOutput.programStartedNewWindow', null, 'Program started in a new window');
+            const message = window.i18n?.t?.('compileOutput.programStartedNewWindow');
             this.appendOutput(message + '\n', 'success');
             this.showMessage(message, 'success');
         }
         logInfo('程序运行完成:', result);
     }
-
     async runInIntegratedTerminal(result) {
         try {
             const executablePath = String(result?.executablePath || '').trim();
             if (!executablePath) {
-                throw new Error('缺少可执行文件路径');
+                throw new Error(window.i18n?.t?.('panel.terminalExePathEmpty'));
             }
-
             const app = window.oicppApp;
             if (!app || typeof app.openIntegratedTerminalAndRunExecutable !== 'function') {
-                throw new Error('内置终端组件未就绪');
+                throw new Error(window.i18n?.t?.('message.terminalUninitialized'));
             }
-
             await app.openIntegratedTerminalAndRunExecutable(executablePath, {
                 workingDirectory: result?.workingDirectory || undefined
             });
-
             this.hideOutput();
-            const message = this.t('compileOutput.programStartedIntegratedTerminal', null, 'Program started in the integrated terminal');
+            const message = window.i18n?.t?.('compileOutput.programStartedIntegratedTerminal');
             this.appendOutput(message + '\n', 'success');
             this.showMessage(message, 'success');
             logInfo('程序运行完成(内置终端):', result);
-        } catch (error) {
+        }
+        catch (error) {
             this.handleRunError(error?.message || error);
         }
     }
-
     handleRunError(error) {
         this.isRunning = false;
-        this.appendOutput(`运行错误: ${error}\n`, 'error');
-        this.showMessage(this.t('message.runError', { error }, `Run error: ${error}`), 'error');
+        this.appendOutput(`${window.i18n?.t?.('message.runError', { error })}\n`, 'error');
+        this.showMessage(window.i18n?.t?.('message.runError', { error }), 'error');
     }
-
     showOutput() {
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return;
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return;
+        // 两个 setTimeout 必须互相取消：原先 hide 的 300ms 定时器与 show 的
+        // 10ms 定时器各自独立，300ms 内按 F9 时旧的 hide 到期会补上 hidden，
+        // 编译中的面板整块消失
+        this._cancelOutputHideTimer();
         this.compileOutput.classList.remove('hidden');
-        setTimeout(() => {
-            if (!this.compileOutput) return;
-            this.compileOutput.classList.add('show');
-        }, 10);
-
+        this.compileOutput.classList.add('show');
         this.updateAnalysisVisibility();
     }
-
     hideOutput() {
-        if (!this.compileOutput) return;
+        if (!this.compileOutput)
+            return;
+        this._cancelOutputHideTimer();
         this.compileOutput.classList.remove('show');
-        setTimeout(() => {
-            if (!this.compileOutput) return;
+        this._outputHideTimer = setTimeout(() => {
+            this._outputHideTimer = null;
+            if (!this.compileOutput)
+                return;
             this.compileOutput.classList.add('hidden');
         }, 300);
     }
-
+    _cancelOutputHideTimer() {
+        if (this._outputHideTimer) {
+            clearTimeout(this._outputHideTimer);
+            this._outputHideTimer = null;
+        }
+    }
     clearOutput() {
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return;
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return;
         const outputText = this.compileOutput.querySelector('.compile-output-text');
         if (outputText) {
             outputText.innerHTML = '';
@@ -1449,10 +1230,11 @@ class CompilerManager {
         this.cloudProgressLine = null;
         this.cloudQueueLastCount = null;
     }
-
     appendOutput(text, type = 'info') {
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return null;
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return null;
         const outputText = this.compileOutput.querySelector('.compile-output-text');
         let line = null;
         if (outputText) {
@@ -1466,70 +1248,73 @@ class CompilerManager {
                     line.style.cursor = 'pointer';
                     line.addEventListener('click', async () => {
                         const [, file, lineNum, colNum] = m;
-                        const ln = parseInt(lineNum, 10) || 1;
+                        const ln = parseInt(lineNum ?? '', 10) || 1;
                         const cn = colNum ? parseInt(colNum, 10) : 1;
                         const revealIn = (editor) => {
-                            if (!editor || !editor.revealLineInCenter) return;
-                            try { editor.revealLineInCenter(ln); } catch { }
-                            try { editor.setPosition({ lineNumber: ln, column: cn }); } catch { }
+                            if (!editor || !editor.revealLineInCenter)
+                                return;
+                            try {
+                                editor.revealLineInCenter(ln);
+                            }
+                            catch { }
+                            try {
+                                editor.setPosition?.({ lineNumber: ln, column: cn });
+                            }
+                            catch { }
                         };
                         const currentEditor = window.editorManager?.getCurrentEditor?.();
-                        const norm = (p) => String(p || '').replace(/\\/g, '/');
-                        const currentPath = norm(currentEditor?.filePath || currentEditor?.getFilePath?.() || '');
+                        const norm = (p) => String(p ?? '').replace(/\\/g, '/');
+                        const currentPath = norm(currentEditor?.filePath);
                         const targetPath = norm(file);
-                        const sameFile = !!currentPath && (
-                            currentPath === targetPath ||
-                            currentPath.endsWith('/' + targetPath.split('/').pop()) ||
-                            targetPath.endsWith('/' + currentPath.split('/').pop())
-                        );
+                        const sameFile = !!currentPath && (currentPath === targetPath
+                            || currentPath.endsWith('/' + targetPath.split('/').pop())
+                            || targetPath.endsWith('/' + currentPath.split('/').pop()));
                         if (sameFile) {
                             revealIn(currentEditor);
                             return;
                         }
-                        // 跨文件错误：先打开错误所属文件，再定位。
+                        // 头文件里的报错点在当前编辑器上定位，等于把用户带到别的文件去指错行：
+                        // 先打开报错所属文件，再定位。
                         try {
-                            const content = await window.electronAPI?.readFileContent?.(file);
+                            const content = await window.electronAPI?.readFileContent?.(String(file ?? ''));
                             if (typeof content === 'string') {
-                                const name = targetPath.split('/').pop() || file;
-                                await window.tabManager?.openFile?.(name, content, false, file);
+                                const name = targetPath.split('/').pop() || String(file ?? '');
+                                await window.tabManager?.openFile?.(name, content, false, String(file ?? ''));
                                 revealIn(window.editorManager?.getCurrentEditor?.());
                                 return;
                             }
-                        } catch (e) {
+                        }
+                        catch (e) {
                             logWarn('[编译输出] 打开错误文件失败:', e);
                         }
                         revealIn(currentEditor);
                     });
                 }
-            } catch {}
+            }
+            catch { }
             outputText.appendChild(line);
             outputText.scrollTop = outputText.scrollHeight;
         }
-
         return line;
     }
-
     setStatus(status) {
-        if (!this.compileOutput) this.createCompileOutputWindow();
-        if (!this.compileOutput) return;
-
+        if (!this.compileOutput)
+            this.createCompileOutputWindow();
+        if (!this.compileOutput)
+            return;
         const statusElement = this.compileOutput.querySelector('.compile-status');
         if (statusElement) {
             statusElement.textContent = status;
         }
     }
-
     showMessage(message, type = 'info') {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message-popup message-${type}`;
         messageDiv.textContent = message;
-        
         document.body.appendChild(messageDiv);
-        
         setTimeout(() => {
             messageDiv.classList.add('show');
         }, 10);
-        
         setTimeout(() => {
             messageDiv.classList.remove('show');
             setTimeout(() => {
@@ -1539,29 +1324,45 @@ class CompilerManager {
             }, 300);
         }, 3000);
     }
-
     _stringifyError(err) {
         try {
-            if (!err) return '未知错误';
-            if (typeof err === 'string') return err;
-            if (err instanceof Error) return err.message || err.toString();
-            if (err.detail) return this._stringifyError(err.detail);
-            if (err.result) {
-                const r = err.result;
-                if (Array.isArray(r.errors) && r.errors.length) return r.errors.join('\n');
-                if (typeof r.stderr === 'string' && r.stderr.trim()) return r.stderr;
-                if (typeof r.stdout === 'string' && r.stdout.trim()) return r.stdout;
-                if (typeof r.message === 'string') return r.message;
+            if (!err)
+                return window.i18n?.t?.('panel.unknownError');
+            if (typeof err === 'string')
+                return err;
+            if (err instanceof Error)
+                return err.message || err.toString();
+            const bag = err;
+            if (bag.detail)
+                return this._stringifyError(bag.detail);
+            if (bag.result) {
+                const r = bag.result;
+                if (Array.isArray(r.errors) && r.errors.length)
+                    return r.errors.join('\n');
+                if (typeof r.stderr === 'string' && r.stderr.trim())
+                    return r.stderr;
+                if (typeof r.stdout === 'string' && r.stdout.trim())
+                    return r.stdout;
+                if (typeof r.message === 'string')
+                    return r.message;
             }
-            if (typeof err.error === 'string') return err.error;
-            if (err.error) return this._stringifyError(err.error);
-            if (typeof err.message === 'string') return err.message;
+            if (typeof bag.error === 'string')
+                return bag.error;
+            if (bag.error)
+                return this._stringifyError(bag.error);
+            if (typeof bag.message === 'string')
+                return bag.message;
             return JSON.stringify(err);
-        } catch (_) {
-            try { return String(err); } catch { return '未知错误'; }
+        }
+        catch (_) {
+            try {
+                return String(err);
+            }
+            catch {
+                return window.i18n?.t?.('panel.unknownError');
+            }
         }
     }
-
     async autoSaveCurrentFile() {
         try {
             const currentEditor = window.editorManager?.getCurrentEditor();
@@ -1569,19 +1370,16 @@ class CompilerManager {
                 logInfo('[自动保存] 没有当前编辑器');
                 return;
             }
-
             const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
             if (!filePath || filePath.startsWith('untitled')) {
                 logInfo('[自动保存] 文件未保存或为临时文件，跳过自动保存');
                 return;
             }
-
             const content = currentEditor.getValue();
             if (content === null || content === undefined) {
                 logInfo('[自动保存] 无法获取文件内容');
                 return;
             }
-
             if (window.tabManager) {
                 const fileName = filePath.split(/[\\/]/).pop();
                 const tab = window.tabManager.getTabByFileName && window.tabManager.getTabByFileName(fileName);
@@ -1590,13 +1388,10 @@ class CompilerManager {
                     return;
                 }
             }
-
             logInfo('[自动保存] 开始保存文件:', filePath);
-            
             if (window.electronAPI && window.electronAPI.saveFile) {
                 await window.electronAPI.saveFile(filePath, content);
                 logInfo('[自动保存] 文件保存成功');
-                
                 if (window.tabManager) {
                     const fileName = filePath.split(/[\\/]/).pop();
                     if (window.tabManager.markTabAsSaved) {
@@ -1606,33 +1401,35 @@ class CompilerManager {
                         window.tabManager.markTabAsSavedByUniqueKey(filePath);
                     }
                 }
-            } else {
+            }
+            else {
                 logWarn('[自动保存] electronAPI 不可用');
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('[自动保存] 保存文件失败:', error);
         }
     }
-
     openCompilerSettings() {
         if (typeof require !== 'undefined') {
             try {
                 const { ipcRenderer } = require('electron');
-                ipcRenderer.invoke('open-compiler-settings').catch(error => {
+                ipcRenderer.invoke('open-compiler-settings').catch((error) => {
                     logError('打开编译器设置失败:', error);
                 });
-            } catch (error) {
+            }
+            catch (error) {
                 logError('IPC 调用失败:', error);
             }
-        } else {
+        }
+        else {
             logWarn('Electron API 不可用，无法打开编译器设置');
         }
     }
 }
-
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CompilerManager;
-} else {
+}
+else {
     window.CompilerManager = CompilerManager;
 }
-

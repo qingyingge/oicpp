@@ -1,168 +1,102 @@
-/**
- * Language Manager (i18n)
- *
- * Provides multi-language support for the OICPP IDE.
- * Usage:
- *   const lang = require('./lang');
- *   lang.setLanguage('en');
- *   lang.t('menu.file'); // => "File"
- *   lang.t('message.updateDownloading', { version: ' (v2.0)', progress: 50 }); // template substitution
- */
-
-const fs = require('fs');
-const path = require('path');
-
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getAvailableLanguages = exports.setLanguage = exports.getCurrentLanguage = exports.t = void 0;
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 class LanguageManager {
+    _currentLang;
+    _messages;
+    _fallbackMessages;
+    _langDir;
     constructor() {
         this._currentLang = 'zh-cn';
         this._messages = {};
         this._fallbackMessages = {};
-        this._loaded = false;
+        this._langDir = __dirname;
         this._loadFallback();
     }
-
-    /**
-     * Load the fallback language (Chinese) so we always have defaults.
-     */
     _loadFallback() {
         try {
-            const fallbackPath = path.join(__dirname, 'zh-cn.json');
+            const fallbackPath = path.join(this._langDir, 'zh-cn.json');
             if (fs.existsSync(fallbackPath)) {
                 this._fallbackMessages = JSON.parse(fs.readFileSync(fallbackPath, 'utf8'));
             }
-        } catch (e) {
+        }
+        catch (e) {
             console.error('[LanguageManager] Failed to load fallback language:', e);
         }
     }
-
-    /**
-     * Load a language file.
-     * @param {string} langCode - Language code, e.g. 'zh-cn', 'en'
-     * @returns {boolean} Whether loading succeeded
-     */
-    loadLanguage(langCode) {
-        if (!langCode || typeof langCode !== 'string') {
-            return false;
-        }
-
-        const normalizedCode = langCode.toLowerCase().replace(/_/g, '-');
+    loadLanguage(lang) {
         try {
-            const langPath = path.join(__dirname, `${normalizedCode}.json`);
-            if (!fs.existsSync(langPath)) {
-                console.warn(`[LanguageManager] Language file not found: ${langPath}`);
-                return false;
+            const langPath = path.join(this._langDir, `${lang}.json`);
+            if (fs.existsSync(langPath)) {
+                this._messages = JSON.parse(fs.readFileSync(langPath, 'utf8'));
+                this._currentLang = lang;
             }
-            this._messages = JSON.parse(fs.readFileSync(langPath, 'utf8'));
-            this._currentLang = normalizedCode;
-            this._loaded = true;
-            return true;
-        } catch (e) {
-            console.error(`[LanguageManager] Failed to load language '${langCode}':`, e);
-            return false;
+        }
+        catch (e) {
+            console.error(`[LanguageManager] Failed to load language ${lang}:`, e);
         }
     }
-
-    /**
-     * Set the current language.
-     * @param {string} langCode
-     * @returns {boolean}
-     */
-    setLanguage(langCode) {
-        return this.loadLanguage(langCode);
-    }
-
-    /**
-     * Get the current language code.
-     * @returns {string}
-     */
-    getCurrentLanguage() {
-        return this._currentLang;
-    }
-
-    /**
-     * Get the display name of the current language.
-     * @returns {string}
-     */
-    getCurrentLanguageName() {
-        return this._getNested(this._messages, 'meta.name') ||
-               this._getNested(this._fallbackMessages, 'meta.name') ||
-               'Unknown';
-    }
-
-    /**
-     * Get all available languages.
-     * @returns {Array<{code: string, name: string, nameEn: string}>}
-     */
-    getAvailableLanguages() {
-        const languages = [];
-        try {
-            const langDir = __dirname;
-            const files = fs.readdirSync(langDir);
-            for (const file of files) {
-                if (!file.endsWith('.json') || file === 'index.js' || file.startsWith('_')) {
-                    continue;
-                }
-                try {
-                    const content = JSON.parse(fs.readFileSync(path.join(langDir, file), 'utf8'));
-                    if (content.meta && content.meta.code) {
-                        languages.push({
-                            code: content.meta.code,
-                            name: content.meta.name || file.replace('.json', ''),
-                            nameEn: content.meta.nameEn || content.meta.name || file.replace('.json', '')
-                        });
-                    }
-                } catch (_) {
-                    // skip invalid files
-                }
-            }
-        } catch (e) {
-            console.error('[LanguageManager] Failed to list available languages:', e);
-        }
-        return languages;
-    }
-
-    /**
-     * Translate a key.
-     * @param {string} key - Dot-notation key, e.g. 'menu.file'
-     * @param {object} [params] - Optional template parameters for substitution, e.g. { msg: 'hello' }
-     * @returns {string} Translated string, or the key itself if not found
-     */
     t(key, params) {
         if (!key || typeof key !== 'string') {
             return key || '';
         }
-
-        // Try current language first, then fallback
         let value = this._getNested(this._messages, key);
         if (value === undefined || value === null) {
             value = this._getNested(this._fallbackMessages, key);
         }
-
         if (value === undefined || value === null) {
             return key;
         }
-
-        // Ensure it's a string
         if (typeof value !== 'string') {
             return String(value);
         }
-
-        // Substitute template parameters like {name}
         if (params && typeof params === 'object') {
-            return value.replace(/\{(\w+)\}/g, (match, paramName) => {
+            return value.replace(/\{(\w+)\}/g, (_match, paramName) => {
                 const paramValue = params[paramName];
-                return paramValue !== undefined && paramValue !== null ? String(paramValue) : match;
+                return paramValue !== undefined && paramValue !== null ? String(paramValue) : _match;
             });
         }
-
         return value;
     }
-
-    /**
-     * Get a nested value from an object by dot-notation key.
-     */
     _getNested(obj, key) {
-        if (!obj || !key) return undefined;
+        if (!obj || !key) {
+            return undefined;
+        }
         const keys = key.split('.');
         let current = obj;
         for (const k of keys) {
@@ -173,23 +107,27 @@ class LanguageManager {
         }
         return current;
     }
-
-    /**
-     * Reload the current language (useful after language file updates).
-     */
-    reload() {
-        this._loadFallback();
-        if (this._currentLang) {
-            this.loadLanguage(this._currentLang);
-        }
+    getCurrentLanguage() {
+        return this._currentLang;
+    }
+    setLanguage(lang) {
+        this.loadLanguage(lang);
+    }
+    getAvailableLanguages() {
+        return [
+            { code: 'zh-cn', name: '中文（简体）', nameEn: 'Chinese (Simplified)' },
+            { code: 'en', name: 'English', nameEn: 'English' }
+        ];
     }
 }
-
-// Singleton instance
 const instance = new LanguageManager();
-
-// Load default language (Chinese)
 instance.loadLanguage('zh-cn');
-
-module.exports = instance;
-module.exports.LanguageManager = LanguageManager;
+const t = (key, params) => instance.t(key, params);
+exports.t = t;
+const getCurrentLanguage = () => instance.getCurrentLanguage();
+exports.getCurrentLanguage = getCurrentLanguage;
+const setLanguage = (lang) => instance.setLanguage(lang);
+exports.setLanguage = setLanguage;
+const getAvailableLanguages = () => instance.getAvailableLanguages();
+exports.getAvailableLanguages = getAvailableLanguages;
+exports.default = instance;

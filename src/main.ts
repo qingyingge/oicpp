@@ -6,6 +6,8 @@ declare function logError(...args: any[]): void;
 declare function decodeBufferAuto(buf: Buffer): string;
 declare function updateProgress(message: string, percent?: number): void;
 
+export {};
+
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = require('electron');
 const http = require('http');
 const https = require('https');

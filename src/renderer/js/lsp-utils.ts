@@ -66,7 +66,7 @@ function toMonacoRange(range: LspRange | undefined, monaco: Monaco | undefined):
     if (!range || !monaco || typeof monaco.Range !== 'function') {
         return null;
     }
-    const start = range.start || {};
+    const start = range.start || { line: 0, character: 0 };
     const end = range.end || start;
     return new monaco.Range(
         (Number(start.line) || 0) + 1,

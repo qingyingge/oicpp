@@ -238,7 +238,7 @@ window.getCurrentSettings = async function(): Promise<Record<string, unknown>> {
     }
 };
 
-window.updateSettings = async function(newSettings: Record<string, unknown>): Promise<boolean> {
+(window as { updateSettings: (newSettings: Record<string, unknown>) => Promise<boolean> }).updateSettings = async function(newSettings: Record<string, unknown>): Promise<boolean> {
     try {
         if (window.electronAPI && window.electronAPI.updateSettings) {
             const result = await window.electronAPI.updateSettings(newSettings);

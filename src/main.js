@@ -1,4 +1,5 @@
 "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = require('electron');
 const http = require('http');
 const https = require('https');

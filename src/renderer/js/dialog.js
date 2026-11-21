@@ -1,45 +1,61 @@
+"use strict";
 class DialogManager {
+    currentDialog;
+    _keydownHandler;
+    _overlayKeydown;
     constructor() {
         this.currentDialog = null;
         this._keydownHandler = null;
+        this._overlayKeydown = null;
         this.createDialogContainer();
     }
-
     createDialogContainer() {
         const overlay = document.createElement('div');
         overlay.className = 'dialog-overlay';
         overlay.id = 'dialog-overlay';
         overlay.style.display = 'none';
-        overlay.dataset.closeOnBackdrop = '0';
-
+        overlay.dataset['closeOnBackdrop'] = '0';
         const dialog = document.createElement('div');
         dialog.className = 'dialog-container';
         dialog.id = 'dialog-container';
-
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-
         overlay.addEventListener('click', (e) => {
             try {
-                if (e.target !== overlay) return;
-                if (overlay.dataset.closeOnBackdrop !== '1') return;
+                if (e.target !== overlay)
+                    return;
+                if (overlay.dataset['closeOnBackdrop'] !== '1')
+                    return;
                 this.hideDialog();
-            } catch (_) {
+            }
+            catch (_) {
+            }
+        });
+        // ESC 用于取消对话（相当于点击 ×/点击遮罩），适用于全部 show* 对话框。
+        // 此前只有 showSpringFestivalGreeting/showConfirmDialog 调 attachEscapeToClose，
+        // showInputDialog/showActionDialog 没有 → ESC 失效。统一在这里监听一次即可
+        // （hideDialog 会清 _keydownHandler，这个 listener 持续生效不受影响）。
+        document.addEventListener('keydown', (e) => {
+            try {
+                if (e.key === 'Escape' && this.currentDialog) {
+                    e.preventDefault();
+                    this.hideDialog();
+                }
+            }
+            catch (_) {
             }
         });
     }
-
     resetDialogState() {
-        const overlay = document.getElementById('dialog-overlay');
-        const container = document.getElementById('dialog-container');
+        const overlay = (document.getElementById('dialog-overlay'));
+        const container = (document.getElementById('dialog-container'));
         if (overlay) {
-            overlay.dataset.closeOnBackdrop = '0';
+            overlay.dataset['closeOnBackdrop'] = '0';
         }
         if (container) {
             container.classList.remove('newyear-container');
         }
     }
-
     attachEscapeToClose() {
         try {
             if (this._keydownHandler) {
@@ -52,23 +68,22 @@ class DialogManager {
                         e.preventDefault();
                         this.hideDialog();
                     }
-                } catch (_) {
+                }
+                catch (_) {
                 }
             };
             document.addEventListener('keydown', this._keydownHandler, true);
-        } catch (_) {
+        }
+        catch (_) {
         }
     }
-
     showInputDialog(title, defaultValue = '', placeholder = '', options = {}) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = document.getElementById('dialog-overlay');
-            const container = document.getElementById('dialog-container');
-
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             const safeTitle = this.escapeHtml(String(title ?? ''));
             const safePlaceholder = this.escapeAttribute(String(placeholder ?? ''));
-
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${safeTitle}</h3>
@@ -78,62 +93,61 @@ class DialogManager {
                     <input type="text" id="dialog-input" placeholder="${safePlaceholder}" value="" spellcheck="false" autocapitalize="none" autocomplete="off" autocorrect="off" />
                 </div>
                 <div class="dialog-footer">
-                    <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.hideDialog()">${window.i18n ? window.i18n.t('dialog.cancel') : '取消'}</button>
-                    <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n ? window.i18n.t('dialog.ok') : '确定'}</button>
+                    <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.hideDialog()">${window.i18n.t('dialog.cancel')}</button>
+                    <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n.t('dialog.ok')}</button>
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
-            const input = document.getElementById('dialog-input');
-            if (input) {
+            // 默认值走属性而不是拼进 value=""：文件名里带引号就能撕开这个 input 标签。
+            const input = (document.getElementById('dialog-input'));
+            if (input instanceof HTMLInputElement) {
                 input.value = String(defaultValue ?? '');
             }
-
             setTimeout(() => {
-                if (input) {
+                if (input instanceof HTMLInputElement) {
                     input.focus();
-                    const start = Number.isFinite(options.selectStart) ? options.selectStart : null;
-                    const end = Number.isFinite(options.selectEnd) ? options.selectEnd : null;
+                    const start = typeof options.selectStart === 'number' && Number.isFinite(options.selectStart) ? options.selectStart : null;
+                    const end = typeof options.selectEnd === 'number' && Number.isFinite(options.selectEnd) ? options.selectEnd : null;
                     if (start !== null && end !== null && end >= start) {
                         input.setSelectionRange(start, end);
-                    } else {
+                    }
+                    else {
                         input.select();
                     }
                 }
             }, 50);
-
             if (input) {
                 input.addEventListener('keydown', (e) => {
                     e.stopPropagation();
-
                     if (e.key === 'Enter') {
                         e.preventDefault();
                         this.confirmDialog();
-                    } else if (e.key === 'Escape') {
+                    }
+                    else if (e.key === 'Escape') {
                         e.preventDefault();
                         this.hideDialog();
                     }
                 });
             }
-
-            overlay.addEventListener('keydown', (e) => {
+            if (this._overlayKeydown) {
+                overlay.removeEventListener('keydown', this._overlayKeydown);
+            }
+            this._overlayKeydown = (e) => {
                 e.stopPropagation();
-            });
-
+            };
+            overlay.addEventListener('keydown', this._overlayKeydown);
             this.currentDialog = {
+                // 本弹窗一定有 #dialog-input，confirmDialog() 只会递字符串进来，那个 true 分支是确认框的路径
                 resolve: resolve,
                 reject: reject
             };
         });
     }
-
     showConfirmDialog(title, message) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = document.getElementById('dialog-overlay');
-            const container = document.getElementById('dialog-container');
-
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${this.escapeHtml(String(title ?? ''))}</h3>
@@ -143,33 +157,28 @@ class DialogManager {
                     <p>${this.formatMessage(message)}</p>
                 </div>
                 <div class="dialog-footer">
-                    <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.cancelDialog()">${window.i18n ? window.i18n.t('dialog.cancel') : '取消'}</button>
-                    <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n ? window.i18n.t('dialog.ok') : '确定'}</button>
+                    <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.cancelDialog()">${window.i18n.t('dialog.cancel')}</button>
+                    <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n.t('dialog.ok')}</button>
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: reject
             };
         });
     }
-
     showActionDialog(title, message, actions = []) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = document.getElementById('dialog-overlay');
-            const container = document.getElementById('dialog-container');
-
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             const buttonsHtml = (actions || []).map((action) => {
                 const safeId = this.escapeHtml(String(action.id ?? ''));
                 const safeLabel = this.escapeHtml(String(action.label ?? ''));
                 const className = action.className ? ` ${this.escapeHtml(action.className)}` : '';
                 return `<button class="dialog-btn${className}" data-action="${safeId}" onclick="dialogManager.actionDialog('${safeId}')">${safeLabel}</button>`;
             }).join('');
-
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${this.escapeHtml(String(title ?? ''))}</h3>
@@ -182,157 +191,136 @@ class DialogManager {
                     ${buttonsHtml}
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: reject
             };
         });
     }
-
     showNewYearGreeting(now = new Date()) {
         return new Promise((resolve) => {
             this.resetDialogState();
-
-            const overlay = document.getElementById('dialog-overlay');
-            const container = document.getElementById('dialog-container');
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
             }
-
             const isTestDate = (now instanceof Date) && (now.getMonth() === 11) && (now.getDate() === 21);
             const displayYear = isTestDate ? (now.getFullYear() + 1) : now.getFullYear();
-
-            overlay.dataset.closeOnBackdrop = '1';
+            overlay.dataset['closeOnBackdrop'] = '1';
             container.classList.add('newyear-container');
-
             const safeYear = this.escapeHtml(String(displayYear));
             container.innerHTML = `
                 <div class="dialog-header newyear-header">
-                    <h3>${window.i18n ? window.i18n.t('festival.newYearTitle') : '新年快乐'}</h3>
-                    <button class="dialog-close" onclick="dialogManager.hideDialog()" aria-label="${window.i18n ? window.i18n.t('dialog.close') : '关闭'}">&times;</button>
+                    <h3>${window.i18n.t('festival.newYearTitle')}</h3>
+                    <button class="dialog-close" onclick="dialogManager.hideDialog()" aria-label="${window.i18n.t('dialog.close')}">&times;</button>
                 </div>
                 <div class="newyear-body">
                     <div class="newyear-hero">
                         <div class="newyear-badge" aria-hidden="true" data-ui-icon="sparkle"></div>
                         <div>
-                            <p class="newyear-title">${window.i18n ? window.i18n.t('festival.newYearHeading', { year: safeYear }) : '欢迎来到 ' + safeYear}</p>
-                            <div class="newyear-subtitle">${window.i18n ? window.i18n.t('festival.newYearSubtitle') : '愿你：灵感常在，思路清晰，提交一次就 AC。'}</div>
+                            <p class="newyear-title">${window.i18n.t('festival.newYearHeading', { year: safeYear })}</p>
+                            <div class="newyear-subtitle">${window.i18n.t('festival.newYearSubtitle')}</div>
                         </div>
                     </div>
                     <div class="newyear-wishes">
-                        <p>${window.i18n ? window.i18n.t('festival.newYearMessage') : '新的一年，继续把热爱写进每一行代码。'}</p>
-                        <p class="muted">${window.i18n ? window.i18n.t('dialog.hint') : '提示：点击空白处或按 Esc 也可关闭。'}</p>
+                        <p>${window.i18n.t('festival.newYearMessage')}</p>
+                        <p class="muted">${window.i18n.t('dialog.hint')}</p>
                     </div>
                 </div>
                 <div class="newyear-footer">
-                    <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n ? window.i18n.t('festival.newYearButton') : '开启新一年'}</button>
+                    <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n.t('festival.newYearButton')}</button>
                 </div>
             `;
-
             if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
                 window.uiIcons.hydrate(container);
             }
-
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
-
             this.currentDialog = {
-                resolve: resolve,
-                reject: () => {}
+                resolve: (value) => resolve(value),
+                reject: () => { }
             };
         });
     }
-
     showSpringFestivalGreeting(now = new Date()) {
         return new Promise((resolve) => {
             this.resetDialogState();
-
-            const overlay = document.getElementById('dialog-overlay');
-            const container = document.getElementById('dialog-container');
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
             }
-
             const displayYear = (now instanceof Date) ? now.getFullYear() : new Date().getFullYear();
             const safeYear = this.escapeHtml(String(displayYear));
-
-            overlay.dataset.closeOnBackdrop = '1';
+            overlay.dataset['closeOnBackdrop'] = '1';
             container.classList.add('newyear-container');
-
             container.innerHTML = `
                 <div class="dialog-header newyear-header">
-                    <h3>${window.i18n ? window.i18n.t('festival.springFestivalTitle') : '春节快乐'}</h3>
-                    <button class="dialog-close" onclick="dialogManager.hideDialog()" aria-label="${window.i18n ? window.i18n.t('dialog.close') : '关闭'}">&times;</button>
+                    <h3>${window.i18n.t('festival.springFestivalTitle')}</h3>
+                    <button class="dialog-close" onclick="dialogManager.hideDialog()" aria-label="${window.i18n.t('dialog.close')}">&times;</button>
                 </div>
                 <div class="newyear-body">
                     <div class="newyear-hero">
                         <div class="newyear-badge" aria-hidden="true" data-ui-icon="sparkle"></div>
                         <div>
-                            <p class="newyear-title">${window.i18n ? window.i18n.t('festival.springFestivalHeading', { year: safeYear }) : safeYear + '，恭喜发财'}</p>
-                            <div class="newyear-subtitle">${window.i18n ? window.i18n.t('festival.springFestivalSubtitle') : '愿你：思路清晰，调试顺利，提交一次就 AC。'}</div>
+                            <p class="newyear-title">${window.i18n.t('festival.springFestivalHeading', { year: safeYear })}</p>
+                            <div class="newyear-subtitle">${window.i18n.t('festival.springFestivalSubtitle')}</div>
                         </div>
                     </div>
                     <div class="newyear-wishes">
-                        <p>${window.i18n ? window.i18n.t('festival.springFestivalMessage') : '新春快乐，写题愉快。'}</p>
-                        <p class="muted">${window.i18n ? window.i18n.t('dialog.hint') : '提示：点击空白处或按 Esc 也可关闭。'}</p>
+                        <p>${window.i18n.t('festival.springFestivalMessage')}</p>
+                        <p class="muted">${window.i18n.t('dialog.hint')}</p>
                     </div>
                 </div>
                 <div class="newyear-footer">
-                    <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n ? window.i18n.t('festival.springFestivalButton') : '开工！'}</button>
+                    <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n.t('festival.springFestivalButton')}</button>
                 </div>
             `;
-
             if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
                 window.uiIcons.hydrate(container);
             }
-
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
-
             this.currentDialog = {
-                resolve: resolve,
-                reject: () => {}
+                resolve: (value) => resolve(value),
+                reject: () => { }
             };
         });
     }
-
     confirmDialog() {
-        if (!this.currentDialog) return;
-
-        const input = document.getElementById('dialog-input');
-        const result = input ? input.value : true;
-
+        if (!this.currentDialog)
+            return;
+        const input = (document.getElementById('dialog-input'));
+        const result = input instanceof HTMLInputElement ? input.value : true;
         this.currentDialog.resolve(result);
         this.hideDialog();
     }
-
     cancelDialog() {
-        if (!this.currentDialog) return;
-
+        if (!this.currentDialog)
+            return;
         this.currentDialog.resolve(null);
         this.hideDialog();
     }
-
     actionDialog(actionId) {
-        if (!this.currentDialog) return;
+        if (!this.currentDialog)
+            return;
         this.currentDialog.resolve(actionId);
         this.hideDialog();
     }
-
     hideDialog() {
-        const overlay = document.getElementById('dialog-overlay');
+        const overlay = (document.getElementById('dialog-overlay'));
         const pending = this.currentDialog;
         this.currentDialog = null;
         try {
             if (pending && typeof pending.resolve === 'function') {
                 pending.resolve(null);
             }
-        } catch (_) {
+        }
+        catch (_) {
         }
         overlay.style.display = 'none';
         this.resetDialogState();
@@ -341,67 +329,61 @@ class DialogManager {
                 document.removeEventListener('keydown', this._keydownHandler, true);
                 this._keydownHandler = null;
             }
-        } catch (_) {
+        }
+        catch (_) {
         }
     }
-
     showGotoLineDialog() {
-        return this.showInputDialog(
-            window.i18n ? window.i18n.t('dialog.gotoLine') : '跳转到行号',
-            '1',
-            window.i18n ? window.i18n.t('dialog.gotoLinePlaceholder') : '请输入行号'
-        );
+        return this.showInputDialog(window.i18n.t('dialog.gotoLine'), '1', window.i18n.t('dialog.gotoLinePlaceholder'));
     }
-
     showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp') {
-        const errorTitle = window.i18n ? window.i18n.t('dialog.newFileDialogErrorTitle') : '新建文件 - 错误';
-        const title = errorMessage ? errorTitle : (window.i18n ? window.i18n.t('dialog.newFileDialogTitle') : '新建文件');
-        const placeholder = errorMessage
-            ? (window.i18n ? window.i18n.t('dialog.newFileDialogError', { msg: errorMessage }) : `错误: ${errorMessage}\n请输入文件名（如：main.cpp, test.py, data.txt）`)
-            : (window.i18n ? window.i18n.t('dialog.newFileDialogPlaceholder') : '请输入文件名（如：main.cpp, test.py, data.txt）');
+        const title = errorMessage ? window.i18n.t('dialog.newFileDialogErrorTitle') : window.i18n.t('dialog.newFileDialogTitle');
+        const placeholder = errorMessage ? window.i18n.t('dialog.newFileDialogError', { msg: errorMessage }) : window.i18n.t('dialog.newFileDialogPlaceholder');
         const initial = defaultName && typeof defaultName === 'string' ? defaultName : 'untitled.cpp';
         return this.showInputDialog(title, initial, placeholder);
     }
-
     showNewFolderDialog() {
-        return this.showInputDialog(
-            window.i18n ? window.i18n.t('dialog.newFolderDialogTitle') : '新建文件夹',
-            'new-folder',
-            window.i18n ? window.i18n.t('dialog.newFolderDialogPlaceholder') : '请输入文件夹名'
-        );
+        return this.showInputDialog(window.i18n.t('dialog.newFolderDialogTitle'), 'new-folder', window.i18n.t('dialog.newFolderDialogPlaceholder'));
     }
-
-    escapeAttribute(text) {
-        return this.escapeHtml(String(text ?? ''))
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    // 对消息做 HTML 转义，但允许调用方使用 \n 换行（以及历史遗留的 <br>）。
-    formatMessage(message) {
-        return this.escapeHtml(String(message ?? ''))
-            .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-            .replace(/\r?\n/g, '<br>');
-    }
-
     showError(message) {
         this.resetDialogState();
-        try { logError('[DialogShowError]', { message: String(message) }); } catch (_) { }
-        try { logWarn('[DialogShowErrorSuppressed]', String(message)); } catch (_) { }
+        try {
+            logError('[DialogShowError]', { message: String(message) });
+        }
+        catch (_) { }
+        try {
+            logWarn('[DialogShowErrorSuppressed]', String(message));
+        }
+        catch (_) { }
     }
-
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
+    escapeAttribute(text) {
+        return this.escapeHtml(String(text ?? ''))
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    /**
+     * 正文一律先转义，再只放回两类「排版用的东西」：显式换行与历史语言包里的 <br>。
+     * 语言包（dialog.* / tester.*）的值里本来就有 <br>，所以豁免必须留，
+     * 但除此之外任何标签都会被转义掉 —— 文件名、路径、报错正文都是从这儿进来的。
+     */
+    formatMessage(message) {
+        return this.escapeHtml(String(message ?? ''))
+            .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+            .replace(/\r?\n/g, '<br>');
+    }
 }
-
 let dialogManager;
 document.addEventListener('DOMContentLoaded', () => {
     dialogManager = new DialogManager();
     if (typeof window !== 'undefined') {
         window.dialogManager = dialogManager;
     }
-
 });
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = DialogManager;
+}

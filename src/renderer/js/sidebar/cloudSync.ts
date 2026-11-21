@@ -1088,10 +1088,11 @@ class CloudSyncPanel {
             }
             const entry = document.createElement('div');
             entry.className = 'context-menu-item';
-            entry.textContent = item.label;
+            const actionItem = item as ContextMenuActionItem;
+            entry.textContent = actionItem.label;
             entry.addEventListener('click', () => {
                 this.clearContextMenu();
-                item.action?.();
+                actionItem.action?.();
             });
             menu.appendChild(entry);
         });

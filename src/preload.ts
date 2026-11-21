@@ -1,3 +1,5 @@
+export {};
+
 const { contextBridge, ipcRenderer, shell, clipboard } = require('electron');
 const path = require('path');
 const os = require('os');

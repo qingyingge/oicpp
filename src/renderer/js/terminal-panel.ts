@@ -24,10 +24,10 @@ interface TerminalSession {
     muteRemoteOutput: boolean;
 }
 
-type XtermTerminal = import('@xterm/xterm').Terminal;
-type XtermBufferLine = import('@xterm/xterm').IBufferLine;
-type XtermBufferRange = import('@xterm/xterm').IBufferRange;
-type XtermLink = import('@xterm/xterm').ILink;
+type XtermTerminal = import('xterm').Terminal;
+type XtermBufferLine = import('xterm').IBufferLine;
+type XtermBufferRange = import('xterm').IBufferRange;
+type XtermLink = import('xterm').ILink;
 
 // @xterm/addon-fit declares FitAddon inside a module augmentation, so its
 // instance type is not reachable through an import type reference. Mirror the

@@ -147,13 +147,13 @@ class I18nManager {
 
             const messages = await window.electronAPI.getLanguageFile(this._currentLang);
             if (messages) {
-                i18next.addResourceBundle(this._currentLang, 'translation', messages, true, true);
+                i18next.addResourceBundle(this._currentLang, 'translation', messages as Record<string, unknown>, true, true);
 
                 // Also try to load fallback (Chinese)
                 if (this._currentLang !== 'zh-cn') {
                     const fallback = await window.electronAPI.getLanguageFile('zh-cn');
                     if (fallback) {
-                        i18next.addResourceBundle('zh-cn', 'translation', fallback, true, true);
+                        i18next.addResourceBundle('zh-cn', 'translation', fallback as Record<string, unknown>, true, true);
                     }
                 }
             }
