@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "es2022",
     "module": "commonjs",
-    "lib": ["es2022"],
+    "lib": ["es2022", "dom", "dom.iterable"],
     "strict": false,
     "noImplicitAny": false,
     "strictNullChecks": false,
