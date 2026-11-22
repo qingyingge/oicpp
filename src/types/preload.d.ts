@@ -1,0 +1,188 @@
+// preload 暴露给渲染层的 API 签名。源自 src/preload.js 的
+// exposeInMainWorld('electronAPI', {...}) 块，改 preload 时同步更新。
+// 批3：参数已按实现收窄（路径 string、载荷 unknown/Record、回调按 unwrap 形状）；
+// 批4：返回值已收窄（invoke → Promise<unknown>、订阅类 → 解订阅 () => void、send → void）。
+// AppSettings 是 main.ts 里的全局 interface，这里直接用。
+
+// preload 幂等守卫标记：同一上下文重复求值时不重复绑定 IPC（preload.ts 是 CommonJS 脚本，不能 declare global）
+var __oicppPreloadInitialized: boolean | undefined;
+
+interface ElectronAPI {
+  // 预加载块中的简写属性
+  ipcRenderer: {
+    send: (channel: string, ...args: unknown[]) => void;
+    invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+    on: (channel: string, listener: (...args: unknown[]) => void) => void;
+    once: (channel: string, listener: (...args: unknown[]) => void) => void;
+    removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+    removeAllListeners: (channel: string) => void;
+  };
+  platform: string;
+  // preload.js 实际未暴露此方法（compiler.js 有守卫降级），保留可选契约
+  isTestlibSelected?: (version: string) => Promise<unknown>;
+  openFile(): void;
+  openFolder(): void;
+  saveFile(filePath: string, content: string): Promise<unknown>;
+  saveAsFile(content: string): Promise<string>;
+  readFileContent(filePath: string): Promise<string>;
+  readFileBuffer(filePath: string): Promise<string>;
+  readZipTextFiles(zipPath: string): Promise<{ success?: boolean; error?: string; files?: unknown } | null>;
+  showItemInFolder(filePath: string): Promise<unknown>;
+  openPath(targetPath: string, options?: Record<string, unknown>): Promise<unknown>;
+  showOpenDialog(options: Record<string, unknown>): Promise<{ canceled?: boolean; filePaths?: string[] } | null>;
+  showSaveDialog(options: Record<string, unknown>): Promise<{ canceled?: boolean; filePath?: string } | null>;
+  saveTempFile(filePath: string, content: string): Promise<string>;
+  saveBinaryTempFile(fileName: string, base64Data: string): Promise<string>;
+  loadTempFile(filePath: string): Promise<unknown>;
+  deleteTempFile(filePath: string): Promise<unknown>;
+  getAllSettings(): Promise<AppSettings>;
+  getSettings(): Promise<Record<string, unknown>>;
+  sendSettingsPreview(settings: Record<string, unknown>): void;
+  updateSettings(newSettings: Record<string, unknown>): Promise<{ success?: boolean; error?: string } | null>;
+  updateEditorSettings(): void; // deprecated no-op
+  resetSettings(): Promise<{ success?: boolean; error?: string } | null>;
+  exportSettings(): Promise<unknown>;
+  importSettings(): Promise<unknown>;
+  saveSetting(key: string, value: unknown): Promise<unknown>;
+  openCompilerSettings(): Promise<unknown>;
+  openEditorSettings(): Promise<unknown>;
+  openTemplateSettings(): void;
+  openBackupSettings(): Promise<unknown>;
+  getPlatform(): Promise<string>;
+  getUserHome(): Promise<string>;
+  // 应用自有状态目录：数据根由主进程解析（家目录，或便携模式下的 exe 同级目录）。
+  // 渲染层不要用 getUserHome + pathJoin 自己拼 <home>/.oicpp-plus/...，那样便携模式必漏。
+  getUserDataPath(segments: string[]): Promise<string>;
+  readThirdPartyLicense(name: string): Promise<string>;
+  getUserIconPath(): Promise<string>;
+  getBuildInfo(): Promise<{ version?: string; buildTime?: string; author?: string; buildTag?: string; buildVersion?: string; buildNo?: string; clangdVersion?: string | null; clangFormatVersion?: string | null } | null>;
+  getDownloadedCompilers(): Promise<Array<unknown>>;
+  downloadCompiler(config: Record<string, unknown>): Promise<{ success?: boolean; error?: string; compilerPath?: string } | null>;
+  selectCompiler(version: string): Promise<{ success?: boolean; compilerPath?: string; error?: string } | null>;
+  getDownloadedTestlibs(): Promise<Array<unknown>>;
+  downloadTestlib(config: Record<string, unknown>): Promise<{ success?: boolean; error?: string; testlibPath?: string } | null>;
+  selectTestlib(version: string): Promise<{ success?: boolean; testlibPath?: string; error?: string } | null>;
+  testTestlib(testlibPath: string): Promise<{ success?: boolean; error?: string } | null>;
+  compileFile(options: Record<string, unknown>): Promise<{ success?: boolean; executablePath?: string; diagnostics?: unknown; stderr?: string; stdout?: string; exitCode?: number; graderExitCode?: number; contestantExitCode?: number; timeout?: boolean; outputLimitExceeded?: boolean; output?: string; time?: number; memoryBytes?: number; memoryLimitExceeded?: boolean; cached?: boolean; error?: unknown } | null>;
+  formatCppCode(options: Record<string, unknown>): Promise<{ ok?: boolean; content?: string; error?: string } | null>;
+  runExecutable(options: Record<string, unknown>): Promise<unknown>;
+  runProgram(executablePathOrOptions: string | Record<string, unknown>, input?: unknown, timeLimit?: number, memoryLimit?: number): Promise<{ success?: boolean; executablePath?: string; diagnostics?: unknown; stderr?: string; stdout?: string; exitCode?: number; graderExitCode?: number; contestantExitCode?: number; timeout?: boolean; outputLimitExceeded?: boolean; output?: string; time?: number; memoryBytes?: number; memoryLimitExceeded?: boolean; outputLimitBytes?: number; capturedOutputBytes?: number; observedOutputBytes?: number; cached?: boolean; error?: unknown } | null>;
+  runInteractive(options: Record<string, unknown>): Promise<{ success?: boolean; executablePath?: string; diagnostics?: unknown; stderr?: string; stdout?: string; exitCode?: number; graderExitCode?: number; contestantExitCode?: number; timeout?: boolean; outputLimitExceeded?: boolean; output?: string; time?: number; memoryBytes?: number; memoryLimitExceeded?: boolean; outputLimitBytes?: number; capturedOutputBytes?: number; observedOutputBytes?: number; cached?: boolean; error?: unknown } | null>;
+  startCompare(config: Record<string, unknown>): Promise<unknown>;
+  stopCompare(): Promise<unknown>;
+  onCompareProgress(cb: (data: { current: number; total: number; testIndex: number }) => void): () => void;
+  onCompareError(cb: (error: { testNumber?: unknown; input?: string; stdOutput?: string; testOutput?: string; inputTruncated?: boolean; stdOutputTruncated?: boolean; testOutputTruncated?: boolean; type?: unknown; code?: string; message?: string }) => void): () => void;
+  onCompareComplete(cb: (result: { completed?: number; failed?: number; stopped?: boolean }) => void): () => void;
+  onCompareWarning(cb: (data: { code?: string; type?: string; message?: string; completed?: number; total?: number; missing?: number }) => void): () => void;
+  readDirectory(dirPath: string): Promise<Array<{ path?: string; name?: string; type?: string; ext?: string } | null>>;
+  renameFile(oldPath: string, newPath: string, options?: Record<string, unknown>): Promise<{ success?: boolean } | null>;
+  deleteFile(filePath: string, options?: Record<string, unknown>): Promise<{ success?: boolean; error?: string } | null>;
+  clearDirectoryContents(dirPath: string): Promise<{ success?: boolean; error?: string; removed?: number } | null>;
+  writeFile(filePath: string, content: string): Promise<{ success?: boolean; ok?: boolean; error?: string } | null>;
+  createFile(filePath: string, content: string): Promise<{ success?: boolean; error?: string; filePath?: string } | null>;
+  createFolder(folderPath: string): Promise<unknown>;
+  checkFileExists(filePath: string): Promise<boolean>;
+  getPathInfo(filePath: string): Promise<{ dirname?: string; basenameWithoutExt?: string; basename?: string; filePath?: string; exists?: boolean; isFile?: boolean; isDirectory?: boolean; extname?: string } | null>;
+  ensureDirectory(dirPath: string): Promise<unknown>;
+  watchFile(filePath: string): Promise<{ success?: boolean; error?: string } | null>;
+  unwatchFile(filePath: string): Promise<unknown>;
+  pathJoin(...paths: string[]): Promise<string>;
+  pathDirname(filePath: string): Promise<string>;
+  getHomeDir(): Promise<string>;
+  ensureDir(dirPath: string): Promise<unknown>;
+  getTerminalFeatureStatus(): Promise<{ available: boolean; reason: string; detail: string } | null>;
+  createTerminal(options: Record<string, unknown>): Promise<unknown>;
+  writeTerminal(terminalId: string, data: string): void;
+  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<unknown>;
+  killTerminal(terminalId: string): Promise<unknown>;
+  listTerminals(): Promise<unknown>;
+  getTerminalTTY(terminalId: string): Promise<{ tty?: string } | null>;
+  onMenuSaveFile(callback: (...args: unknown[]) => void): () => void;
+  onApplySettingsPreview(callback: (...args: unknown[]) => void): () => void;
+  onSettingsApplied(callback: (...args: unknown[]) => void): () => void;
+  onMenuFormatCode(callback: (...args: unknown[]) => void): () => void;
+  onMenuFindReplace(callback: (...args: unknown[]) => void): () => void;
+  onMenuCompile(callback: (...args: unknown[]) => void): () => void;
+  onMenuCompileRun(callback: (...args: unknown[]) => void): () => void;
+  onMenuDebug(callback: (...args: unknown[]) => void): () => void;
+  onMenuNewTempFile(callback: (...args: unknown[]) => void): () => void;
+  onMenuOpenFile(callback: (...args: unknown[]) => void): () => void;
+  onMenuOpenFolder(callback: (...args: unknown[]) => void): () => void;
+  onMenuSaveAs(callback: (...args: unknown[]) => void): () => void;
+  onMenuOpenTerminal(callback: (...args: unknown[]) => void): () => void;
+  onMenuOpenBrowser(callback: (...args: unknown[]) => void): () => void;
+  onMenuNewBrowserTab(callback: (...args: unknown[]) => void): () => void;
+  onMenuAbout(callback: (...args: unknown[]) => void): () => void;
+  onMenuSettings(callback: (...args: unknown[]) => void): () => void;
+  onMenuCheckUpdates(callback: (...args: unknown[]) => void): () => void;
+  getUpdateDownloadStatus(): Promise<unknown>;
+  onUpdateDownloadStatus(callback: (payload: unknown) => void): () => void;
+  onAppToast(callback: (payload: { message?: string; type?: string }) => void): () => void;
+  onShowDebugDevelopingMessage(callback: (...args: unknown[]) => void): () => void;
+  onSettingsChanged(callback: (event: unknown, settingsType: unknown, newSettings: Record<string, unknown>) => void): () => void;
+  onSettingsReset(callback: (allSettings: InstanceType<typeof import('../js/main.js')>['settings']) => void): () => void;
+  onSettingsImported(callback: (allSettings: InstanceType<typeof import('../js/main.js')>['settings']) => void): () => void;
+  onThemeChanged(callback: (theme: string) => void): () => void;
+  onFileOpened(callback: (event: unknown, data: { fileName?: string; filePath?: string; content?: string }) => void): () => void;
+  onFileSaved(callback: (filePath: unknown, error: unknown) => void): () => void;
+  onFolderOpened(callback: (folderPath: unknown) => void): () => void;
+  reportWorkspacePath(folderPath: string): void;
+  onFileOpenedFromArgs(callback: (data: { path?: string; fileName?: string; content?: string; viewType?: string }) => void): () => void;
+  consumeStartupWorkspaceToOpen(): Promise<unknown>;
+  onExternalFileChange(callback: (payload: unknown) => void): () => void;
+  onSampleTesterCreateProblem(callback: (data: { problemName?: string; samples?: Array<{ input?: string; output?: string; timeLimit?: number }>; OJ?: string }) => void): () => void;
+  onTerminalData(callback: (payload: unknown) => void): () => void;
+  onTerminalExit(callback: (payload: unknown) => void): () => void;
+  getCpuThreads(): Promise<unknown>;
+  sendFeedback(): void; // deprecated no-op
+  listClientLogs(): Promise<{ success?: boolean; message?: string; logs?: unknown } | null>;
+  uploadClientLog(filePath: string): Promise<{ success?: boolean; message?: string; traceCode?: string; uploadedAt?: string } | null>;
+  getDeviceInfo(): Promise<unknown>;
+  getEncodedToken(): Promise<unknown>;
+  openExternal(url: string): Promise<unknown>;
+  getLanguage(): Promise<string>;
+  getLanguageFile(langCode: string): Promise<unknown>;
+  getAvailableLanguages(): Promise<Array<{ code: string; name: string; nameEn: string }>>;
+  onLanguageChanged(callback: (langCode: string) => void): () => void;
+  startIdeLogin(): Promise<{ ok?: boolean; message?: string } | null>;
+  getIdeLoginStatus(): Promise<{ loggedIn?: boolean; user?: { username?: string } | null } | null>;
+  logoutIdeAccount(): Promise<{ ok?: boolean } | null>;
+  cloudSyncRequest(payload: Record<string, unknown>): Promise<{ ok?: boolean; status?: number; data?: { code?: number; msg?: string; data?: unknown }; error?: string } | null>;
+  backupSettingsToCloud(): Promise<{ success?: boolean; error?: string } | null>;
+  getSettingsBackupInfo(): Promise<{ success?: boolean; error?: string; info: { displayTime?: string; timestampRaw?: string; deviceName?: string } } | null>;
+  syncSettingsFromCloud(): Promise<{ success?: boolean; error?: string } | null>;
+  onIdeLoginUpdated(callback: (payload: { loggedIn?: boolean; user?: unknown; message?: string }) => void): () => void;
+  onIdeLoginError(callback: (payload: { message?: string }) => void): () => void;
+  getRecentFiles(): Promise<Array<{ path?: string; name?: string }>>;
+  openRecentFile(filePath: string): Promise<unknown>;
+  getFileHistory(): Promise<unknown>;
+  addToFileHistory(filePath: string): Promise<unknown>;
+  openFileFromHistory(filePath: string): Promise<unknown>;
+  clearFileHistory(): Promise<unknown>;
+  saveLastOpenTabs(tabs: unknown): Promise<unknown>;
+  getLastOpenTabs(): Promise<unknown>;
+  onMenuOpenFileHistory(callback: (...args: unknown[]) => void): () => void;
+  relaunchApp(): Promise<unknown>;
+  clipboardWriteText(text: string): Promise<{ success?: boolean; error?: string } | null>;
+  clipboardReadText(): Promise<unknown>;
+  walkDirectory(dirPath: string, options?: { includeExts?: string[]; excludeGlobs?: string[]; maxFiles?: number }): Promise<{ success?: boolean; error?: string; files?: Array<{ name: string; path: string; ext: string }> } | null>;
+  lspStart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
+  lspStop(): Promise<unknown>;
+  lspRestart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
+  lspRequest(method: string, params: unknown, requestId?: unknown): Promise<unknown>;
+  lspCancel(requestId: unknown): Promise<unknown>;
+  lspApplyEditResult(requestId: unknown, result: unknown): Promise<unknown>;
+  lspNotify(method: string, params: unknown): Promise<{ ok?: boolean; error?: string } | null>;
+  onLspNotification(callback: (payload: { method?: string; params: Record<string, unknown> }) => void): () => void;
+  onLspApplyEdit(callback: (payload: { requestId?: unknown; edit?: unknown }) => void): () => void;
+  onRequestSaveAll(callback: () => void): () => void;
+  notifySaveAllComplete(): void;
+  notifySaveAllFailed(payload: Record<string, unknown>): void;
+  browserResolveUrl(url: string): Promise<unknown>;
+  browserGetPageTitle(url: string): Promise<unknown>;
+  onBrowserOpenNewTab(callback: (payload: unknown) => void): () => void;
+}
+
+interface Window {
+  electronAPI: ElectronAPI;
+}
