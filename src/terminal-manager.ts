@@ -1,24 +1,36 @@
-const os = require('os');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+import * as os from 'os';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import { spawn, spawnSync } from 'child_process';
+import { t } from './lang';
+import { terminateProcessTree } from './utils/process-supervisor';
 
-let pty = null;
-let ptyLoadError = null;
-let ptyLoadTargets = [];
+type PtyModule = { spawn: (file: string, args: string[], options?: Record<string, unknown>) => PtyProcess };
+let pty: PtyModule | null = null;
+let ptyLoadError: Error | null = null;
+let ptyLoadTargets: string[] = [];
 
-function tryLoadPty(moduleId) {
+function tryLoadPty(moduleId: string): PtyModule | null {
     try {
         return require(moduleId);
     } catch (error) {
-        ptyLoadError = error;
+        ptyLoadError = error as Error;
         return null;
     }
 }
 
-function resolvePackagedNodePtyCandidates() {
-    const candidates = [];
+/**
+ * 创建带业务错误码的 Error。调用方用 error.code 判断失败类型，而非匹配 message 文本。
+ */
+function errorWithCode(message: string, code: string): Error & { code: string } {
+    const err = new Error(message) as Error & { code: string };
+    err.code = code;
+    return err;
+}
+
+function resolvePackagedNodePtyCandidates(): string[] {
+    const candidates: string[] = [];
 
     // In packaged apps, node-pty native binaries should live under app.asar.unpacked.
     if (process.resourcesPath) {
@@ -59,19 +71,114 @@ if (!pty) {
     }
 }
 
+// 终端输出聚合窗口：足够小以保持跟手感，又能把高频 chunk 合并成少量 IPC
+const TERMINAL_DATA_FLUSH_MS = 8;
+
+// node-pty 未随包提供类型声明，这里按实际用到的成员显式建模
+interface PtyProcess {
+    pid?: number;
+    write(data: string): void;
+    resize(cols: number, rows: number): void;
+    kill(): void;
+    onData(cb: (data: string) => void): void;
+    onExit(cb: (event?: { exitCode?: number; signal?: string }) => void): void;
+}
+
+interface Session {
+    id: string;
+    shell: string;
+    cwd: string;
+    cols: number;
+    rows: number;
+    createdAt: number;
+    backend: 'pty' | 'process';
+    pty?: PtyProcess;
+    process?: import('node:child_process').ChildProcess;
+    wrappedWithScript?: boolean;
+    name: string;
+    disposed?: boolean;
+}
+
+interface SendToRenderer {
+    (channel: string, payload: unknown): void;
+}
+
 class IntegratedTerminalManager {
-    constructor(options = {}) {
+    sessions: Map<string, Session>;
+    _pendingTerminalData: Map<string, string[]>;
+    _terminalDataFlushTimer: NodeJS.Timeout | null;
+    _rawSend: SendToRenderer;
+    sendToRenderer: SendToRenderer;
+
+    constructor(options: { sendToRenderer?: SendToRenderer } = {}) {
         this.sessions = new Map();
-        this.sendToRenderer = typeof options.sendToRenderer === 'function'
+        const rawSendToRenderer = typeof options.sendToRenderer === 'function'
             ? options.sendToRenderer
-            : () => {};
+            : () => { };
+        this._pendingTerminalData = new Map();
+        this._terminalDataFlushTimer = null;
+        this._rawSend = rawSendToRenderer;
+        this.sendToRenderer = (channel: string, payload: unknown) => {
+            // 终端输出按 8ms 窗口聚合：cat/ls -R 这类命令下 PTY 每秒可产生
+            // 数百个 chunk，逐条 send 会打满 IPC 队列并让终端掉帧
+            if (channel === 'terminal-data' && payload && typeof (payload as { terminalId?: string }).terminalId === 'string') {
+                const chunks = this._pendingTerminalData.get((payload as { terminalId: string }).terminalId);
+                if (chunks) {
+                    chunks.push((payload as { data?: string }).data as string);
+                } else {
+                    this._pendingTerminalData.set((payload as { terminalId: string }).terminalId, [(payload as { data?: string }).data as string]);
+                }
+                if (!this._terminalDataFlushTimer) {
+                    this._terminalDataFlushTimer = setTimeout(() => this._flushTerminalData(), TERMINAL_DATA_FLUSH_MS);
+                    if (typeof this._terminalDataFlushTimer.unref === 'function') {
+                        this._terminalDataFlushTimer.unref();
+                    }
+                }
+                return;
+            }
+            // 会话退出前先把该会话的待发数据送出去，避免丢失
+            if (channel === 'terminal-exit' && payload && typeof (payload as { terminalId?: string }).terminalId === 'string') {
+                this._flushTerminalData((payload as { terminalId: string }).terminalId);
+            }
+            rawSendToRenderer(channel, payload);
+        };
     }
 
-    isAvailable() {
+    _flushTerminalData(onlyTerminalId?: string): void {
+        if (onlyTerminalId) {
+            const chunks = this._pendingTerminalData.get(onlyTerminalId);
+            if (!chunks) return;
+            this._pendingTerminalData.delete(onlyTerminalId);
+            this._rawSend('terminal-data', { terminalId: onlyTerminalId, data: chunks.join('') });
+            return;
+        }
+        if (this._terminalDataFlushTimer) {
+            clearTimeout(this._terminalDataFlushTimer);
+            this._terminalDataFlushTimer = null;
+        }
+        if (this._pendingTerminalData.size === 0) return;
+        const pending = this._pendingTerminalData;
+        this._pendingTerminalData = new Map();
+        for (const [terminalId, chunks] of pending) {
+            this._rawSend('terminal-data', { terminalId, data: chunks.join('') });
+        }
+    }
+
+    isAvailable(): boolean {
         return !!pty || this._isInteractiveFallbackAvailable();
     }
 
-    getStatus() {
+    _getPtyLoadErrorDetail(): string {
+        const message = ptyLoadError
+            ? (ptyLoadError.message || String(ptyLoadError))
+            : t('terminal.nodePtyNotInstalled');
+        const targetInfo = ptyLoadTargets.length > 0
+            ? `\n${t('terminal.ptyLoadTargets', { targets: ptyLoadTargets.join(' | ') })}`
+            : '';
+        return `${message}${targetInfo}`;
+    }
+
+    getStatus(): { available: boolean; reason: string; detail: string } {
         if (pty) {
             return {
                 available: true,
@@ -81,53 +188,33 @@ class IntegratedTerminalManager {
         }
 
         if (this._isInteractiveFallbackAvailable()) {
-            const message = ptyLoadError
-                ? (ptyLoadError.message || String(ptyLoadError))
-                : 'node-pty not installed';
-            const targetInfo = ptyLoadTargets.length > 0
-                ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-                : '';
-
             return {
                 available: true,
-                reason: 'node-pty 不可用，已启用兼容终端',
-                detail: `${message}${targetInfo}`
+                reason: t('terminal.ptyFallbackActive'),
+                detail: this._getPtyLoadErrorDetail()
             };
         }
 
         if (this._isProcessFallbackAvailable() && process.platform === 'win32') {
-            const message = ptyLoadError
-                ? (ptyLoadError.message || String(ptyLoadError))
-                : 'node-pty not installed';
-            const targetInfo = ptyLoadTargets.length > 0
-                ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-                : '';
             return {
                 available: false,
-                reason: 'node-pty 不可用（Windows 终端需 PTY 支持）',
-                detail: `${message}${targetInfo}\n请重新安装依赖并确保 node-pty 原生模块可加载。`
+                reason: t('terminal.ptyRequiredWindows'),
+                detail: `${this._getPtyLoadErrorDetail()}\n${t('terminal.reinstallPty')}`
             };
         }
 
-        const message = ptyLoadError
-            ? (ptyLoadError.message || String(ptyLoadError))
-            : 'node-pty not installed';
-        const targetInfo = ptyLoadTargets.length > 0
-            ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-            : '';
-
         return {
             available: false,
-            reason: 'node-pty 不可用',
-            detail: `${message}${targetInfo}`
+            reason: t('terminal.ptyUnavailable'),
+            detail: this._getPtyLoadErrorDetail()
         };
     }
 
-    _isProcessFallbackAvailable() {
+    _isProcessFallbackAvailable(): boolean {
         return typeof spawn === 'function';
     }
 
-    _isInteractiveFallbackAvailable() {
+    _isInteractiveFallbackAvailable(): boolean {
         if (!this._isProcessFallbackAvailable()) {
             return false;
         }
@@ -136,17 +223,17 @@ class IntegratedTerminalManager {
         return process.platform !== 'win32';
     }
 
-    _resolveDefaultShell() {
+    _resolveDefaultShell(): string {
         if (process.platform === 'win32') {
-            return process.env.POWERSHELL_EXE || 'powershell.exe';
+            return process.env['POWERSHELL_EXE'] || 'powershell.exe';
         }
         if (process.platform === 'darwin') {
-            return process.env.SHELL || '/bin/zsh';
+            return process.env['SHELL'] || '/bin/zsh';
         }
-        return process.env.SHELL || '/bin/bash';
+        return process.env['SHELL'] || '/bin/bash';
     }
 
-    _extractExecutablePath(shellValue) {
+    _extractExecutablePath(shellValue: string): string {
         const raw = String(shellValue || '').trim();
         if (!raw) {
             return '';
@@ -167,12 +254,15 @@ class IntegratedTerminalManager {
         return raw.slice(0, firstSpace).trim();
     }
 
-    _buildShellCandidates(preferredShell) {
+    _buildShellCandidates(preferredShell: string): string[] {
         const preferred = this._extractExecutablePath(preferredShell);
-        const envShell = this._extractExecutablePath(process.env.SHELL);
-        const candidates = [];
+        const envShell = this._extractExecutablePath(process.env['SHELL'] ?? '');
+        const candidates: string[] = [];
 
-        const pushCandidate = (value) => {
+        const pushCandidate = (value: string | undefined) => {
+            if (!value) {
+                return;
+            }
             const next = this._extractExecutablePath(value);
             if (!next) {
                 return;
@@ -194,7 +284,7 @@ class IntegratedTerminalManager {
 
         if (process.platform === 'win32') {
             pushCandidate(envShell);
-            pushCandidate(process.env.POWERSHELL_EXE);
+            pushCandidate(process.env['POWERSHELL_EXE']);
             pushCandidate('powershell.exe');
             pushCandidate('pwsh.exe');
             pushCandidate('cmd.exe');
@@ -210,7 +300,7 @@ class IntegratedTerminalManager {
         return candidates;
     }
 
-    _isUsableShellCandidate(shellPath) {
+    _isUsableShellCandidate(shellPath: string): boolean {
         const candidate = this._extractExecutablePath(shellPath);
         if (!candidate) {
             return false;
@@ -243,7 +333,7 @@ class IntegratedTerminalManager {
         }
     }
 
-    _resolveDefaultArgs(shellPath) {
+    _resolveDefaultArgs(shellPath: string): string[] {
         const lower = String(shellPath || '').toLowerCase();
         if (process.platform === 'win32') {
             if (lower.includes('powershell')) {
@@ -255,8 +345,8 @@ class IntegratedTerminalManager {
         return [];
     }
 
-    _resolveFallbackCwd() {
-        const candidates = [];
+    _resolveFallbackCwd(): string {
+        const candidates: string[] = [];
         try {
             candidates.push(process.cwd());
         } catch (_) {
@@ -285,7 +375,7 @@ class IntegratedTerminalManager {
         return process.platform === 'win32' ? 'C:\\' : '/';
     }
 
-    _resolveCwd(candidate) {
+    _resolveCwd(candidate: string | undefined): string {
         const fallback = this._resolveFallbackCwd();
         if (!candidate || typeof candidate !== 'string') {
             return fallback;
@@ -303,8 +393,8 @@ class IntegratedTerminalManager {
         }
     }
 
-    _buildSpawnEnv() {
-        const nextEnv = {};
+    _buildSpawnEnv(): Record<string, string> {
+        const nextEnv: Record<string, string> = {};
         for (const [key, value] of Object.entries(process.env || {})) {
             if (typeof key !== 'string' || !key) {
                 continue;
@@ -317,38 +407,30 @@ class IntegratedTerminalManager {
 
         if (process.platform === 'darwin') {
             // Avoid inheriting parent Terminal.app/iTerm session identity into embedded shells.
-            delete nextEnv.TERM_SESSION_ID;
-            delete nextEnv.SECURITYSESSIONID;
-            delete nextEnv.ITERM_SESSION_ID;
-            nextEnv.TERM_PROGRAM = 'oicpp';
-            nextEnv.TERM_PROGRAM_VERSION = 'embedded';
+            delete nextEnv['TERM_SESSION_ID'];
+            delete nextEnv['SECURITYSESSIONID'];
+            delete nextEnv['ITERM_SESSION_ID'];
+            nextEnv['TERM_PROGRAM'] = 'oicpp';
+            nextEnv['TERM_PROGRAM_VERSION'] = 'embedded';
         }
 
         if (process.platform === 'win32') {
-            if (!nextEnv.LANG) {
-                nextEnv.LANG = 'zh_CN.UTF-8';
+            if (!nextEnv['LANG']) {
+                nextEnv['LANG'] = 'zh_CN.UTF-8';
             }
-            if (!nextEnv.LC_ALL) {
-                nextEnv.LC_ALL = 'C.UTF-8';
+            if (!nextEnv['LC_ALL']) {
+                nextEnv['LC_ALL'] = 'C.UTF-8';
             }
-            if (!nextEnv.PYTHONIOENCODING) {
-                nextEnv.PYTHONIOENCODING = 'utf-8';
+            if (!nextEnv['PYTHONIOENCODING']) {
+                nextEnv['PYTHONIOENCODING'] = 'utf-8';
             }
         }
 
-        nextEnv.TERM = 'xterm-256color';
-        // 告知 shell 与终端工具链支持 24 位真彩色，oh-my-posh 等主题依赖该变量输出彩色提示符。
-        if (!nextEnv.COLORTERM) {
-            nextEnv.COLORTERM = 'truecolor';
-        }
-        if (process.platform !== 'darwin') {
-            nextEnv.TERM_PROGRAM = 'oicpp';
-            nextEnv.TERM_PROGRAM_VERSION = 'embedded';
-        }
+        nextEnv['TERM'] = 'xterm-256color';
         return nextEnv;
     }
 
-    _resolveProcessFallbackArgs(shellPath, requestedArgs) {
+    _resolveProcessFallbackArgs(shellPath: string, requestedArgs: string[] | null | undefined): string[] {
         if (Array.isArray(requestedArgs) && requestedArgs.length > 0) {
             return requestedArgs;
         }
@@ -368,10 +450,10 @@ class IntegratedTerminalManager {
         return [];
     }
 
-    _resolveProcessFallbackSpawnSpec(shellPath, args) {
+    _resolveProcessFallbackSpawnSpec(shellPath: string, args: string[] | undefined): { command: string; args: string[]; wrappedWithScript: boolean } {
         const normalizedArgs = Array.isArray(args) ? args : [];
 
-        const quotePosixArg = (value) => {
+        const quotePosixArg = (value: unknown): string => {
             const text = String(value ?? '');
             if (!text) {
                 return "''";
@@ -421,7 +503,7 @@ class IntegratedTerminalManager {
         };
     }
 
-    _runShellPreflight(shellPath, args, cwd, env) {
+    _runShellPreflight(shellPath: string, args: string[], cwd: string, env: Record<string, string>): { ok: boolean; detail: string } {
         if (process.platform !== 'darwin') {
             return { ok: true, detail: '' };
         }
@@ -461,18 +543,24 @@ class IntegratedTerminalManager {
         } catch (error) {
             return {
                 ok: false,
-                detail: error?.message || String(error)
+                detail: error instanceof Error ? error.message : String(error)
             };
         }
     }
 
-    _spawnProcessFallbackSession({ shellPath, requestedArgs, cwd, env, cols, rows, name }) {
+    _spawnProcessFallbackSession({ shellPath, requestedArgs, cwd, env, cols, rows, name }: {
+        shellPath: string;
+        requestedArgs: string[] | null | undefined;
+        cwd: string;
+        env: Record<string, string>;
+        cols: number;
+        rows: number;
+        name?: string;
+    }): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number | undefined; backend: string } {
         const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
-            const err = new Error(`兼容终端预检查失败: ${preflight.detail}`);
-            err.code = 'SHELL_PREFLIGHT_FAILED';
-            throw err;
+            throw errorWithCode(t('terminal.preflightFailed', { error: preflight.detail }), 'SHELL_PREFLIGHT_FAILED');
         }
 
         const spawnSpec = this._resolveProcessFallbackSpawnSpec(shellPath, args);
@@ -481,11 +569,12 @@ class IntegratedTerminalManager {
             cwd,
             env,
             windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: process.platform !== 'win32'
         });
 
         const sessionId = crypto.randomUUID();
-        const session = {
+        const session: Session = {
             id: sessionId,
             shell: shellPath,
             cwd,
@@ -502,7 +591,8 @@ class IntegratedTerminalManager {
 
         this.sessions.set(sessionId, session);
 
-        const onData = (data) => {
+        const onData = (data: string | Buffer) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data: typeof data === 'string' ? data : Buffer.from(data || '').toString('utf8')
@@ -512,15 +602,17 @@ class IntegratedTerminalManager {
         child.stdout?.on('data', onData);
         child.stderr?.on('data', onData);
 
-        child.on('error', (error) => {
+        child.on('error', (error: Error) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
-                data: `\r\n[Error] 兼容终端进程异常: ${error?.message || String(error)}\r\n`
+                data: `\r\n[Error] ${t('terminal.processError', { error: error?.message || String(error) })}\r\n`
             });
         });
 
-        child.on('close', (code, signal) => {
+        child.on('close', (code: number | null, signal: string | null) => {
             this.sessions.delete(sessionId);
+            if (session.disposed) return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: typeof code === 'number' ? code : null,
@@ -540,11 +632,10 @@ class IntegratedTerminalManager {
         };
     }
 
-    createSession(options = {}) {
+    createSession(options: { shell?: string; args?: string[]; cwd?: string; cols?: number; rows?: number; name?: string } = {}): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number | undefined; backend: string } {
         if (!this.isAvailable()) {
             const status = this.getStatus();
-            const err = new Error(`${status.reason}: ${status.detail}`);
-            err.code = 'TERMINAL_UNAVAILABLE';
+            const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_UNAVAILABLE');
             throw err;
         }
 
@@ -562,19 +653,17 @@ class IntegratedTerminalManager {
         const spawnEnv = this._buildSpawnEnv();
 
         if (shellCandidates.length === 0) {
-            const err = new Error('未找到可用的 shell 候选项');
-            err.code = 'SHELL_UNAVAILABLE';
+            const err = errorWithCode(t('terminal.shellUnavailable'), 'SHELL_UNAVAILABLE');
             throw err;
         }
 
         if (!pty) {
             if (!this._isInteractiveFallbackAvailable()) {
                 const status = this.getStatus();
-                const err = new Error(`${status.reason}: ${status.detail}`);
-                err.code = 'TERMINAL_REQUIRES_PTY';
+                const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_REQUIRES_PTY');
                 throw err;
             }
-            const fallbackErrors = [];
+            const fallbackErrors: string[] = [];
             for (const fallbackShell of shellCandidates) {
                 try {
                     return this._spawnProcessFallbackSession({
@@ -587,27 +676,27 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                    fallbackErrors.push(`${fallbackShell} -> ${(fallbackError as Error)?.message || String(fallbackError)}`);
                 }
             }
 
-            const err = new Error(`兼容终端启动失败: ${fallbackErrors.join(' || ') || '未知错误'}`);
-            err.code = 'PROCESS_FALLBACK_FAILED';
+            const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
+            const err = errorWithCode(t('terminal.fallbackStartFailed', { error: errorDetail }), 'PROCESS_FALLBACK_FAILED');
             throw err;
         }
 
-        let ptyProcess = null;
-        let activeShell = shellCandidates[0];
+        let ptyProcess: PtyProcess | null = null;
+        let activeShell = shellCandidates[0] ?? '';
         let activeArgs = requestedArgs || this._resolveDefaultArgs(activeShell);
-        let lastSpawnError = null;
-        const spawnErrors = [];
+        let lastSpawnError: Error | null = null;
+        const spawnErrors: string[] = [];
 
         for (let index = 0; index < shellCandidates.length; index += 1) {
-            const candidateShell = shellCandidates[index];
+            const candidateShell = shellCandidates[index] ?? '';
             const candidateArgs = (requestedArgs && index === 0)
                 ? requestedArgs
                 : this._resolveDefaultArgs(candidateShell);
-            const attempts = [candidateArgs];
+            const attempts: string[][] = [candidateArgs];
 
             if (process.platform !== 'win32' && Array.isArray(candidateArgs) && candidateArgs.length > 0) {
                 attempts.push([]);
@@ -627,8 +716,8 @@ class IntegratedTerminalManager {
                     activeArgs = argsAttempt;
                     break;
                 } catch (error) {
-                    lastSpawnError = error;
-                    const errMsg = error?.message || String(error);
+                    lastSpawnError = error as Error;
+                    const errMsg = error instanceof Error ? error.message : String(error);
                     spawnErrors.push(`${candidateShell} ${JSON.stringify(argsAttempt)} -> ${errMsg}`);
                 }
             }
@@ -639,7 +728,7 @@ class IntegratedTerminalManager {
         }
 
         if (!ptyProcess) {
-            const fallbackErrors = [];
+            const fallbackErrors: string[] = [];
             for (const candidateShell of shellCandidates) {
                 try {
                     return this._spawnProcessFallbackSession({
@@ -652,24 +741,31 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${candidateShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                    fallbackErrors.push(`${candidateShell} -> ${(fallbackError as Error)?.message || String(fallbackError)}`);
                 }
             }
 
             const detail = lastSpawnError
                 ? (lastSpawnError.message || String(lastSpawnError))
-                : '未知错误';
+                : t('terminal.unknownError');
             const attempted = shellCandidates.join(' | ');
-            const trace = spawnErrors.length > 0 ? `; node-pty: ${spawnErrors.join(' || ')}` : '';
-            const fallbackTrace = fallbackErrors.length > 0 ? `; 兼容终端: ${fallbackErrors.join(' || ')}` : '';
-            const err = new Error(`启动 shell 失败: ${detail}. 尝试候选: ${attempted}${trace}${fallbackTrace}`);
-            err.code = 'SHELL_SPAWN_FAILED';
-            throw err;
+            const ptyTrace = spawnErrors.length > 0
+                ? `; ${t('terminal.ptyAttempts', { attempts: spawnErrors.join(' || ') })}`
+                : '';
+            const fallbackTrace = fallbackErrors.length > 0
+                ? `; ${t('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
+                : '';
+            throw errorWithCode(t('terminal.shellSpawnFailed', {
+                error: detail,
+                candidates: attempted,
+                ptyTrace,
+                fallbackTrace
+            }), 'SHELL_SPAWN_FAILED');
         }
 
         const sessionId = crypto.randomUUID();
 
-        const session = {
+        const session: Session = {
             id: sessionId,
             shell: activeShell,
             cwd,
@@ -685,15 +781,17 @@ class IntegratedTerminalManager {
 
         this.sessions.set(sessionId, session);
 
-        ptyProcess.onData((data) => {
+        ptyProcess.onData((data: string) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data
             });
         });
 
-        ptyProcess.onExit((event = {}) => {
+        ptyProcess.onExit((event: { exitCode?: number; signal?: string } = {}) => {
             this.sessions.delete(sessionId);
+            if (session.disposed) return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: event.exitCode,
@@ -713,7 +811,7 @@ class IntegratedTerminalManager {
         };
     }
 
-    write(terminalId, data) {
+    write(terminalId: string, data: string): boolean {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -739,7 +837,7 @@ class IntegratedTerminalManager {
         return true;
     }
 
-    resize(terminalId, cols, rows) {
+    resize(terminalId: string, cols: number, rows: number): boolean {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -750,6 +848,7 @@ class IntegratedTerminalManager {
         session.rows = nextRows;
 
         if (session.backend === 'process') {
+            // 管道后端无法动态调整子进程窗口大小，仅记录尺寸供后续会话使用
             return true;
         }
 
@@ -761,7 +860,7 @@ class IntegratedTerminalManager {
         return true;
     }
 
-    kill(terminalId) {
+    kill(terminalId: string): boolean {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -770,9 +869,9 @@ class IntegratedTerminalManager {
         if (session.backend === 'process') {
             try {
                 if (session.process && !session.process.killed) {
-                    session.process.kill();
+                    terminateProcessTree(session.process);
                 }
-            } catch (_) {}
+            } catch (_) { }
             this.sessions.delete(terminalId);
             return true;
         }
@@ -782,27 +881,27 @@ class IntegratedTerminalManager {
         }
 
         try {
-            session.pty.kill();
-        } catch (_) {}
+            terminateProcessTree(session.pty);
+        } catch (_) { }
         this.sessions.delete(terminalId);
         return true;
     }
 
-    listSessions() {
+    listSessions(): Array<{ terminalId: string; shell: string; cwd: string; cols: number; rows: number; pid: number | null; backend: string; name: string; createdAt: number }> {
         return Array.from(this.sessions.values()).map((session) => ({
             terminalId: session.id,
             shell: session.shell,
             cwd: session.cwd,
             cols: session.cols,
             rows: session.rows,
-            pid: session.backend === 'process' ? session.process?.pid : session.pty?.pid,
+            pid: (session.backend === 'process' ? session.process?.pid : session.pty?.pid) ?? null,
             backend: session.backend || 'pty',
             name: session.name,
             createdAt: session.createdAt
         }));
     }
 
-    _resolveSessionPid(session) {
+    _resolveSessionPid(session: Session): number | null {
         if (!session) {
             return null;
         }
@@ -810,10 +909,32 @@ class IntegratedTerminalManager {
         const pid = session.backend === 'process'
             ? session.process?.pid
             : session.pty?.pid;
-        return Number.isInteger(pid) && pid > 0 ? pid : null;
+        return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null;
     }
 
-    _resolvePosixTTYFromPid(pid) {
+    _readProcessStartToken(pid: number): string | null {
+        if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) return null;
+        if (process.platform === 'linux') {
+            try {
+                const stat = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
+                const close = stat.lastIndexOf(')');
+                if (close === -1) return null;
+                const fields = stat.slice(close + 2).trim().split(/\s+/);
+                return fields[19] || null;
+            } catch (_) {
+                return null;
+            }
+        }
+        if (process.platform === 'darwin') {
+            try {
+                const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
+                if (result.status === 0) return String(result.stdout || '').trim() || null;
+            } catch (_) { }
+        }
+        return null;
+    }
+
+    _resolvePosixTTYFromPid(pid: number): string | null {
         if (process.platform === 'darwin') {
             try {
                 const ps = spawnSync('ps', ['-p', String(pid), '-o', 'tty='], { encoding: 'utf8' });
@@ -876,7 +997,7 @@ class IntegratedTerminalManager {
         return null;
     }
 
-    getSessionTTY(terminalId) {
+    getSessionTTY(terminalId: string): string | null {
         if (process.platform !== 'linux' && process.platform !== 'darwin') {
             return null;
         }
@@ -890,16 +1011,24 @@ class IntegratedTerminalManager {
         if (!pid) {
             return null;
         }
+        const startToken = this._readProcessStartToken(pid);
+        const tty = this._resolvePosixTTYFromPid(pid);
+        if (!tty) return null;
+        const afterToken = this._readProcessStartToken(pid);
+        if (startToken && afterToken && startToken !== afterToken) return null;
 
-        return this._resolvePosixTTYFromPid(pid);
+        return tty;
     }
 
-    disposeAll() {
-        for (const [id] of this.sessions.entries()) {
+    disposeAll(): void {
+        for (const [id, session] of this.sessions.entries()) {
+            session.disposed = true;
             this.kill(id);
         }
         this.sessions.clear();
     }
 }
 
-module.exports = IntegratedTerminalManager;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = IntegratedTerminalManager;
+}

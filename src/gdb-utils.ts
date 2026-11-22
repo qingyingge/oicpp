@@ -1,36 +1,47 @@
 class Token {
-    constructor(start, end, type) {
+    static Undefined = 0;
+    static OpenBrace = 1;
+    static CloseBrace = 2;
+    static Equal = 3;
+    static String = 4;
+    static Comma = 5;
+
+    start: number;
+    end: number;
+    type: number;
+    hasRepeatedChar: boolean;
+
+    constructor(start: number, end: number, type: number) {
         this.start = start;
         this.end = end;
         this.type = type;
         this.hasRepeatedChar = false;
     }
+
+    extractString(s: string): string {
+        return s.substring(this.start, this.end);
+    }
+
+    trim(s: string): void {
+        while (this.start < s.length && (s[this.start] === ' ' || s[this.start] === '\t' || s[this.start] === '\n')) {
+            this.start++;
+        }
+        while (this.end > 0 && (s[this.end - 1] === ' ' || s[this.end - 1] === '\t' || s[this.end - 1] === '\n')) {
+            this.end--;
+        }
+    }
 }
-Token.Undefined  = 0;
-Token.OpenBrace  = 1;
-Token.CloseBrace = 2;
-Token.Equal      = 3;
-Token.String     = 4;
-Token.Comma      = 5;
-Token.prototype.extractString = function (s) {
-    return s.substring(this.start, this.end);
-};
-Token.prototype.trim = function (s) {
-    while (this.start < s.length && (s[this.start] === ' ' || s[this.start] === '\t' || s[this.start] === '\n')) {
-        this.start++;
-    }
-    while (this.end > 0 && (s[this.end - 1] === ' ' || s[this.end - 1] === '\t' || s[this.end - 1] === '\n')) {
-        this.end--;
-    }
-};
-function skipShortenedString(str, pos) {
+
+const _reRepeatedChars = /^((\\'.{1,6}\\')|('.{1,6}'))[ \t](<repeats[ \t][0-9]+[ \t]times>)/;
+
+function skipShortenedString(str: string, pos: number): number {
     while (pos < str.length && str[pos] === '.') {
         pos++;
     }
     return pos;
 }
-const _reRepeatedChars = /^((\\'.{1,6}\\')|('.{1,6}'))[ \t](<repeats[ \t][0-9]+[ \t]times>)/;
-function detectRepeatingSymbols(str, pos) {
+
+function detectRepeatingSymbols(str: string, pos: number): number {
     let newPos = -1;
     let currPos = pos;
     while (true) {
@@ -57,7 +68,14 @@ function detectRepeatingSymbols(str, pos) {
     }
     return newPos;
 }
-function getNextToken(str, pos) {
+
+interface TokenResult {
+    success: boolean;
+    pos: number;
+    token: Token;
+}
+
+function getNextToken(str: string, pos: number): TokenResult {
     const token = new Token(0, 0, Token.Undefined);
     token.hasRepeatedChar = false;
     while (pos < str.length && (str[pos] === ' ' || str[pos] === '\t' || str[pos] === '\n')) {
@@ -171,20 +189,29 @@ function getNextToken(str, pos) {
         return { success: true, pos, token };
     }
 }
-function isLikelyName(str) {
+
+function isLikelyName(str: string): boolean {
     if (!str) return false;
     if (str.startsWith('[') && str.endsWith(']')) return true;
     if (str.startsWith('"') && str.endsWith('"')) return true;
     if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(str)) return true;
     return false;
 }
-function isPointerType(typeStr) {
+
+export function isPointerType(typeStr: string): boolean {
     if (!typeStr) return false;
     const trimmed = typeStr.trim();
     return trimmed.endsWith('*') || trimmed.endsWith('&');
 }
-function addChild(watchObj, childName, childValue) {
-    let child;
+
+interface WatchObject {
+    name?: string;
+    value?: string;
+    children?: WatchObject[];
+}
+
+function addChild(watchObj: WatchObject, childName: string, childValue: string): WatchObject {
+    let child: WatchObject;
     const existing = (watchObj.children || []).find(c => c.name === childName);
     if (existing) {
         child = existing;
@@ -195,7 +222,8 @@ function addChild(watchObj, childName, childValue) {
     }
     return child;
 }
-function parseGDBWatchValueRecursive(watchObj, value, start, length) {
+
+function parseGDBWatchValueRecursive(watchObj: WatchObject, value: string, start: number, length: number): number | false {
     let position = start;
     let tokenName = new Token(0, 0, Token.Undefined);
     let tokenValue = new Token(0, 0, Token.Undefined);
@@ -204,7 +232,9 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
     let lastWasClosingBrace = false;
     let tokenRealEnd = 0;
     let pythonToStringValue = '';
+    let iterations = 0;
     while (true) {
+        if (++iterations > 100000) return position;
         const res = getNextToken(value, position);
         if (!res.success) break;
         const token = res.token;
@@ -237,6 +267,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                     const commaEnd = expandedToken.end;
                     const nextRes = getNextToken(value, position);
                     if (nextRes.success) {
+                        nextRes.token.trim(value);
                         const expandedStr = nextRes.token.extractString(value);
                         if (expandedStr && expandedStr[0] !== '"' && expandedStr[0] !== "'") {
                             token.end = commaEnd;
@@ -324,12 +355,12 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                         if (tokenValue.type !== Token.Undefined) {
                             const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
                             if (!child.children || child.children.length === 0) {
-                                parseGDBWatchValue(child, child.value);
+                                parseGDBWatchValue(child, child.value || '');
                             }
                         } else {
                             const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
                             if (!child.children || child.children.length === 0) {
-                                parseGDBWatchValue(child, child.value);
+                                parseGDBWatchValue(child, child.value || '');
                             }
                         }
                         tokenName = new Token(0, 0, Token.Undefined);
@@ -341,7 +372,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                             nextRes.token.trim(value);
                             const nextStr = nextRes.token.extractString(value);
                             if (!((nextRes.token.type === Token.String && isLikelyName(nextStr)) ||
-                                  nextRes.token.type === Token.CloseBrace)) {
+                                nextRes.token.type === Token.CloseBrace)) {
                                 break;
                             }
                         }
@@ -353,7 +384,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                 break;
             case Token.OpenBrace:
                 {
-                    let childName;
+                    let childName: string;
                     let val = '';
                     if (tokenName.type === Token.Undefined) {
                         childName = `[${addedChildren}]`;
@@ -366,6 +397,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                     }
                     const child = addChild(watchObj, childName, pythonToStringValue || val);
                     const newPos = parseGDBWatchValueRecursive(child, value, tokenRealEnd, 0);
+                    if (newPos === false) return false;
                     position = newPos;
                     tokenName = new Token(0, 0, Token.Undefined);
                     tokenValue = new Token(0, 0, Token.Undefined);
@@ -380,12 +412,12 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                         if (tokenValue.type !== Token.Undefined) {
                             const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
                             if (!child.children || child.children.length === 0) {
-                                parseGDBWatchValue(child, child.value);
+                                parseGDBWatchValue(child, child.value || '');
                             }
                         } else {
                             const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
                             if (!child.children || child.children.length === 0) {
-                                parseGDBWatchValue(child, child.value);
+                                parseGDBWatchValue(child, child.value || '');
                             }
                         }
                         addedChildren++;
@@ -405,20 +437,21 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
         if (tokenValue.type !== Token.Undefined) {
             const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
             if (!child.children || child.children.length === 0) {
-                parseGDBWatchValue(child, child.value);
+                parseGDBWatchValue(child, child.value || '');
             }
         } else {
             const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
             if (!child.children || child.children.length === 0) {
-                parseGDBWatchValue(child, child.value);
+                parseGDBWatchValue(child, child.value || '');
             }
         }
     }
     return position;
 }
-function removeWarnings(input) {
+
+function removeWarnings(input: string): string {
     const lines = input.split('\n');
-    const result = [];
+    const result: string[] = [];
     for (const line of lines) {
         if (!line.startsWith('warning:')) {
             result.push(line);
@@ -426,7 +459,8 @@ function removeWarnings(input) {
     }
     return result.join('\n');
 }
-function parseGDBWatchValue(watchObj, inputValue) {
+
+export function parseGDBWatchValue(watchObj: WatchObject, inputValue: string | null | undefined): boolean {
     if (!inputValue) {
         watchObj.value = inputValue || '';
         return true;
@@ -448,8 +482,9 @@ function parseGDBWatchValue(watchObj, inputValue) {
         return true;
     }
 }
-function tokenizeGDBLocals(value) {
-    const results = [];
+
+export function tokenizeGDBLocals(value: string): Array<{ name: string; value: string }> {
+    const results: Array<{ name: string; value: string }> = [];
     let start = 0;
     let curlyBraces = 0;
     let inString = false;
@@ -486,7 +521,8 @@ function tokenizeGDBLocals(value) {
     }
     return results;
 }
-function parseLocalLine(results, line) {
+
+function parseLocalLine(results: Array<{ name: string; value: string }>, line: string): void {
     const trimmed = line.trim();
     if (!trimmed) return;
     const eqPos = trimmed.indexOf('=');
@@ -500,49 +536,74 @@ function parseLocalLine(results, line) {
         results.push({ name: trimmed, value: '' });
     }
 }
+
 const reBT0 = /^#(\d+)[ \t]+(.+?)[ \t]+at[ \t]+(.+):(\d+)/;
 const reBT1 = /^#(\d+)[ \t]+0x([A-Fa-f0-9]+)[ \t]+in[ \t]+(.+?)[ \t]+(\([^)]*\))/;
 const reBTX = /^#(\d+)[ \t]+0x([A-Fa-f0-9]+)[ \t]+in[ \t]+([^(]+?)[ \t]*(\([^)]*\)[ \t]*\([^)]*\))/;
 const reBT2 = /\)[ \t]+(?:at|from)[ \t]+(.+):(\d+)/;
 const reBT3 = /\)[ \t]+(?:at|from)[ \t]+(.+)/;
 const reBT4 = /^#(\d+)[ \t]+(.+?)[ \t]+in[ \t]+(.+)/;
-function tokenizeBacktrace(output) {
-    const frames = [];
+
+interface BacktraceFrame {
+    level: number;
+    address: string;
+    function: string;
+    file: string;
+    line: number;
+    hasLineInfo: boolean;
+}
+
+export function tokenizeBacktrace(output: string): BacktraceFrame[] {
+    const frames: BacktraceFrame[] = [];
     const lines = output.split(/\r?\n/);
     for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         let sf = { level: -1, address: '', function: '', file: '', line: -1 };
         let hasLineInfo = false;
-        let m;
-        if ((m = reBTX.exec(trimmed))) {
-            sf.level = parseInt(m[1], 10);
-            sf.address = m[2];
-            sf.function = m[3] + m[4];
-        } else if ((m = reBT1.exec(trimmed))) {
-            sf.level = parseInt(m[1], 10);
-            sf.address = m[2];
-            sf.function = m[3] + m[4];
-        } else if ((m = reBT0.exec(trimmed))) {
-            sf.level = parseInt(m[1], 10);
-            sf.address = '0x0';
-            sf.function = m[2];
-            sf.file = m[3];
-            sf.line = parseInt(m[4], 10);
-            hasLineInfo = true;
-        } else if ((m = reBT4.exec(trimmed))) {
-            sf.level = parseInt(m[1], 10);
-            sf.address = m[2];
-            sf.function = m[3];
+        let m: RegExpExecArray | null;
+        m = reBTX.exec(trimmed);
+        if (m) {
+            sf.level = parseInt(m[1] ?? '0', 10);
+            sf.address = m[2] ?? '';
+            sf.function = (m[3] ?? '') + (m[4] ?? '');
         } else {
-            continue;
+            m = reBT1.exec(trimmed);
+            if (m) {
+                sf.level = parseInt(m[1] ?? '0', 10);
+                sf.address = m[2] ?? '';
+                sf.function = (m[3] ?? '') + (m[4] ?? '');
+            } else {
+                m = reBT0.exec(trimmed);
+                if (m) {
+                    sf.level = parseInt(m[1] ?? '0', 10);
+                    sf.address = '0x0';
+                    sf.function = m[2] ?? '';
+                    sf.file = m[3] ?? '';
+                    sf.line = parseInt(m[4] ?? '0', 10);
+                    hasLineInfo = true;
+                } else {
+                    m = reBT4.exec(trimmed);
+                    if (m) {
+                        sf.level = parseInt(m[1] ?? '0', 10);
+                        sf.address = m[2] ?? '';
+                        sf.function = m[3] ?? '';
+                    } else {
+                        continue;
+                    }
+                }
+            }
         }
-        if ((m = reBT2.exec(trimmed))) {
-            sf.file = m[1];
-            sf.line = parseInt(m[2], 10);
+        m = reBT2.exec(trimmed);
+        if (m) {
+            sf.file = m[1] ?? '';
+            sf.line = parseInt(m[2] ?? '0', 10);
             hasLineInfo = true;
-        } else if ((m = reBT3.exec(trimmed))) {
-            sf.file = m[1];
+        } else {
+            m = reBT3.exec(trimmed);
+            if (m) {
+                sf.file = m[1] ?? '';
+            }
         }
         if (sf.level >= 0) {
             frames.push({
@@ -551,22 +612,29 @@ function tokenizeBacktrace(output) {
                 function: sf.function,
                 file: sf.file,
                 line: sf.line,
-                hasLineInfo: hasLineInfo
+                hasLineInfo
             });
         }
     }
     return frames;
 }
+
 const reExamineMemoryLine = /[ \t]*(0x[0-9a-f]+)[ \t]<.+>:[ \t]+(.+)/;
-function parseGDBExamineMemoryLine(outputLine) {
-    const result = { addr: '', values: [] };
+
+interface MemoryParseResult {
+    addr: string;
+    values: number[];
+}
+
+export function parseGDBExamineMemoryLine(outputLine: string): MemoryParseResult {
+    const result: MemoryParseResult = { addr: '', values: [] };
     if (!outputLine) return result;
     if (outputLine.startsWith('Cannot access memory at address ')) return result;
-    let memory;
+    let memory = '';
     const m = reExamineMemoryLine.exec(outputLine);
     if (m) {
-        result.addr = m[1];
-        memory = m[2];
+        result.addr = m[1] ?? '';
+        memory = m[2] ?? '';
     } else {
         const colonIdx = outputLine.indexOf(':');
         if (colonIdx === -1) return result;
@@ -575,7 +643,9 @@ function parseGDBExamineMemoryLine(outputLine) {
     }
     let pos = memory.indexOf('x');
     while (pos !== -1 && pos + 2 < memory.length) {
-        const hexByte = memory[pos + 1] + memory[pos + 2];
+        const ch1 = memory.charAt(pos + 1);
+        const ch2 = memory.charAt(pos + 2);
+        const hexByte = ch1 + ch2;
         const value = parseInt(hexByte, 16);
         if (!isNaN(value)) {
             result.values.push(value);
@@ -584,12 +654,15 @@ function parseGDBExamineMemoryLine(outputLine) {
     }
     return result;
 }
-module.exports = {
-    Token,
-    getNextToken,
-    tokenizeGDBLocals,
-    parseGDBWatchValue,
-    tokenizeBacktrace,
-    parseGDBExamineMemoryLine,
-    isPointerType
-};
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        Token,
+        getNextToken,
+        tokenizeGDBLocals,
+        parseGDBWatchValue,
+        tokenizeBacktrace,
+        parseGDBExamineMemoryLine,
+        isPointerType
+    };
+}
