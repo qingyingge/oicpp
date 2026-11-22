@@ -1,3 +1,5 @@
+export {};
+
 const { contextBridge, ipcRenderer, shell, clipboard } = require('electron');
 const path = require('path');
 
@@ -7,8 +9,8 @@ const showToast = (message, type = 'info', durationMs = 1200) => {
         const safeType = ['info', 'success', 'error', 'warning'].includes(type) ? type : 'info';
         const dur = Number.isFinite(durationMs) ? durationMs : 1200;
 
-        const ensure = () => {
-            const existing = document.querySelector('.message-toast');
+        const ensure = (): HTMLElement & { __hideTimer?: NodeJS.Timeout } => {
+            const existing = document.querySelector('.message-toast') as HTMLElement | null;
             if (existing) return existing;
             const div = document.createElement('div');
             div.className = 'message-toast info';
@@ -363,7 +365,7 @@ contextBridge.exposeInMainWorld('turndownAPI', {
 });
 
 if (globalThis.__oicppPreloadInitialized) {
-    return;
+    // 已初始化，跳过重复执行
 }
 globalThis.__oicppPreloadInitialized = true;
 
