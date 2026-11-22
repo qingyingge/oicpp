@@ -3,18 +3,42 @@
  * 提供标签页内的网页浏览功能，支持分屏
  */
 
+// 单个浏览器标签页的运行时状态（createBrowserContainer 创建）
+interface BrowserTabState {
+    webview: import('electron').WebviewTag;
+    iframe: HTMLElement;
+    frameWrapper: HTMLDivElement;
+    container: HTMLDivElement;
+    navBar: HTMLDivElement;
+    urlInput: HTMLInputElement | null;
+    title: string;
+    canGoBack: boolean;
+    canGoForward: boolean;
+    isLoading: boolean;
+    currentUrl: string;
+    history: unknown[];
+    // 标记是否已显示过；首次显示时强制重载，确保 guest 以正确视口重新布局
+    _hasBeenShown: boolean;
+    _needsContentRestore?: boolean;
+    syncWebviewSize?: () => void;
+    resizeObserver?: ResizeObserver | null;
+}
+
 // 新建标签页默认显示的欢迎页（data URI，避免约:blank 一片空白）
-const NEW_TAB_PAGE_HTML = (() => {
+const getNewTabPageHtml = (): string => {
     const isDark = document.body.classList.contains('theme-light') ? false : true;
     const bg = isDark ? '#1e1e1e' : '#ffffff';
     const fg = isDark ? '#cccccc' : '#333333';
     const muted = isDark ? '#6a6a6a' : '#999999';
     const accent = '#007acc';
-    // 构建极简欢迎页
+    const _t = (k: string) => window.i18n?.t?.(k) || k;
+    const title = _t('browser.title');
+    const welcomeHint = _t('browser.welcomeHint');
+    const splitHint = _t('browser.splitHint');
     return `data:text/html;charset=utf-8,${encodeURIComponent(`
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>新标签页</title>
+<head><meta charset="utf-8"><title>${title}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -29,52 +53,72 @@ p{font-size:13px;color:${muted};margin-bottom:24px;text-align:center;line-height
 </style></head>
 <body>
 <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><ellipse cx="12" cy="12" rx="4" ry="10"/><path d="M2 12h20"/></svg></div>
-<h1>内置浏览器</h1>
-<p>在上方地址栏输入网址开始浏览<br>支持 Ctrl+Shift+I 快速打开</p>
-<div class="hint">支持标签页分屏 · 拖动标签到空白处即可</div>
+<h1>${title}</h1>
+<p>${welcomeHint}</p>
+<div class="hint">${splitHint}</div>
 </body></html>`)}`;
-})();
+};
 
 class BrowserManager {
+    browserTabs: Map<string, BrowserTabState>;
+    _currentFocusKey: string | null;
+    _pendingNav: Map<string, string>;
+    _newTabPage: string | null;
+    _removeOpenNewTabListener: (() => void) | null;
+
     constructor() {
         this.browserTabs = new Map(); // uniqueKey -> { webview, container, navBar, urlInput, title }
         this._currentFocusKey = null;
         this._pendingNav = new Map(); // uniqueKey -> url
-        this._newTabPage = NEW_TAB_PAGE_HTML;
+        this._newTabPage = null;
+        this._removeOpenNewTabListener = null;
 
         if (window.electronAPI?.onBrowserOpenNewTab) {
             this._removeOpenNewTabListener = window.electronAPI.onBrowserOpenNewTab((request) => {
                 this._handleOpenNewTabRequest(request);
             });
         }
+        window.addEventListener('pagehide', () => this.destroy(), { once: true });
+    }
+
+    destroy(): void {
+        if (typeof this._removeOpenNewTabListener === 'function') {
+            this._removeOpenNewTabListener();
+            this._removeOpenNewTabListener = null;
+        }
+    }
+
+    /**
+     * 初始地址来自 lastOpenTabs / 分屏继承 / 用户输入，被篡改时可注入
+     * file: 或 javascript:，让 guest 以受信任上下文读本地文件。
+     * data: 必须放行：内置新标签页本身就是一段内联 data:text/html。
+     */
+    _normalizeInitialUrl(raw: string): string {
+        const fallback = getNewTabPageHtml();
+        const candidate = (raw && String(raw).trim()) ? String(raw).trim() : fallback;
+        try {
+            const parsed = new URL(candidate);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:'
+                || parsed.protocol === 'about:' || parsed.protocol === 'data:') {
+                return parsed.href;
+            }
+        } catch (_) { }
+        return fallback;
     }
 
     /**
      * 创建一个浏览器标签页容器
      * @param {object} options
-     * @param {string} options.groupId - 所属编辑器分组 ID
-     * @param {string} options.uniqueKey - 标签唯一键
-     * @param {string} options.url - 初始 URL
-     * @returns {HTMLElement} browserContainer
+     * 参数即解构签名里的 groupId/uniqueKey/url；返回新建的 browserContainer 元素。
      */
-    createBrowserContainer({ groupId, uniqueKey, url }) {
-        // 只接受 http(s)/about: 作为初始地址，防止被篡改的 lastOpenTabs 注入 file:/javascript:。
-        const normalizeInitialUrl = (raw) => {
-            const fallback = this._newTabPage;
-            const candidate = (raw && String(raw).trim()) ? String(raw).trim() : fallback;
-            try {
-                const parsed = new URL(candidate);
-                if (['http:', 'https:', 'about:'].includes(parsed.protocol)) return parsed.href;
-            } catch (_) { }
-            return fallback;
-        };
+    createBrowserContainer({ groupId, uniqueKey, url }: { groupId: string; uniqueKey: string; url: string }): HTMLDivElement {
         // 未指定 URL 时使用内置新标签页
-        const initialUrl = normalizeInitialUrl(url);
+        const initialUrl = this._normalizeInitialUrl(url);
         // 主容器
         const container = document.createElement('div');
         container.className = 'browser-container';
-        container.dataset.groupId = groupId || '';
-        container.dataset.uniqueKey = uniqueKey || '';
+        container.dataset['groupId'] = groupId || '';
+        container.dataset['uniqueKey'] = uniqueKey || '';
         container.style.display = 'none';
 
         // 导航栏
@@ -88,7 +132,7 @@ class BrowserManager {
         frameWrapper.style.position = 'relative';
         frameWrapper.style.overflow = 'hidden';
 
-        const webview = document.createElement('webview');
+        const webview = document.createElement('webview') as import('electron').WebviewTag;
         webview.className = 'browser-webview';
         // Electron 37 创建的 webview 内部 iframe 没有高度样式，会保留
         // HTML iframe 默认的 150px 高度。必须在首次导航前修正，否则
@@ -101,7 +145,7 @@ class BrowserManager {
         webview.setAttribute('partition', 'persist:oicpp-browser');
         const browserUserAgent = navigator.userAgent
             .replace(/\sElectron\/\S+/i, '')
-            .replace(/\soicpp-ide\/\S+/i, '');
+            .replace(/\soicpp-plus-ide\/\S+/i, '');
         webview.setAttribute('useragent', browserUserAgent);
         webview.setAttribute('src', initialUrl);
         // 允许 guest 打开新窗口（target="_blank" / window.open），
@@ -120,7 +164,7 @@ class BrowserManager {
         // 必须在首次导航前修正，否则 guest surface 即使外层之后变高，
         // 仍只渲染顶部 150px，导致页面显示不全、点击错位、链接无法跳转。
         // 注意：webview 挂载到 DOM 后 shadowRoot 才会存在，因此在此处才可获取。
-        const fixInternalFrame = (el) => {
+        const fixInternalFrame = (el: import('electron').WebviewTag) => {
             const internalFrame = el?.shadowRoot?.querySelector('iframe');
             if (internalFrame) {
                 internalFrame.style.width = '100%';
@@ -128,16 +172,16 @@ class BrowserManager {
             }
         };
         fixInternalFrame(webview);
-        webview.addEventListener('did-attach', () => fixInternalFrame(webview), { once: true });
+        (webview as HTMLElement).addEventListener('did-attach', () => fixInternalFrame(webview), ({ once: true }));
 
         // 保存引用
-        const state = {
+        const state: BrowserTabState = {
             webview,
             iframe: webview,
             frameWrapper,
             container,
             navBar,
-            urlInput: navBar.querySelector('.browser-url-input'),
+            urlInput: navBar.querySelector('.browser-url-input') as HTMLInputElement | null,
             title: '',
             canGoBack: false,
             canGoForward: false,
@@ -149,7 +193,7 @@ class BrowserManager {
         };
         this.browserTabs.set(uniqueKey, state);
 
-        const syncWebviewSize = () => {
+        const syncWebviewSize = (): void => {
             const width = frameWrapper.clientWidth;
             const height = frameWrapper.clientHeight;
             if (width > 0) webview.style.width = `${width}px`;
@@ -174,7 +218,7 @@ class BrowserManager {
     /**
      * 创建导航栏
      */
-    _createNavBar(uniqueKey, initialUrl) {
+    _createNavBar(uniqueKey: string, initialUrl: string): HTMLDivElement {
         const navBar = document.createElement('div');
         navBar.className = 'browser-nav-bar';
 
@@ -187,7 +231,7 @@ class BrowserManager {
             '<svg width="16" height="16" viewBox="0 0 16 16">',
             '<path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '</svg>'
-        ].join(''), '后退');
+        ].join(''), window.i18n.t('browser.back'));
         navButtons.appendChild(backBtn);
 
         // 前进
@@ -195,7 +239,7 @@ class BrowserManager {
             '<svg width="16" height="16" viewBox="0 0 16 16">',
             '<path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '</svg>'
-        ].join(''), '前进');
+        ].join(''), window.i18n.t('browser.forward'));
         navButtons.appendChild(forwardBtn);
 
         // 刷新/停止
@@ -204,8 +248,8 @@ class BrowserManager {
             '<polyline points="23 4 23 10 17 10"/>',
             '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
             '</svg>'
-        ].join(''), '刷新');
-        refreshBtn.dataset.action = 'reload';
+        ].join(''), window.i18n.t('browser.reload'));
+        refreshBtn.dataset['action'] = 'reload';
         navButtons.appendChild(refreshBtn);
 
         navBar.appendChild(navButtons);
@@ -214,7 +258,7 @@ class BrowserManager {
         const urlInput = document.createElement('input');
         urlInput.type = 'text';
         urlInput.className = 'browser-url-input';
-        urlInput.setAttribute('placeholder', window.i18n ? window.i18n.t('browser.urlPlaceholder') : '输入网址或搜索...');
+        urlInput.setAttribute('placeholder', window.i18n.t('browser.urlPlaceholder'));
         urlInput.value = initialUrl?.startsWith('data:text/html') ? '' : (initialUrl || '');
         urlInput.setAttribute('spellcheck', 'false');
         urlInput.setAttribute('autocomplete', 'off');
@@ -229,7 +273,7 @@ class BrowserManager {
             '<path d="M7 7V5h2v2h2v2H9v2H7V9H5V7h2z" fill="currentColor"/>',
             '</svg>'
         ].join('');
-        openNewTabBtn.title = window.i18n ? window.i18n.t('browser.openInNewTab') : '新建浏览器标签页';
+        openNewTabBtn.title = window.i18n.t('browser.openInNewTab');
         navBar.appendChild(openNewTabBtn);
 
         // 导航按钮事件
@@ -266,7 +310,7 @@ class BrowserManager {
     /**
      * 创建导航按钮
      */
-    _createNavButton(className, innerHtml, title) {
+    _createNavButton(className: string, innerHtml: string, title: string): HTMLButtonElement {
         const btn = document.createElement('button');
         btn.className = 'browser-nav-btn ' + className;
         btn.innerHTML = innerHtml;
@@ -278,12 +322,12 @@ class BrowserManager {
     /**
      * 绑定 webview 事件
      */
-    _bindWebviewEvents(uniqueKey, state) {
+    _bindWebviewEvents(uniqueKey: string, state: BrowserTabState): void {
         const { webview, navBar, urlInput } = state;
-        const updateLocation = (url) => {
+        const updateLocation = (url: string) => {
             if (!url || url === 'about:blank' || url.startsWith('data:text/html')) return;
             state.currentUrl = url;
-            urlInput.value = url;
+            if (urlInput) urlInput.value = url;
             this._updateNavButtons(uniqueKey);
         };
 
@@ -319,7 +363,7 @@ class BrowserManager {
     /**
      * 在新标签页中打开 URL
      */
-    _openInNewTab(url, groupId) {
+    _openInNewTab(url: string, groupId?: string): void {
         if (!url || !window.tabManager) return;
         const resolvedUrl = url;
         // 使用 tabManager 打开新的浏览器标签
@@ -333,17 +377,18 @@ class BrowserManager {
      * 处理网页中的 target="_blank"、window.open 和中键点击。
      * 主进程会拦截原生弹窗，并把目标地址送回这里创建 IDE 浏览器标签。
      */
-    _handleOpenNewTabRequest(request) {
-        const url = typeof request?.url === 'string' ? request.url : '';
+    _handleOpenNewTabRequest(request: unknown): void {
+        const payload = (request && typeof request === 'object' ? request : {}) as { url?: unknown; sourceWebContentsId?: unknown };
+        const url = typeof payload.url === 'string' ? payload.url : '';
         if (!url || !/^https?:\/\//i.test(url)) return;
 
         let sourceGroupId = '';
-        const sourceWebContentsId = Number(request?.sourceWebContentsId);
+        const sourceWebContentsId = Number(payload.sourceWebContentsId);
         if (Number.isInteger(sourceWebContentsId)) {
             for (const state of this.browserTabs.values()) {
                 try {
                     if (state.webview?.getWebContentsId?.() === sourceWebContentsId) {
-                        sourceGroupId = state.container?.dataset?.groupId || '';
+                        sourceGroupId = state.container?.dataset?.['groupId'] || '';
                         break;
                     }
                 } catch (_) {}
@@ -356,7 +401,7 @@ class BrowserManager {
     /**
      * 导航到指定 URL
      */
-    async navigateTo(uniqueKey, rawUrl) {
+    async navigateTo(uniqueKey: string, rawUrl: string): Promise<void> {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
         let url = rawUrl ? rawUrl.trim() : '';
@@ -364,13 +409,14 @@ class BrowserManager {
         // 通过主进程解析 URL
         try {
             if (window.electronAPI && typeof window.electronAPI.browserResolveUrl === 'function') {
-                url = await window.electronAPI.browserResolveUrl(url);
+                url = (await window.electronAPI.browserResolveUrl(url)) as string;
             }
         } catch (_) {}
         if (!url) return;
+        // 解析后仍可能是任意协议（用户直接粘贴 file:/javascript:），loadURL 前再过一遍白名单。
         try {
             const parsed = new URL(url);
-            if (!['http:', 'https:'].includes(parsed.protocol)) {
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'about:') {
                 return;
             }
             url = parsed.href;
@@ -379,14 +425,14 @@ class BrowserManager {
         }
         state.currentUrl = url;
         state.webview.loadURL(url).catch(() => {});
-        state.urlInput.value = url;
+        if (state.urlInput) state.urlInput.value = url;
         this._updateNavButtons(uniqueKey);
     }
 
     /**
      * 后退
      */
-    goBack(uniqueKey) {
+    goBack(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state?.webview) return;
         try {
@@ -398,7 +444,7 @@ class BrowserManager {
     /**
      * 前进
      */
-    goForward(uniqueKey) {
+    goForward(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state?.webview) return;
         try {
@@ -410,7 +456,7 @@ class BrowserManager {
     /**
      * 刷新
      */
-    reload(uniqueKey) {
+    reload(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (state?.webview) {
             try { state.webview.reload(); } catch (_) {}
@@ -420,7 +466,7 @@ class BrowserManager {
     /**
      * 停止加载
      */
-    stopLoading(uniqueKey) {
+    stopLoading(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (state?.webview) {
             try { state.webview.stop(); } catch (_) {}
@@ -430,7 +476,7 @@ class BrowserManager {
     /**
      * 更新导航按钮状态
      */
-    _updateNavButtons(uniqueKey) {
+    _updateNavButtons(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
         const backBtn = state.navBar.querySelector('.browser-nav-back');
@@ -448,10 +494,10 @@ class BrowserManager {
     /**
      * 更新刷新/停止按钮
      */
-    _updateReloadButton(uniqueKey, isLoading) {
+    _updateReloadButton(uniqueKey: string, isLoading: boolean): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
-        const reloadBtn = state.navBar.querySelector('.browser-nav-reload');
+        const reloadBtn = state.navBar.querySelector('.browser-nav-reload') as HTMLElement | null;
         if (!reloadBtn) return;
         if (isLoading) {
             reloadBtn.innerHTML = [
@@ -459,8 +505,8 @@ class BrowserManager {
                 '<rect x="6" y="6" width="12" height="12" rx="2"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.stop') : '停止';
-            reloadBtn.dataset.action = 'stop';
+            reloadBtn.title = window.i18n.t('browser.stop');
+            reloadBtn.dataset['action'] = 'stop';
         } else {
             reloadBtn.innerHTML = [
                 '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">',
@@ -468,22 +514,22 @@ class BrowserManager {
                 '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.reload') : '刷新';
-            reloadBtn.dataset.action = 'reload';
+            reloadBtn.title = window.i18n.t('browser.reload');
+            reloadBtn.dataset['action'] = 'reload';
         }
     }
 
     /**
      * 更新标签标题
      */
-    _updateTabTitle(uniqueKey, title) {
+    _updateTabTitle(uniqueKey: string, title: string): void {
         if (!title || !window.tabManager) return;
         const tabData = window.tabManager.tabs.get(uniqueKey);
         if (!tabData) return;
-        const displayTitle = title || tabData.fileName;
+        const displayTitle = title || tabData.fileName || '';
         tabData.fileName = displayTitle;
         if (tabData.element) {
-            const label = tabData.element.querySelector('.tab-label');
+            const label = tabData.element.querySelector('.tab-label') as HTMLElement | null;
             if (label) {
                 label.textContent = displayTitle;
                 label.title = displayTitle;
@@ -494,14 +540,14 @@ class BrowserManager {
     /**
      * 获取浏览器标签页的状态
      */
-    getBrowserState(uniqueKey) {
+    getBrowserState(uniqueKey: string): BrowserTabState | null {
         return this.browserTabs.get(uniqueKey) || null;
     }
 
     /**
      * 销毁浏览器标签页
      */
-    destroyBrowserTab(uniqueKey) {
+    destroyBrowserTab(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
         try {
@@ -531,24 +577,24 @@ class BrowserManager {
     /**
      * 聚焦浏览器标签页
      */
-    focusBrowserTab(uniqueKey) {
+    focusBrowserTab(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
         this._currentFocusKey = uniqueKey;
         if (state.urlInput) {
-            setTimeout(() => state.urlInput.focus(), 100);
+            setTimeout(() => state.urlInput!.focus(), 100);
         }
     }
 
     /**
      * 获取或创建浏览器容器（供 TabManager 调用）
      */
-    getOrCreateContainer({ groupId, uniqueKey, url }) {
+    getOrCreateContainer({ groupId, uniqueKey, url }: { groupId: string; uniqueKey: string; url: string }): HTMLDivElement {
         const existing = this.browserTabs.get(uniqueKey);
         if (existing && existing.container) {
             // 如果 groupId 变化，需要移动容器
-            if (existing.container.dataset.groupId !== groupId) {
-                existing.container.dataset.groupId = groupId;
+            if (existing.container.dataset['groupId'] !== groupId) {
+                existing.container.dataset['groupId'] = groupId;
             }
             return existing.container;
         }
@@ -558,7 +604,7 @@ class BrowserManager {
     /**
      * 显示浏览器容器（隐藏其他视图）
      */
-    showBrowserContainer(uniqueKey) {
+    showBrowserContainer(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state || !state.container) return;
         state.container.classList.add('active');
@@ -590,7 +636,7 @@ class BrowserManager {
             }
 
             if (shouldReload) {
-                const url = state.currentUrl || this._newTabPage || 'about:blank';
+                const url = state.currentUrl || getNewTabPageHtml() || 'about:blank';
                 // 用 requestAnimationFrame 确保 DOM 已挂载后再设置 src
                 requestAnimationFrame(() => {
                     try {
@@ -611,7 +657,7 @@ class BrowserManager {
     /**
      * 隐藏浏览器容器
      */
-    hideBrowserContainer(uniqueKey) {
+    hideBrowserContainer(uniqueKey: string): void {
         const state = this.browserTabs.get(uniqueKey);
         if (!state || !state.container) return;
         state.container.classList.remove('active');
@@ -621,9 +667,9 @@ class BrowserManager {
     /**
      * 隐藏分组内所有浏览器容器
      */
-    hideGroupBrowserContainers(groupId) {
+    hideGroupBrowserContainers(groupId: string): void {
         for (const [key, state] of this.browserTabs.entries()) {
-            if (state.container && state.container.dataset.groupId === groupId) {
+            if (state.container && state.container.dataset['groupId'] === groupId) {
                 state.container.classList.remove('active');
                 state.container.style.display = 'none';
             }
@@ -633,12 +679,12 @@ class BrowserManager {
     /**
      * 移动浏览器容器到新分组（直接搬移 DOM，不重建 webview）
      */
-    moveContainerToGroup(uniqueKey, newGroupId) {
+    moveContainerToGroup(uniqueKey: string, newGroupId: string): HTMLDivElement | null {
         const state = this.browserTabs.get(uniqueKey);
         if (!state || !state.container) return null;
 
         // 只更新分组 ID，DOM 节点由调用方通过 appendChild 搬移
-        state.container.dataset.groupId = newGroupId;
+        state.container.dataset['groupId'] = newGroupId;
 
         // appendChild 会自动从旧父节点移除，标记需要恢复以兼容 webview 重挂载
         state._needsContentRestore = true;
@@ -648,4 +694,8 @@ class BrowserManager {
 }
 
 // 全局实例
-window.browserManager = new BrowserManager();
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = BrowserManager;
+} else {
+    window.browserManager = new BrowserManager();
+}
