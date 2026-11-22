@@ -1,4 +1,45 @@
+type FileEntry = {
+    name: string;
+    path: string;
+    type: string;
+    extension?: string;
+    [key: string]: unknown;
+};
+
+type FileClipboard = {
+    files: FileEntry[];
+    operation: string;
+};
+
+type TreeRoot = {
+    contains?: (node: Node | null) => boolean;
+    querySelector?: (selector: string) => HTMLElement | null;
+    querySelectorAll?: (selector: string) => ArrayLike<HTMLElement>;
+};
+
+// 连续文件操作后的目录重读合并窗口
+const FILE_EXPLORER_REFRESH_DEBOUNCE_MS = 120;
+
 class FileExplorer {
+    declare currentPath: string;
+    declare files: FileEntry[];
+    declare selectedFile: FileEntry | null;
+    declare selectedFiles: Map<string, FileEntry>;
+    declare hasWorkspace: boolean;
+    declare clipboard: FileClipboard | null;
+    declare expandedFolders: Set<string>;
+    declare _directoryReadRequests: Map<string, Promise<FileEntry[]>>;
+    declare workspacePath: string;
+    declare _refreshTimer: ReturnType<typeof setTimeout> | null;
+    declare _treeItemsByPath: Map<string, HTMLElement>;
+    declare _draggingItems: Set<HTMLElement>;
+    declare _dragOverItem: HTMLElement | null;
+    declare _pendingDragOverTarget: HTMLElement | null;
+    declare _pendingDragOverRoot: boolean;
+    declare _dragHoverFrame: number | null;
+    declare isDragging: boolean;
+    declare platform: string;
+
     constructor() {
         this.currentPath = '';
         this.files = [];
@@ -8,6 +49,7 @@ class FileExplorer {
         this.clipboard = null;
         this.expandedFolders = new Set();
         this._directoryReadRequests = new Map();
+        this._refreshTimer = null;
         this._treeItemsByPath = new Map();
         this._draggingItems = new Set();
         this._dragOverItem = null;
@@ -15,23 +57,23 @@ class FileExplorer {
         this._pendingDragOverRoot = false;
         this._dragHoverFrame = null;
         this.isDragging = false;
+        this.platform = window.electronAPI?.platform || '';
 
         this.setupKeyboardShortcuts();
     }
 
-    /**
-     * Validates file or folder name for illegal characters
-     * @param {string} name - The file or folder name to validate
-     * @returns {Object} - { valid: boolean, error: string }
-     */
-    validateFileName(name) {
+    // Validates file or folder name for illegal characters（返回 { valid, error }）
+    validateFileName(name: string) {
         if (!name || typeof name !== 'string') {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameRequired') : '名称不能为空' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
         }
 
         const trimmedName = name.trim();
         if (trimmedName.length === 0) {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameRequired') : '名称不能为空' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
+        }
+        if (trimmedName === '.' || trimmedName === '..') {
+            return { valid: false, error: window.i18n.t('fileExplorer.invalidDotName') };
         }
 
         // Check for illegal characters
@@ -41,15 +83,17 @@ class FileExplorer {
         const illegalCharsUnix = /\//;
         
         // Detect platform from userAgent or assume Windows if unclear
-        const isWindows = navigator.platform?.toLowerCase().includes('win') || 
-                          navigator.userAgent?.toLowerCase().includes('windows');
+        const isWindows = this.platform
+            ? this.platform === 'win32'
+            : (navigator.platform?.toLowerCase().includes('win') ||
+                navigator.userAgent?.toLowerCase().includes('windows'));
         
         const illegalChars = isWindows ? illegalCharsWin : illegalCharsUnix;
         
         if (illegalChars.test(trimmedName)) {
             const platformMsg = isWindows 
-                ? '文件名不能包含以下字符: < > : " / \\ | ? *'
-                : '文件名不能包含字符: /';
+                ? window.i18n.t('fileExplorer.invalidChars')
+                : window.i18n.t('fileExplorer.invalidCharsUnix');
             return { valid: false, error: platformMsg };
         }
 
@@ -57,7 +101,7 @@ class FileExplorer {
         if (isWindows) {
             const reservedNames = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
             if (reservedNames.test(trimmedName)) {
-                return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.reservedName') : '该名称为系统保留名称，不能使用' };
+                return { valid: false, error: window.i18n.t('fileExplorer.reservedName')};
             }
         }
 
@@ -65,19 +109,19 @@ class FileExplorer {
         // Note: We check the original 'name' not 'trimmedName' because Windows does not allow
         // trailing spaces or periods, even though String.trim() would remove them
         if (isWindows && /[\s.]$/.test(name)) {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameEndDot') : '文件名不能以空格或句点结尾' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameEndDot')};
         }
 
         return { valid: true, error: null };
     }
 
-    hasFileExtension(fileName) {
+    hasFileExtension(fileName: string) {
         const baseName = String(fileName || '').replace(/^.*[\\/]/, '');
         const lastDot = baseName.lastIndexOf('.');
         return lastDot > 0 && lastDot < baseName.length - 1;
     }
 
-    async confirmOperation(title, message) {
+    async confirmOperation(title: string, message: string) {
         try {
             if (window.dialogManager?.showConfirmDialog) {
                 const result = await window.dialogManager.showConfirmDialog(title, message);
@@ -89,7 +133,7 @@ class FileExplorer {
         return window.confirm?.(message) ?? true;
     }
 
-    showError(message) {
+    showError(message: string | Error) {
         const text = typeof message === 'string' ? message : (message?.message ? String(message.message) : String(message));
         try {
             if (window.dialogManager?.showError) {
@@ -116,8 +160,8 @@ class FileExplorer {
         } catch (error) {
             logWarn('refocusSelectedFile 定位选中项失败', error);
         }
-        const fileTree = document.querySelector('#file-tree');
-        if (fileTree) {
+        const fileTree = (document.querySelector('#file-tree'));
+        if (fileTree instanceof HTMLElement) {
             fileTree.setAttribute('tabindex', '0');
             fileTree.focus();
         }
@@ -127,10 +171,10 @@ class FileExplorer {
         this.loadFiles();
     }
 
-    applyTheme(theme) {
+    applyTheme(theme: string) {
         logInfo('文件管理器应用主题:', theme);
 
-        const fileTree = document.getElementById('file-tree');
+        const fileTree = (document.getElementById('file-tree'));
         if (fileTree) {
             fileTree.classList.remove('theme-light', 'theme-dark');
             fileTree.classList.add(`theme-${theme}`);
@@ -144,7 +188,7 @@ class FileExplorer {
             item.setAttribute('data-theme', theme);
         });
 
-        const emptyState = document.querySelector('.empty-state');
+        const emptyState = (document.querySelector('.empty-state'));
         if (emptyState) {
             emptyState.classList.remove('theme-light', 'theme-dark');
             emptyState.classList.add(`theme-${theme}`);
@@ -164,13 +208,18 @@ class FileExplorer {
                 activeElement.classList?.contains?.('monaco-editor') ||
                 activeElement.closest?.('.tab-content')
             ));
+            const isInTerminal = !!(activeElement && (
+                activeElement.closest?.('.xterm') ||
+                activeElement.closest?.('.integrated-terminal-mount') ||
+                activeElement.closest?.('.editor-terminal-container')
+            ));
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTypingElement = tag === 'input' || tag === 'textarea' || !!activeElement?.isContentEditable;
-            if (isInEditor || isTypingElement) {
+            const isTypingElement = tag === 'input' || tag === 'textarea' || (activeElement instanceof HTMLElement && activeElement.isContentEditable);
+            if (isInEditor || isInTerminal || isTypingElement) {
                 return;
             }
 
-            const isInCompileOutput = (node) => {
+            const isInCompileOutput = (node: Element | null) => {
                 if (!node) return false;
                 if (node.closest) {
                     return !!node.closest('.compile-output-window');
@@ -181,7 +230,7 @@ class FileExplorer {
                 return false;
             };
 
-            if (isInCompileOutput(e.target) || isInCompileOutput(activeElement)) {
+            if (isInCompileOutput(e.target as Element | null) || isInCompileOutput(activeElement)) {
                 return;
             }
 
@@ -189,7 +238,7 @@ class FileExplorer {
             if (selection && selection.toString?.()) {
                 const anchorNode = selection.anchorNode;
                 const focusNode = selection.focusNode;
-                const getElement = (node) => {
+                const getElement = (node: Element | null) => {
                     if (!node) return null;
                     try {
                         if (typeof Node !== 'undefined' && node.nodeType === Node.ELEMENT_NODE) {
@@ -198,21 +247,21 @@ class FileExplorer {
                     } catch (_) { }
                     return node.parentElement || null;
                 };
-                const anchorElement = getElement(anchorNode);
-                const focusElement = getElement(focusNode);
+                const anchorElement = getElement(anchorNode as Element | null);
+                const focusElement = getElement(focusNode as Element | null);
                 if (isInCompileOutput(anchorElement) || isInCompileOutput(focusElement)) {
                     return;
                 }
             }
 
             if (!this.getPrimarySelection()) {
-                const firstItem = document.querySelector('.file-tree .tree-item');
+                const firstItem = (document.querySelector('.file-tree .tree-item'));
                 if (firstItem) {
                     const p = firstItem.getAttribute('data-path');
-                    const t = firstItem.getAttribute('data-type');
+                    const nodeType = firstItem.getAttribute('data-type');
                     const n = firstItem.querySelector('.tree-item-label')?.textContent || '';
-                    if (p && t) {
-                        this.selectFile({ path: p, type: t, name: n, extension: '' });
+                    if (p && nodeType) {
+                        this.selectFile({ path: p, type: nodeType, name: n, extension: '' });
                     }
                 }
             }
@@ -225,7 +274,7 @@ class FileExplorer {
                         const deleteTargets = this.getActionSelection(this.getPrimarySelection());
                         if (!deleteTargets.length) { logInfo('[文件管理器快捷键] Delete 被按下但没有选中文件'); return; }
                         if (deleteTargets.length === 1) {
-                            await this.deleteFile(deleteTargets[0]);
+                            await this.deleteFile(deleteTargets[0] as FileEntry);
                         } else {
                             await this.deleteFiles(deleteTargets);
                         }
@@ -304,8 +353,8 @@ class FileExplorer {
 
     isFileExplorerFocused() {
         const activeElement = document.activeElement;
-        const filesPanel = document.querySelector('#files-panel');
-        const fileTree = document.querySelector('#file-tree');
+        const filesPanel = (document.querySelector('#files-panel'));
+        const fileTree = (document.querySelector('#file-tree'));
 
         const isInFilesPanel = activeElement && filesPanel && (
             filesPanel.contains(activeElement) || activeElement === filesPanel
@@ -322,7 +371,7 @@ class FileExplorer {
 
 
 
-    findFileByPath(path) {
+    findFileByPath(path: string) {
         return this.files.find(file => file.path === path);
     }
 
@@ -336,7 +385,7 @@ class FileExplorer {
     }
 
     showEmptyState() {
-        const fileTree = document.querySelector('.file-tree');
+        const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
         if (!fileTree) return;
         this._treeItemsByPath.clear();
         this._clearDragState(fileTree);
@@ -345,9 +394,9 @@ class FileExplorer {
         fileTree.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon" data-ui-icon="folder"></div>
-                <div class="empty-state-title">没有打开的文件夹</div>
-                <div class="empty-state-subtitle">您还没有打开文件夹</div>
-                <button class="empty-state-button" onclick="window.oicppApp.openFolder()">
+                <div class="empty-state-title" data-i18n="fileExplorer.noFolder">没有打开的文件夹</div>
+                <div class="empty-state-subtitle" data-i18n="fileExplorer.noFolderDesc">您还没有打开文件夹</div>
+                <button class="empty-state-button" onclick="window.oicppApp.openFolder()" data-i18n="fileExplorer.openFolder">
                     打开文件夹
                 </button>
             </div>
@@ -358,49 +407,18 @@ class FileExplorer {
         }
     }
 
-    _readDirectory(dirPath) {
-        if (!dirPath) return Promise.resolve([]);
+    _readDirectory(dirPath: string): Promise<FileEntry[]> {
+        if (!dirPath) return Promise.resolve([] as FileEntry[]);
         const existing = this._directoryReadRequests.get(dirPath);
         if (existing) return existing;
 
-        let request;
-        if (window.electronAPI?.readDirectory) {
-            request = Promise.resolve().then(() => window.electronAPI.readDirectory(dirPath));
-        } else if (window.electronIPC) {
-            request = new Promise((resolve, reject) => {
-                let settled = false;
-                const cleanup = () => {
-                    window.electronIPC.ipcRenderer?.removeListener?.('directory-read', onRead);
-                    window.electronIPC.ipcRenderer?.removeListener?.('directory-read-error', onError);
-                };
-                const onRead = (_event, returnedPath, files) => {
-                    if (settled || returnedPath !== dirPath) return;
-                    settled = true;
-                    cleanup();
-                    resolve(Array.isArray(files) ? files : []);
-                };
-                const onError = (_event, returnedPath, error) => {
-                    if (settled || returnedPath !== dirPath) return;
-                    settled = true;
-                    cleanup();
-                    reject(new Error(error || '读取目录失败'));
-                };
-                window.electronIPC.on('directory-read', onRead);
-                window.electronIPC.on('directory-read-error', onError);
-                try {
-                    window.electronIPC.send('read-directory', dirPath);
-                } catch (error) {
-                    settled = true;
-                    cleanup();
-                    reject(error);
-                }
-            });
-        } else {
-            request = Promise.reject(new Error('Electron IPC 不可用'));
+        if (!window.electronAPI?.readDirectory) {
+            return Promise.reject(new Error(window.i18n.t('fileExplorer.electronIpcUnavailable')));
         }
+        const request = Promise.resolve().then(() => window.electronAPI.readDirectory(dirPath) as Promise<FileEntry[]>);
 
         const tracked = Promise.resolve(request)
-            .then(files => Array.isArray(files) ? files : [])
+            .then(files => Array.isArray(files) ? files : [] as FileEntry[])
             .finally(() => {
                 if (this._directoryReadRequests.get(dirPath) === tracked) {
                     this._directoryReadRequests.delete(dirPath);
@@ -416,7 +434,7 @@ class FileExplorer {
         if (!this.currentPath) {
 
             this.showEmptyState();
-            return;
+            return Promise.resolve();
         }
 
         const requestedPath = this.currentPath;
@@ -428,11 +446,11 @@ class FileExplorer {
             })
             .catch(error => {
                 if (this.currentPath === requestedPath) {
-                    logWarn('读取工作区文件失败:', error?.message || error);
+                    logWarn('读取工作区文件失败:', (error as Error)?.message || error);
                 }
             });
     }
-    setWorkspace(path) {
+    setWorkspace(path: string) {
         this.currentPath = path;
         this.workspacePath = path;
         this.hasWorkspace = !!path;
@@ -472,7 +490,7 @@ class FileExplorer {
     }
 
     renderFileTree() {
-        const fileTree = document.querySelector('.file-tree');
+        const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
         if (!fileTree) return;
 
         if (!this.hasWorkspace) {
@@ -501,29 +519,29 @@ class FileExplorer {
         } catch (e) { logWarn('恢复展开状态调度失败', e); }
     }
 
-    async expandFolderSilent(item, folder) {
+    async expandFolderSilent(item: HTMLElement, folder: FileEntry) {
         if (!item || !folder?.path) return;
         const arrow = item.querySelector('.tree-item-arrow');
         if (arrow) arrow.textContent = '▼';
-        let next = item.nextElementSibling;
+        let next = item.nextElementSibling as HTMLElement | null;
         while (next) {
-            const p = next.dataset?.path;
+            const p = next.dataset?.['path'];
             if (p && (p.startsWith(folder.path + '/') || p.startsWith(folder.path + '\\'))) return;
             if (!(p && p.startsWith(folder.path))) break;
-            next = next.nextElementSibling;
+            next = next.nextElementSibling as HTMLElement | null;
         }
         try {
             const files = await this._readDirectory(folder.path);
             if (!item.isConnected || !this.expandedFolders.has(folder.path)) return;
             this.insertChildItems(item, files, folder.path);
         } catch (error) {
-            logWarn('恢复展开目录失败:', folder.path, error?.message || error);
+            logWarn('恢复展开目录失败:', folder.path, (error as Error)?.message || error);
         }
     }
 
     async _restoreExpandedFolders() {
         if (!this.expandedFolders || this.expandedFolders.size === 0) return;
-        const fileTree = document.querySelector('.file-tree');
+        const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
         if (!fileTree) return;
         const paths = Array.from(this.expandedFolders).sort((a, b) => a.length - b.length);
         for (const path of paths) {
@@ -534,13 +552,13 @@ class FileExplorer {
                     item = this._queryItemByPath(path, fileTree);
                 }
             }
-            if (item && item.dataset.type === 'folder') {
-                await this.expandFolderSilent(item, { path, type: 'folder' });
+            if (item && item.dataset['type'] === 'folder') {
+                await this.expandFolderSilent(item, { path, type: 'folder' } as FileEntry);
             }
         }
     }
 
-    _queryItemByPath(path, root) {
+    _queryItemByPath(path: string, root: TreeRoot | null): HTMLElement | null {
         try {
             if (!root || !path) return null;
             const cached = this._treeItemsByPath.get(path);
@@ -550,34 +568,34 @@ class FileExplorer {
                 if (isConnected && isInRoot) return cached;
                 this._treeItemsByPath.delete(path);
             }
-            const esc = (s) => { if (window.CSS?.escape) return CSS.escape(s); return s.replace(/["\\]/g, m => '\\' + m); };
+            const esc = (s: string) => { if ((window.CSS as { escape?: (v: string) => string } | undefined)?.escape) return CSS.escape(s); return s.replace(/["\\]/g, (m: string) => '\\' + m); };
             const selector = `.tree-item[data-path="${esc(path)}"]`;
             const el = root.querySelector?.(selector);
             if (el) {
                 this._treeItemsByPath.set(path, el);
                 return el;
             }
-            const fallback = Array.from(root.querySelectorAll('.tree-item')).find(n => n.dataset.path === path) || null;
+            const fallback = Array.from(root.querySelectorAll!('.tree-item')).find(n => n.dataset['path'] === path) || null;
             if (fallback) this._treeItemsByPath.set(path, fallback);
             return fallback;
         } catch (_) { return null; }
     }
 
-    getSelectedFilesArray() {
+    getSelectedFilesArray(): FileEntry[] {
         return Array.from(this.selectedFiles.values());
     }
 
-    getPrimarySelection() {
+    getPrimarySelection(): FileEntry | null {
         const selected = this.getSelectedFilesArray();
-        if (selected.length) return selected[selected.length - 1];
+        if (selected.length) return selected[selected.length - 1] as FileEntry;
         return null;
     }
 
-    isFileSelected(path) {
+    isFileSelected(path: string) {
         return !!(path && this.selectedFiles.has(path));
     }
 
-    getActionSelection(targetFile) {
+    getActionSelection(targetFile: FileEntry | null) {
         const selected = this.getSelectedFilesArray();
         if (selected.length > 1 && targetFile && this.isFileSelected(targetFile.path)) {
             return selected;
@@ -597,10 +615,11 @@ class FileExplorer {
     applySelectionStyles() {
         try {
             const selectedPaths = new Set(this.selectedFiles.keys());
-            const fileTree = document.querySelector('.file-tree');
+            const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
             if (!fileTree) return;
             fileTree.querySelectorAll('.tree-item').forEach(item => {
-                const isSelected = selectedPaths.has(item.dataset?.path);
+                if (!(item instanceof HTMLElement)) return;
+                const isSelected = selectedPaths.has(item.dataset?.['path'] as string);
                 item.classList.toggle('selected', isSelected);
             });
         } catch (error) {
@@ -608,10 +627,10 @@ class FileExplorer {
         }
     }
 
-    async refreshFolder(path) {
+    async refreshFolder(path: string) {
         try {
             if (!path || !this.expandedFolders.has(path)) return;
-            const fileTree = document.querySelector('.file-tree');
+            const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
             const item = this._queryItemByPath(path, fileTree);
             if (!item) return;
             const files = await this._readDirectory(path);
@@ -621,21 +640,21 @@ class FileExplorer {
         } catch (e) { logWarn('refreshFolder 失败', e); }
     }
 
-    setupFileTreeEvents(fileTree) {
+    setupFileTreeEvents(fileTree: HTMLElement) {
         if (!fileTree || fileTree.__oicppFileTreeEventsBound) return;
         fileTree.__oicppFileTreeEventsBound = true;
 
-        const getItem = (event) => {
-            const item = event.target?.closest?.('.tree-item');
+        const getItem = (event: MouseEvent) => {
+            const item = (event.target as Element | null)?.closest?.('.tree-item') as HTMLElement | null;
             return item && fileTree.contains(item) ? item : null;
         };
-        const activate = (event, doubleClick = false) => {
+        const activate = (event: MouseEvent, doubleClick = false) => {
             const item = getItem(event);
             if (!item) {
                 if (!doubleClick && event.target === fileTree) this.clearSelection();
                 return;
             }
-            const file = item.__oicppFile;
+            const file = item.__oicppFile as FileEntry | undefined;
             if (!file) return;
             event.stopPropagation();
             if (doubleClick && (event.ctrlKey || event.metaKey)) return;
@@ -652,9 +671,9 @@ class FileExplorer {
         };
 
         fileTree.addEventListener('click', activate);
-        fileTree.addEventListener('dblclick', (event) => activate(event, true));
+        fileTree.addEventListener('dblclick', (event: MouseEvent) => activate(event, true));
 
-        fileTree.addEventListener('contextmenu', (event) => {
+        fileTree.addEventListener('contextmenu', (event: MouseEvent) => {
             const item = getItem(event);
             if (!item) {
                 if (event.target === fileTree) {
@@ -664,7 +683,7 @@ class FileExplorer {
                 }
                 return;
             }
-            const file = item.__oicppFile;
+            const file = item.__oicppFile as FileEntry | undefined;
             if (!file) return;
             event.preventDefault();
             event.stopPropagation();
@@ -672,26 +691,26 @@ class FileExplorer {
             this.showContextMenu(event, file);
         });
 
-        fileTree.addEventListener('dragstart', (event) => {
+        fileTree.addEventListener('dragstart', (event: DragEvent) => {
             const item = getItem(event);
-            const file = item?.__oicppFile;
+            const file = item?.__oicppFile as FileEntry | undefined;
             if (file) this.handleDragStart(event, file);
         });
 
         this.setupDragAndDrop(fileTree);
     }
 
-    createFileTreeItem(file, level = 0) {
+    createFileTreeItem(file: FileEntry, level = 0) {
         const item = document.createElement('div');
         item.className = 'tree-item';
-        item.dataset.path = file.path;
-        item.__oicppFile = file;
+        item.dataset['path'] = file.path;
+        ((item)).__oicppFile = file;
         this._treeItemsByPath.set(file.path, item);
         if (file.type === 'folder') {
-            item.dataset.type = 'folder';
+            item.dataset['type'] = 'folder';
         } else {
             const ext = (file.extension || '').toLowerCase();
-            item.dataset.type = ext ? ext.replace(/^\./, '') : 'file';
+            item.dataset['type'] = ext ? ext.replace(/^\./, '') : 'file';
         }
         item.style.paddingLeft = `${level * 16 + 8}px`;
 
@@ -701,7 +720,7 @@ class FileExplorer {
         if (file.type === 'folder') {
             const arrow = document.createElement('span');
             arrow.className = 'tree-item-arrow';
-            arrow.textContent = '▶';
+            arrow!.textContent = '▶';
             content.appendChild(arrow);
         }
 
@@ -727,7 +746,7 @@ class FileExplorer {
         return item;
     }
 
-    getFileIcon(file) {
+    getFileIcon(file: FileEntry) {
         if (file.type === 'folder') {
             return 'folder';
         }
@@ -762,40 +781,40 @@ class FileExplorer {
     }
 
 
-    async toggleFolder(item, folder) {
+    async toggleFolder(item: HTMLElement, folder: FileEntry) {
         const arrow = item.querySelector('.tree-item-arrow');
         const isExpanded = this.expandedFolders.has(folder.path);
 
         if (isExpanded) {
-            arrow.textContent = '▶';
+            arrow!.textContent = '▶';
             this.expandedFolders.delete(folder.path);
             this.removeChildItems(item, folder.path);
         } else {
-            arrow.textContent = '▼';
+            arrow!.textContent = '▼';
             this.expandedFolders.add(folder.path);
             try {
                 const files = await this._readDirectory(folder.path);
                 if (!item.isConnected || !this.expandedFolders.has(folder.path)) return;
                 this.insertChildItems(item, files, folder.path);
             } catch (error) {
-                logWarn('展开目录失败:', folder.path, error?.message || error);
+                logWarn('展开目录失败:', folder.path, (error as Error)?.message || error);
             }
         }
 
     }
-    removeChildItems(parentItem, parentPath) {
-        let nextSibling = parentItem.nextElementSibling;
+    removeChildItems(parentItem: HTMLElement, parentPath: string) {
+        let nextSibling = parentItem.nextElementSibling as HTMLElement | null;
         const toRemove = [];
 
         while (nextSibling) {
-            const itemPath = nextSibling.dataset.path;
+            const itemPath = nextSibling.dataset['path'];
             if (itemPath && (itemPath.startsWith(parentPath + '/') || itemPath.startsWith(parentPath + '\\'))) {
                 toRemove.push(nextSibling);
                 this._treeItemsByPath.delete(itemPath);
-                if (nextSibling.dataset.type === 'folder') {
+                if (nextSibling.dataset['type'] === 'folder') {
                     this.expandedFolders.delete(itemPath);
                 }
-                nextSibling = nextSibling.nextElementSibling;
+                nextSibling = nextSibling.nextElementSibling as HTMLElement | null;
             } else {
                 break;
             }
@@ -804,16 +823,16 @@ class FileExplorer {
         toRemove.forEach(item => item.remove());
     }
 
-    insertChildItems(parentItem, files, parentPath) {
+    insertChildItems(parentItem: HTMLElement, files: FileEntry[], parentPath: string) {
         const currentLevel = this.getItemLevel(parentItem);
 
         const existingChildren = [];
-        let nextSibling = parentItem.nextElementSibling;
+        let nextSibling = parentItem.nextElementSibling as HTMLElement | null;
         while (nextSibling) {
-            const itemPath = nextSibling.dataset.path;
+            const itemPath = nextSibling.dataset['path'];
             if (itemPath && (itemPath.startsWith(parentPath + '/') || itemPath.startsWith(parentPath + '\\'))) {
                 existingChildren.push(nextSibling);
-                nextSibling = nextSibling.nextElementSibling;
+                nextSibling = nextSibling.nextElementSibling as HTMLElement | null;
             } else {
                 break;
             }
@@ -825,19 +844,19 @@ class FileExplorer {
         }
 
         const fragment = document.createDocumentFragment();
-        files.forEach(subFile => {
+        files.forEach((subFile: FileEntry) => {
             const subItem = this.createFileTreeItem(subFile, currentLevel + 1);
             fragment.appendChild(subItem);
         });
         parentItem.parentNode?.insertBefore(fragment, parentItem.nextElementSibling);
     }
 
-    getItemLevel(item) {
+    getItemLevel(item: HTMLElement) {
         const paddingLeft = parseInt(item.style.paddingLeft) || 8;
         return Math.floor((paddingLeft - 8) / 16);
     }
 
-    showContextMenu(event, file) {
+    showContextMenu(event: MouseEvent, file: FileEntry) {
         this.hideContextMenu();
 
         const menu = document.createElement('div');
@@ -880,8 +899,8 @@ class FileExplorer {
         menu.style.left = left + 'px';
         menu.style.top = top + 'px';
 
-        const hideMenu = (e) => {
-            if (!menu.contains(e.target)) {
+        const hideMenu = (e: Event) => {
+            if (!menu.contains(e.target as Node)) {
                 this.hideContextMenu();
                 document.removeEventListener('click', hideMenu);
             }
@@ -892,32 +911,32 @@ class FileExplorer {
         }, 0);
     }
 
-    getContextMenuItems(file) {
+    getContextMenuItems(file: FileEntry) {
         const items = [];
 
         if (file.type === 'file') {
-            items.push({ label: '打开', action: () => this.openFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.open'), action: () => this.openFile(file) });
             const compareTargets = this.getActionSelection(file).filter(f => f?.type === 'file');
             if (compareTargets.length === 2) {
-                items.push({ label: '对比文件差异', action: () => this.compareFiles(compareTargets) });
+                items.push({ label: window.i18n.t('fileExplorer.compareDiff'), action: () => this.compareFiles(compareTargets) });
             }
-            items.push({ label: '重命名', action: () => this.renameFile(file) });
-            items.push({ label: '复制', action: () => this.copyFile(this.getActionSelection(file)) });
-            items.push({ label: '剪切', action: () => this.cutFile(this.getActionSelection(file)) });
-            items.push({ label: '删除', action: () => this.deleteFiles(this.getActionSelection(file)) });
-            items.push({ label: '在资源管理器中显示', action: () => this.openInSystemExplorer(file) });
+            items.push({ label: window.i18n.t('fileExplorer.rename'), action: () => this.renameFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.copy'), action: () => this.copyFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.cut'), action: () => this.cutFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.delete'), action: () => this.deleteFiles(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.showInExplorer'), action: () => this.openInSystemExplorer(file) });
         } else {
-            items.push({ label: '新建文件', action: () => this.createNewFileInFolder(file) });
-            items.push({ label: '新建文件夹', action: () => this.createNewFolderInFolder(file) });
-            items.push({ label: '重命名', action: () => this.renameFile(file) });
-            items.push({ label: '复制', action: () => this.copyFile(this.getActionSelection(file)) });
-            items.push({ label: '剪切', action: () => this.cutFile(this.getActionSelection(file)) });
-            items.push({ label: '删除', action: () => this.deleteFiles(this.getActionSelection(file)) });
-            items.push({ label: '在资源管理器中打开', action: () => this.openInSystemExplorer(file) });
+            items.push({ label: window.i18n.t('fileExplorer.newFile'), action: () => this.createNewFileInFolder(file) });
+            items.push({ label: window.i18n.t('fileExplorer.newFolder'), action: () => this.createNewFolderInFolder(file) });
+            items.push({ label: window.i18n.t('fileExplorer.rename'), action: () => this.renameFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.copy'), action: () => this.copyFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.cut'), action: () => this.cutFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.delete'), action: () => this.deleteFiles(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.openInExplorer'), action: () => this.openInSystemExplorer(file) });
         }
 
         if (this.clipboard) {
-            items.push({ label: '粘贴', action: () => this.pasteFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.paste'), action: () => this.pasteFile(file) });
         }
 
         return items;
@@ -930,7 +949,7 @@ class FileExplorer {
         });
     }
 
-    showEmptyAreaContextMenu(event) {
+    showEmptyAreaContextMenu(event: MouseEvent) {
         if (!this.hasWorkspace) {
             return;
         }
@@ -984,8 +1003,8 @@ class FileExplorer {
         menu.style.left = left + 'px';
         menu.style.top = top + 'px';
 
-        const hideMenu = (e) => {
-            if (!menu.contains(e.target)) {
+        const hideMenu = (e: Event) => {
+            if (!menu.contains(e.target as Node)) {
                 this.hideContextMenu();
                 document.removeEventListener('click', hideMenu);
             }
@@ -999,26 +1018,26 @@ class FileExplorer {
     getEmptyAreaContextMenuItems() {
         const items = [];
 
-        items.push({ label: '新建文件', action: () => this.createNewFile() });
+        items.push({ label: window.i18n.t('fileExplorer.newFile'), action: () => this.createNewFile() });
 
-        items.push({ label: '新建文件夹', action: () => this.createNewFolder() });
+        items.push({ label: window.i18n.t('fileExplorer.newFolder'), action: () => this.createNewFolder() });
 
         items.push({ label: '---', action: () => { } });
 
-        items.push({ label: '刷新', action: () => this.refresh() });
+        items.push({ label: window.i18n.t('fileExplorer.refresh'), action: () => this.refresh() });
 
         if (this.workspacePath || this.currentPath) {
-            items.push({ label: '在资源管理器中打开工作区', action: () => this.openWorkspaceInExplorer() });
+            items.push({ label: window.i18n.t('fileExplorer.openWorkspaceInExplorer'), action: () => this.openWorkspaceInExplorer() });
         }
 
         if (this.clipboard) {
-            items.push({ label: '粘贴', action: () => this.pasteFile() });
+            items.push({ label: window.i18n.t('fileExplorer.paste'), action: () => this.pasteFile() });
         }
 
         return items;
     }
 
-    copyFile(fileOrFiles) {
+    copyFile(fileOrFiles: FileEntry | FileEntry[]) {
         const files = Array.isArray(fileOrFiles)
             ? fileOrFiles.filter(f => f?.path)
             : (fileOrFiles ? [fileOrFiles] : []);
@@ -1031,7 +1050,7 @@ class FileExplorer {
         logInfo('复制文件:', files.map(f => f.name));
     }
 
-    openInSystemExplorer(target) {
+    openInSystemExplorer(target: FileEntry) {
         try {
             if (!target || !target.path) {
                 logWarn('openInSystemExplorer: 无有效目标');
@@ -1080,7 +1099,7 @@ class FileExplorer {
         }
     }
 
-    cutFile(fileOrFiles) {
+    cutFile(fileOrFiles: FileEntry | FileEntry[]) {
         const files = Array.isArray(fileOrFiles)
             ? fileOrFiles.filter(f => f?.path)
             : (fileOrFiles ? [fileOrFiles] : []);
@@ -1095,20 +1114,20 @@ class FileExplorer {
 
 
 
-    getPasteTargetFolder() {
+    getPasteTargetFolder(): FileEntry | null {
         const selected = this.getSelectedFilesArray();
         for (let i = selected.length - 1; i >= 0; i--) {
             if (selected[i]?.type === 'folder') {
-                return selected[i];
+                return selected[i] as FileEntry;
             }
         }
         if (this.currentPath) {
-            return { path: this.currentPath, type: 'folder' };
+            return { path: this.currentPath, type: 'folder' } as FileEntry;
         }
         return null;
     }
 
-    pasteFile(targetFolder) {
+    pasteFile(targetFolder?: FileEntry | null) {
         if (!this.clipboard) {
             logWarn('尝试粘贴但剪贴板为空');
             return;
@@ -1135,27 +1154,30 @@ class FileExplorer {
 
         if (window.electronIPC) {
             this.clipboard.files.forEach(file => {
-                const operation = this.clipboard.operation;
-                const normPath = (p) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+                const operation = (this.clipboard as FileClipboard).operation;
+                const normPath = (p: unknown) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
                 const srcNorm = normPath(file.path);
                 const tgtNorm = normPath(targetPath);
-                // 复制/移动到自身或其子目录会无限递归（目录会在遍历时把新建的目标也读进来）。
+                // 粘贴到自身或其子目录会让递归把刚建好的目标再读进来，无限套娃。
                 if (file.type === 'folder' && (tgtNorm === srcNorm || tgtNorm.startsWith(srcNorm + '/'))) {
-                    this.showError('不能把文件夹粘贴到自身或其子目录');
+                    this.showError(window.i18n.t('fileExplorer.pasteIntoSelfForbidden'));
                     return;
                 }
                 window.electronIPC.send('paste-file', file.path, targetPath, operation);
 
-                const handleFilePasted = async (event, sourcePath, destPath, operation, error) => {
+                const handleFilePasted = async (event: Event, sourcePath: string, destPath: string, operation: string, error: unknown) => {
                     if (sourcePath === file.path) {
                         if (error) {
                             logError(`${operation === 'copy' ? '复制' : '移动'}文件失败:`, file.name, error);
-                            this.showError(`${operation === 'copy' ? '复制' : '移动'}失败: ${error}`);
+                            const opLabel = operation === 'copy' ? window.i18n.t('fileExplorer.copy') : window.i18n.t('fileExplorer.move');
+                            this.showError(window.i18n.t('fileExplorer.pasteFail', { op: opLabel, error }));
                         } else {
                             logInfo(`文件${operation === 'copy' ? '复制' : '移动'}成功:`, file.name, '->', destPath);
 
                             if (operation === 'cut' && window.tabManager) {
                                 try {
+                                    // 移动的是目录时，它下面所有已打开的标签都要跟着换路径，
+                                    // 只更新目录本身会让子文件的 tab 指向已经不存在的旧位置。
                                     if (file.type === 'folder' && typeof window.tabManager.updateTabPathsUnderDirectory === 'function') {
                                         window.tabManager.updateTabPathsUnderDirectory(sourcePath, destPath);
                                     } else {
@@ -1184,7 +1206,7 @@ class FileExplorer {
 
             setTimeout(() => this.refresh(), 1000);
         } else {
-            this.showError('文件粘贴功能需要在完整应用环境中运行');
+            this.showError(window.i18n.t('fileExplorer.pasteNeedApp'));
         }
 
         if (this.clipboard.operation === 'cut') {
@@ -1192,7 +1214,7 @@ class FileExplorer {
         }
     }
 
-    async renameFile(file) {
+    async renameFile(file: FileEntry) {
         try {
             const name = file?.name || '';
             let selectStart = 0;
@@ -1205,10 +1227,10 @@ class FileExplorer {
             }
             const dm = window.dialogManager || (typeof dialogManager !== 'undefined' ? dialogManager : null);
             if (!dm || typeof dm.showInputDialog !== 'function') {
-                this.showError('对话框不可用，无法重命名');
+                this.showError(window.i18n.t('fileExplorer.dialogUnavailable'));
                 return;
             }
-            const newName = await dm.showInputDialog('重命名', name, '请输入新名称', {
+            const newName = await dm.showInputDialog(window.i18n.t('fileExplorer.rename'), name, window.i18n.t('fileExplorer.renameDialogPlaceholder'), {
                 selectStart,
                 selectEnd
             });
@@ -1217,7 +1239,7 @@ class FileExplorer {
                 // Validate the new name before sending to backend
                 const validation = this.validateFileName(trimmedName);
                 if (!validation.valid) {
-                    this.showError(validation.error);
+                    this.showError(validation.error as string);
                     logWarn('重命名文件失败 - 非法名称:', newName, '-', validation.error);
                     return;
                 }
@@ -1227,17 +1249,18 @@ class FileExplorer {
                 if (window.electronIPC) {
                     window.electronIPC.send('rename-file', file.path, trimmedName);
 
-                    const handleRenameResult = (event, oldPath, newPath, error) => {
+                    const handleRenameResult = (event: Event, oldPath: string, newPath: string, error: unknown) => {
                         if (oldPath === file.path) {
                             if (error) {
                                 logError('重命名文件失败:', error);
-                                this.showError(`重命名失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.renameFail', { error }));
                             } else {
                                 logInfo('文件重命名成功:', oldPath, '->', newPath);
                                 this.refresh();
 
                                 if (window.tabManager) {
                                     if (file.type === 'folder' && typeof window.tabManager.updateTabPathsUnderDirectory === 'function') {
+                                        // 目录改名后它下面每个已打开的标签都要换路径
                                         window.tabManager.updateTabPathsUnderDirectory(oldPath, newPath);
                                     } else {
                                         const sep = newPath.includes('\\') ? '\\' : '/';
@@ -1262,7 +1285,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-renamed', handleRenameResult);
                 } else {
-                    this.showError('文件重命名功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.renameNeedApp'));
                 }
             }
         } catch (error) {
@@ -1270,14 +1293,14 @@ class FileExplorer {
         }
     }
 
-    handleDragStart(event, file) {
+    handleDragStart(event: DragEvent, file: FileEntry) {
         const filesToDrag = this.getActionSelection(file);
         const dragData = {
             files: filesToDrag.length ? filesToDrag : [file],
             action: 'move'
         };
-        event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
-        event.dataTransfer.effectAllowed = 'move';
+        (event.dataTransfer as DataTransfer).setData('text/plain', JSON.stringify(dragData));
+        (event.dataTransfer as DataTransfer).effectAllowed = 'move';
 
         dragData.files.forEach((f) => {
             const dragItem = this._queryItemByPath(f.path, document);
@@ -1297,9 +1320,9 @@ class FileExplorer {
         this._draggingItems.clear();
     }
 
-    _applyDragHover(fileTree) {
+    _applyDragHover(fileTree: HTMLElement) {
         const target = this._pendingDragOverTarget;
-        const nextItem = target?.dataset?.type === 'folder' && fileTree.contains(target) ? target : null;
+        const nextItem = target?.dataset?.['type'] === 'folder' && fileTree.contains(target) ? target : null;
         if (this._dragOverItem !== nextItem) {
             this._dragOverItem?.classList.remove('drag-over');
             nextItem?.classList.add('drag-over');
@@ -1308,20 +1331,20 @@ class FileExplorer {
         fileTree.classList.toggle('drag-over-root', this._pendingDragOverRoot && !nextItem);
     }
 
-    _scheduleDragHover(fileTree, targetItem) {
+    _scheduleDragHover(fileTree: HTMLElement, targetItem: HTMLElement | null) {
         this._pendingDragOverTarget = targetItem;
         this._pendingDragOverRoot = !targetItem;
         if (this._dragHoverFrame !== null) return;
-        const requestFrame = typeof window.requestAnimationFrame === 'function'
+        const requestFrame = (typeof window.requestAnimationFrame === 'function'
             ? window.requestAnimationFrame.bind(window)
-            : (callback) => setTimeout(callback, 0);
+            : (callback: (() => void) | null) => setTimeout(callback as () => void, 0)) as (callback: () => void) => number;
         this._dragHoverFrame = requestFrame(() => {
             this._dragHoverFrame = null;
             this._applyDragHover(fileTree);
         });
     }
 
-    _clearDragIndicators(fileTree) {
+    _clearDragIndicators(fileTree: HTMLElement) {
         if (this._dragHoverFrame !== null) {
             if (typeof window.cancelAnimationFrame === 'function') {
                 window.cancelAnimationFrame(this._dragHoverFrame);
@@ -1337,27 +1360,27 @@ class FileExplorer {
         fileTree?.classList.remove('drag-over-root');
     }
 
-    _clearDragState(fileTree) {
+    _clearDragState(fileTree: HTMLElement) {
         this._clearDragIndicators(fileTree);
         this._clearDraggingItems();
         this.isDragging = false;
     }
-    setupDragAndDrop(fileTree) {
+    setupDragAndDrop(fileTree: HTMLElement) {
         if (!fileTree || fileTree.__oicppDragAndDropBound) return;
         fileTree.__oicppDragAndDropBound = true;
 
-        fileTree.addEventListener('dragover', (e) => {
+        fileTree.addEventListener('dragover', (e: DragEvent) => {
             e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            const targetItem = e.target?.closest?.('.tree-item');
-            this._scheduleDragHover(fileTree, targetItem && fileTree.contains(targetItem) ? targetItem : null);
+            (e.dataTransfer as DataTransfer).dropEffect = 'move';
+            const targetItem = (e.target as Element | null)?.closest?.('.tree-item');
+            this._scheduleDragHover(fileTree, (targetItem && fileTree.contains(targetItem) ? targetItem : null) as HTMLElement | null);
         });
 
-        fileTree.addEventListener('dragleave', (e) => {
-            if (!fileTree.contains(e.relatedTarget)) this._clearDragIndicators(fileTree);
+        fileTree.addEventListener('dragleave', (e: DragEvent) => {
+            if (!fileTree.contains(e.relatedTarget as Node)) this._clearDragIndicators(fileTree);
         });
 
-        fileTree.addEventListener('drop', (e) => {
+        fileTree.addEventListener('drop', (e: DragEvent) => {
             e.preventDefault();
             e.stopPropagation();
 
@@ -1372,16 +1395,16 @@ class FileExplorer {
             this._clearDraggingItems();
 
             try {
-                const dragData = JSON.parse(e.dataTransfer.getData('text/plain'));
-                const targetItem = e.target.closest('.tree-item');
+                const dragData = JSON.parse((e.dataTransfer as DataTransfer).getData('text/plain'));
+                const targetItem = (e.target as Element).closest<HTMLElement>('.tree-item');
 
                 let targetPath;
                 if (targetItem) {
-                    const targetType = targetItem.dataset.type;
+                    const targetType = targetItem.dataset['type'];
                     if (targetType === 'folder') {
-                        targetPath = targetItem.dataset.path;
+                        targetPath = targetItem.dataset['path'];
                     } else {
-                        const itemPath = targetItem.dataset.path;
+                        const itemPath = targetItem.dataset['path'] as string;
                         const lastSeparator = Math.max(itemPath.lastIndexOf('\\'), itemPath.lastIndexOf('/'));
                         targetPath = itemPath.substring(0, lastSeparator);
                     }
@@ -1389,7 +1412,7 @@ class FileExplorer {
                     targetPath = this.currentPath;
                 }
 
-                this.moveFiles(dragData.files, targetPath).finally(() => {
+                this.moveFiles(dragData.files, targetPath as string).finally(() => {
                     this.isDragging = false;
                 });
 
@@ -1399,13 +1422,13 @@ class FileExplorer {
             }
         });
 
-        fileTree.addEventListener('dragend', (e) => {
+        fileTree.addEventListener('dragend', (e: DragEvent) => {
             this._clearDragState(fileTree);
         });
     }
 
-    async moveFiles(files, targetPath) {
-        logInfo('移动文件:', files.map(f => f.name), '到:', targetPath);
+    async moveFiles(files: FileEntry[], targetPath: string) {
+        logInfo('移动文件:', files.map((f: FileEntry) => f.name), '到:', targetPath);
 
         if (!window.electronIPC) {
             logError('Electron IPC 不可用');
@@ -1413,7 +1436,7 @@ class FileExplorer {
         }
 
         try {
-            const isSameLocation = files.some(file => {
+            const isSameLocation = files.some((file: FileEntry) => {
                 const fileDir = file.path.substring(0, file.path.lastIndexOf('\\') || file.path.lastIndexOf('/'));
                 return fileDir === targetPath;
             });
@@ -1430,7 +1453,10 @@ class FileExplorer {
                 const exists = await window.electronIPC.invoke('check-file-exists', newPath);
 
                 if (exists) {
-                    const shouldOverwrite = await this.confirmOperation('覆盖文件确认', `文件 "${file.name}" 已存在于目标位置。是否要覆盖？`);
+                    const shouldOverwrite = await this.confirmOperation(
+                        window.i18n.t('fileExplorer.overwriteConfirmTitle'),
+                        window.i18n.t('fileExplorer.overwriteConfirmMsg', { name: file.name })
+                    );
                     if (!shouldOverwrite) {
                         logInfo('用户取消了文件移动操作');
                         return;
@@ -1447,7 +1473,7 @@ class FileExplorer {
                 await new Promise((resolve, reject) => {
                     let resolved = false;
 
-                    const successHandler = async (event, oldPath, movedNewPath) => {
+                    const successHandler = async (event: Event, oldPath: string, movedNewPath: string) => {
                         if (oldPath === file.path && movedNewPath === newPath && !resolved) {
                             resolved = true;
                             window.electronIPC.ipcRenderer.removeListener('file-moved', successHandler);
@@ -1462,17 +1488,17 @@ class FileExplorer {
                             } catch (e) {
                                 logWarn('[文件管理器] 拖拽移动后同步样例配置失败:', e);
                             }
-                            resolve();
+                            resolve(undefined);
                         }
                     };
 
-                    const errorHandler = (event, oldPath, error) => {
+                    const errorHandler = (event: Event, oldPath: string, error: unknown) => {
                         if (oldPath === file.path && !resolved) {
                             resolved = true;
                             window.electronIPC.ipcRenderer.removeListener('file-moved', successHandler);
                             window.electronIPC.ipcRenderer.removeListener('file-move-error', errorHandler);
                             logError(`文件移动失败: ${oldPath}, 错误: ${error}`);
-                            reject(new Error(error));
+                            reject(new Error(error as Error as unknown as string));
                         }
                     };
 
@@ -1488,11 +1514,11 @@ class FileExplorer {
 
         } catch (error) {
             logError('移动文件时出错:', error);
-            this.showError(`移动文件时出错: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.moveError', { error: (error as Error)?.message || error }));
         }
     }
 
-    selectFile(file, options = {}) {
+    selectFile(file: FileEntry, options: { toggle?: boolean; append?: boolean; focus?: boolean } = {}) {
         const { toggle = false, append = false, focus = true } = options;
         if (!file || !file.path) return;
 
@@ -1514,7 +1540,7 @@ class FileExplorer {
         this.selectedFile = this.getPrimarySelection();
 
         if (focus) {
-            const target = item || document.querySelector('#file-tree');
+            const target = item || (document.querySelector('#file-tree') as HTMLElement | null);
             if (target) {
                 target.setAttribute('tabindex', '0');
                 target.focus();
@@ -1527,7 +1553,7 @@ class FileExplorer {
 
 
     clearSelection() {
-        const fileTree = document.querySelector('.file-tree');
+        const fileTree = (document.querySelector('.file-tree')) as HTMLElement | null;;
         const selected = fileTree?.querySelectorAll('.tree-item.selected') || [];
         selected.forEach(item => item.classList.remove('selected'));
         this.selectedFiles.clear();
@@ -1536,7 +1562,7 @@ class FileExplorer {
 
 
 
-    async openFile(file) {
+    async openFile(file: FileEntry) {
         if (file.type === 'file') {
             logInfo('打开文件:', file.name);
 
@@ -1558,16 +1584,16 @@ class FileExplorer {
                     }
                 } else {
                     logError('electronAPI不可用');
-                    this.showError('无法读取文件: electronAPI不可用');
+                    this.showError(window.i18n.t('fileExplorer.readFileNoApi'));
                 }
             } catch (error) {
                 logError('读取文件失败:', error);
-                this.showError(`无法读取文件: ${error?.message || error}`);
+                this.showError(window.i18n.t('fileExplorer.readFileFail', { error: (error as Error)?.message || error }));
             }
         }
     }
 
-    async compareFiles(fileList) {
+    async compareFiles(fileList: FileEntry[]) {
         const files = Array.isArray(fileList) ? fileList.filter(f => f && f.type === 'file' && f.path) : [];
         if (files.length !== 2) {
             logWarn('compareFiles 需要正好两个文件');
@@ -1575,7 +1601,7 @@ class FileExplorer {
         }
 
         if (!window.tabManager || typeof window.tabManager.openDiff !== 'function') {
-            this.showError('当前环境不支持文件对比');
+            this.showError(window.i18n.t('fileExplorer.compareNotSupported'));
             return;
         }
 
@@ -1583,7 +1609,7 @@ class FileExplorer {
             await window.tabManager.openDiff(files);
         } catch (error) {
             logError('打开文件对比失败:', error);
-            this.showError(`无法对比文件: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.compareFail', { error: (error as Error)?.message || error }));
         }
     }
 
@@ -1618,7 +1644,7 @@ class FileExplorer {
             let defaultName = await computeDefaultName();
 
             do {
-                fileName = await dialogManager.showNewFileDialog(errorMessage, defaultName);
+                fileName = await window.dialogManager.showNewFileDialog(errorMessage, defaultName);
                 if (!fileName) {
                     return;
                 }
@@ -1626,7 +1652,7 @@ class FileExplorer {
                 // Validate the file name for illegal characters
                 const validation = this.validateFileName(fileName);
                 if (!validation.valid) {
-                    errorMessage = validation.error;
+                    errorMessage = validation.error as string;
                     logWarn('文件创建失败 - 非法名称:', fileName, '-', validation.error);
                     attempts++;
                     continue;
@@ -1645,10 +1671,11 @@ class FileExplorer {
                     break;
                 }
 
-                errorMessage = `文件 "${fileName}" 已存在，请选择其他名称`;
+                errorMessage = window.i18n.t('fileExplorer.fileExistsName', { name: fileName });
                 logWarn(errorMessage);
                 attempts++;
-                const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/);
+                // 三个分组在这个正则里必定出现，写不成 tuple 就会因 noUncheckedIndexedAccess 全变 string | undefined
+                const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/) as [string, string, string, string] | null;
                 if (m) {
                     defaultName = `${m[1]}${parseInt(m[2], 10) + 1}${m[3]}`;
                 } else {
@@ -1691,30 +1718,36 @@ class FileExplorer {
                     const filePath = this.currentPath + '/' + fileName;
                     logInfo('创建文件:', filePath);
 
-                    window.electronIPC.send('create-file', filePath, defaultContent);
+                    // 同一目录里连续/并发创建文件时，只认自己那次请求的回执：
+                    // 原来按 currentPath 前缀匹配会把别人的事件也消费掉（用错的模板内容打开文件），
+                    // 路径不匹配时监听器还会永久累积。
+                    const requestId = 'cf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 
-                    const handleFileCreated = (event, createdPath, error) => {
-                        if (!handleFileCreated._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
-                            handleFileCreated._handled = true;
-                            if (error) {
-                                logError('创建文件失败:', error);
-                                this.showError(`创建文件失败: ${error}`);
-                            } else {
-                                logInfo('文件创建成功:', createdPath);
-                                this.refresh();
+                    window.electronIPC.send('create-file', filePath, defaultContent, requestId);
 
-                                if (window.tabManager) {
-                                    const createdName = createdPath.substring(createdPath.lastIndexOf('/') + 1).replace(/^.*\\/, '');
-                                    window.tabManager.openFile(createdName, defaultContent, false, createdPath);
-                                }
+                    const handleFileCreated: ((event: Event, createdPath: string, error: unknown, replyId: string) => void) & { _handled?: boolean } = (event: Event, createdPath: string, error: unknown, replyId: string) => {
+                        if (handleFileCreated._handled || replyId !== requestId) {
+                            return;
+                        }
+                        handleFileCreated._handled = true;
+                        window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
+                        if (error) {
+                            logError('创建文件失败:', error);
+                            this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
+                        } else {
+                            logInfo('文件创建成功:', createdPath);
+                            this.refresh();
+
+                            if (window.tabManager) {
+                                const createdName = createdPath.substring(createdPath.lastIndexOf('/') + 1).replace(/^.*\\/, '');
+                                window.tabManager.openFile(createdName, defaultContent, false, createdPath);
                             }
-                            window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
                         }
                     };
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError('文件创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1731,12 +1764,12 @@ class FileExplorer {
         }
 
         try {
-            const folderName = await dialogManager.showNewFolderDialog();
+            const folderName = await window.dialogManager.showNewFolderDialog();
             if (folderName) {
                 // Validate the folder name before sending to backend
                 const validation = this.validateFileName(folderName);
                 if (!validation.valid) {
-                    this.showError(validation.error);
+                    this.showError(validation.error as string);
                     logWarn('文件夹创建失败 - 非法名称:', folderName, '-', validation.error);
                     return;
                 }
@@ -1745,11 +1778,11 @@ class FileExplorer {
                     const folderPath = this.currentPath + '/' + folderName;
                     window.electronIPC.send('create-folder', folderPath);
 
-                    const handleFolderCreated = (event, createdPath, error) => {
+                    const handleFolderCreated = (event: Event, createdPath: string, error: unknown) => {
                         if (createdPath && createdPath.startsWith(this.currentPath)) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(`创建文件夹失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('文件夹创建成功:', createdPath);
                                 this.refresh();
@@ -1760,7 +1793,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError('文件夹创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1768,7 +1801,7 @@ class FileExplorer {
         }
     }
 
-    async createNewFileInFolder(folder) {
+    async createNewFileInFolder(folder: FileEntry) {
         logInfo('在文件夹中创建新文件:', folder.name);
 
         try {
@@ -1786,12 +1819,12 @@ class FileExplorer {
             };
             const defaultName = await computeDefaultName();
 
-            let fileName = await dialogManager.showNewFileDialog('', defaultName);
+            let fileName = await window.dialogManager.showNewFileDialog('', defaultName);
             if (fileName) {
                 // Validate the file name before sending to backend
                 const validation = this.validateFileName(fileName);
                 if (!validation.valid) {
-                    this.showError(validation.error);
+                    this.showError(validation.error as string);
                     logWarn('文件创建失败 - 非法名称:', fileName, '-', validation.error);
                     return;
                 }
@@ -1819,27 +1852,30 @@ class FileExplorer {
 
                 if (window.electronIPC) {
                     const filePath = folder.path + '/' + fileName;
-                    window.electronIPC.send('create-file', filePath, defaultContent);
+                    const requestId = 'cf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+                    window.electronIPC.send('create-file', filePath, defaultContent, requestId);
 
-                    const handleFileCreated = (event, createdPath, error) => {
-                        if (createdPath === filePath) {
-                            if (error) {
-                                logError('创建文件失败:', error);
-                                this.showError(`创建文件失败: ${error}`);
-                            } else {
-                                logInfo('在文件夹', folder.name, '中创建文件:', fileName);
-                                this.refresh();
-                                if (window.tabManager) {
-                                    window.tabManager.openFile(fileName, defaultContent, false, createdPath);
-                                }
+                    const handleFileCreated: ((event: Event, createdPath: string, error: unknown, replyId: string) => void) & { _handled?: boolean } = (event: Event, createdPath: string, error: unknown, replyId: string) => {
+                        if (handleFileCreated._handled || replyId !== requestId) {
+                            return;
+                        }
+                        handleFileCreated._handled = true;
+                        window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
+                        if (error) {
+                            logError('创建文件失败:', error);
+                            this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
+                        } else {
+                            logInfo('在文件夹', folder.name, '中创建文件:', fileName);
+                            this.refresh();
+                            if (window.tabManager) {
+                                window.tabManager.openFile(fileName as string, defaultContent, false, createdPath);
                             }
-                            window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
                         }
                     };
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError('文件创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1847,16 +1883,16 @@ class FileExplorer {
         }
     }
 
-    async createNewFolderInFolder(parentFolder) {
+    async createNewFolderInFolder(parentFolder: FileEntry) {
         logInfo('在文件夹中创建新文件夹:', parentFolder.name);
 
         try {
-            const folderName = await dialogManager.showNewFolderDialog();
+            const folderName = await window.dialogManager.showNewFolderDialog();
             if (folderName) {
                 // Validate the folder name before sending to backend
                 const validation = this.validateFileName(folderName);
                 if (!validation.valid) {
-                    this.showError(validation.error);
+                    this.showError(validation.error as string);
                     logWarn('文件夹创建失败 - 非法名称:', folderName, '-', validation.error);
                     return;
                 }
@@ -1865,11 +1901,11 @@ class FileExplorer {
                     const folderPath = parentFolder.path + '/' + folderName;
                     window.electronIPC.send('create-folder', folderPath);
 
-                    const handleFolderCreated = (event, createdPath, error) => {
+                    const handleFolderCreated = (event: Event, createdPath: string, error: unknown) => {
                         if (createdPath === folderPath) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(`创建文件夹失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('在文件夹', parentFolder.name, '中创建文件夹:', folderName);
                                 this.refresh();
@@ -1880,7 +1916,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError('文件夹创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1888,12 +1924,19 @@ class FileExplorer {
         }
     }
 
+    // 目录重读合并：一次批量文件操作（新建/重命名/删除/粘贴）会连续触发多次
+    // refresh()，每次都是整目录 read-directory（6~33ms）+ 全量重渲染，
+    // 大目录下明显卡顿。改为短窗口内合并成一次（P6）。
     refresh() {
-        logInfo('刷新文件管理器');
-        this.loadFiles();
+        if (this._refreshTimer) clearTimeout(this._refreshTimer);
+        this._refreshTimer = setTimeout(() => {
+            this._refreshTimer = null;
+            logInfo('刷新文件管理器');
+            this.loadFiles();
+        }, FILE_EXPLORER_REFRESH_DEBOUNCE_MS);
     }
 
-    async checkFileExists(filePath) {
+    async checkFileExists(filePath: string) {
         try {
             if (window.electronAPI && window.electronAPI.checkFileExists) {
                 return await window.electronAPI.checkFileExists(filePath);
@@ -1905,7 +1948,7 @@ class FileExplorer {
         }
     }
 
-    async deleteFiles(files) {
+    async deleteFiles(files: FileEntry[]): Promise<void> {
         const validFiles = Array.isArray(files) ? files.filter(f => f?.path) : [];
         const uniqueFiles = [];
         const seen = new Set();
@@ -1922,13 +1965,13 @@ class FileExplorer {
         }
 
         if (uniqueFiles.length === 1) {
-            return this.deleteFile(uniqueFiles[0]);
+            return this.deleteFile(uniqueFiles[0] as FileEntry);
         }
 
-        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join('、');
-        const moreHint = uniqueFiles.length > 3 ? ' 等' : '';
-        const message = `确定要删除这 ${uniqueFiles.length} 个项目吗？${preview}${moreHint}`;
-        const confirmed = await this.confirmOperation('删除文件', message);
+        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join(window.i18n.t('fileExplorer.deleteListJoiner'));
+        const moreHint = uniqueFiles.length > 3 ? window.i18n.t('fileExplorer.deleteMoreSuffix') : '';
+        const message = window.i18n.t('fileExplorer.deleteMultiConfirm', { count: uniqueFiles.length, preview: preview + moreHint });
+        const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), message);
         if (!confirmed) {
             this.refocusSelectedFile();
             return;
@@ -1946,7 +1989,7 @@ class FileExplorer {
         setTimeout(() => this.refocusSelectedFile(), 50);
     }
 
-    async deleteFile(file, options = {}) {
+    async deleteFile(file: FileEntry, options: { skipConfirm?: boolean; skipRefresh?: boolean; suppressFocus?: boolean } = {}): Promise<void> {
         if (!file) {
             logWarn('deleteFile 调用时未提供有效文件');
             return;
@@ -1957,7 +2000,7 @@ class FileExplorer {
         logInfo('删除文件:', file.name);
 
         if (!skipConfirm) {
-            const confirmed = await this.confirmOperation('删除文件', `确定要删除 "${file.name}" 吗？`);
+            const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), window.i18n.t('fileExplorer.deleteSingleConfirm', { name: file.name }));
             if (!confirmed) {
                 if (!suppressFocus) this.refocusSelectedFile();
                 return;
@@ -1970,11 +2013,11 @@ class FileExplorer {
             return await new Promise((resolve) => {
                 window.electronIPC.send('delete-file', file.path);
 
-                const handleFileDeleted = async (event, deletedPath, error) => {
+                const handleFileDeleted = async (event: Event, deletedPath: string, error: unknown) => {
                     if (deletedPath === file.path) {
                         if (error) {
                             logError('删除文件失败:', error);
-                            this.showError(`删除失败: ${error}`);
+                            this.showError(window.i18n.t('fileExplorer.deleteFail', { error }));
                             if (!suppressFocus) setTimeout(() => this.refocusSelectedFile(), 0);
                         } else {
                             this.selectedFiles.delete(file.path);
@@ -1989,6 +2032,7 @@ class FileExplorer {
 
                             if (window.tabManager) {
                                 if (file.type === 'folder') {
+                                    // 目录删掉了，它下面的标签还开着就是指向不存在路径的死标签
                                     this._closeTabsUnderPath(file.path);
                                 } else {
                                     const normalizedPath = typeof file.path === 'string' ? file.path.replace(/\\/g, '/') : '';
@@ -2008,7 +2052,7 @@ class FileExplorer {
                             }
                         }
                         window.electronIPC.ipcRenderer.removeListener('file-deleted', handleFileDeleted);
-                        resolve();
+                        resolve(undefined);
                     }
                 };
 
@@ -2016,13 +2060,13 @@ class FileExplorer {
             });
         }
 
-        this.showError('文件删除功能需要在完整应用环境中运行');
+        this.showError(window.i18n.t('fileExplorer.deleteNeedApp'));
         if (!suppressFocus) this.refocusSelectedFile();
     }
 
     async batchDelete() {
         if (!this.hasWorkspace) {
-            this.showError('没有打开的工作区');
+            this.showError(window.i18n.t('fileExplorer.noWorkspace'));
             return;
         }
         const selected = this.getSelectedFilesArray();
@@ -2034,11 +2078,11 @@ class FileExplorer {
         const dm = window.dialogManager;
         if (dm && typeof dm.showActionDialog === 'function') {
             const actions = [
-                { id: 'selected', label: `删除选中的 ${selected.length} 个项目` },
-                { id: 'path', label: '删除指定路径下的所有文件' },
-                { id: 'cancel', label: window.i18n ? window.i18n.t('dialog.cancel') : '取消', className: 'dialog-btn-cancel' }
+                { id: 'selected', label: window.i18n.t('fileExplorer.deleteSelectedAction', { count: selected.length }) },
+                { id: 'path', label: window.i18n.t('fileExplorer.deletePathAction') },
+                { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ];
-            const choice = await dm.showActionDialog('批量删除', '请选择批量删除方式：', actions);
+            const choice = await dm.showActionDialog(window.i18n.t('fileExplorer.batchDeleteTitle'), window.i18n.t('fileExplorer.batchDeletePrompt'), actions);
             if (choice === 'selected') {
                 await this.deleteFiles(selected);
             } else if (choice === 'path') {
@@ -2055,23 +2099,23 @@ class FileExplorer {
         let targetPath = '';
         if (window.electronAPI && typeof window.electronAPI.showOpenDialog === 'function') {
             const result = await window.electronAPI.showOpenDialog({
-                title: '选择要清空的目录',
+                title: window.i18n.t('fileExplorer.selectDirToClear'),
                 properties: ['openDirectory']
             });
             if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
                 return;
             }
-            targetPath = result.filePaths[0];
+            targetPath = result.filePaths[0] as string;
         } else if (typeof window.prompt === 'function') {
-            targetPath = window.prompt('请输入要清空的目录路径:');
+            targetPath = window.prompt(window.i18n.t('fileExplorer.enterDirPath')) as string;
         }
 
         if (!targetPath || !String(targetPath).trim()) return;
         targetPath = String(targetPath).trim();
 
         const confirmed = await this.confirmOperation(
-            '批量删除',
-            `确定要清空 ${targetPath} 下的所有文件和子目录吗？\n该操作不可恢复。`
+            window.i18n.t('fileExplorer.batchDeleteTitle'),
+            window.i18n.t('fileExplorer.clearDirConfirm', { path: targetPath })
         );
         if (!confirmed) return;
 
@@ -2079,26 +2123,26 @@ class FileExplorer {
             if (window.electronAPI && typeof window.electronAPI.clearDirectoryContents === 'function') {
                 const result = await window.electronAPI.clearDirectoryContents(targetPath);
                 if (!result || !result.success) {
-                    this.showError(`清空目录失败: ${result?.error || '未知错误'}`);
+                    this.showError(window.i18n.t('fileExplorer.clearDirFail', { error: result?.error || window.i18n.t('fileExplorer.unknownError') }));
                     return;
                 }
                 this._closeTabsUnderPath(targetPath);
                 this.refresh();
-                const successMsg = `已删除 ${targetPath} 下的 ${result.removed ?? 0} 个顶层项目`;
+                const successMsg = window.i18n.t('fileExplorer.clearDirSuccess', { path: targetPath, count: result.removed ?? 0 });
                 if (window.oicppApp && typeof window.oicppApp.showMessage === 'function') {
                     window.oicppApp.showMessage(successMsg, 'success');
                 } else {
                     logInfo(successMsg);
                 }
             } else {
-                this.showError('批量删除功能需要在完整应用环境中运行');
+                this.showError(window.i18n.t('fileExplorer.batchDeleteNeedApp'));
             }
         } catch (error) {
-            this.showError(`批量删除失败: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.batchDeleteFail', { error: (error as Error)?.message || error }));
         }
     }
 
-    _closeTabsUnderPath(dirPath) {
+    _closeTabsUnderPath(dirPath: string) {
         try {
             const tabManager = window.tabManager;
             if (!tabManager || typeof tabManager.getAllTabs !== 'function') return;
@@ -2118,7 +2162,7 @@ class FileExplorer {
                 }
             }
         } catch (error) {
-            logWarn('关闭被删除路径下的标签页失败:', error?.message || error);
+            logWarn('关闭被删除路径下的标签页失败:', (error as Error)?.message || error);
         }
     }
 }

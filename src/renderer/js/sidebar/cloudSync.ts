@@ -1,4 +1,100 @@
+declare function logWarn(...args: unknown[]): void;
+
+// 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
+function csTreeItem(e: Event): HTMLElement | null {
+    if (!(e.target instanceof Element)) return null;
+    const el = e.target.closest('.tree-item');
+    return el instanceof HTMLElement ? el : null;
+}
+
+interface CloudItem {
+    name: string;
+    type: string;
+    path: string;
+    size?: number;
+    updatedAt?: string | null;
+}
+
+// 交互事件从 data-* 组装出的节点引用；CloudItem 同样满足该形状
+interface CloudRef {
+    path: string;
+    type: string;
+    name: string;
+    extension?: string;
+}
+
+// request() 交给消费方的业务数据体，字段一律用守卫（typeof/Array.isArray）消费
+interface CloudPayload {
+    items?: unknown;
+    remainingFiles?: number;
+    content?: string;
+}
+
+// IPC/JSON.parse 返回的未知对象，只允许方括号取值后再收窄
+interface UnknownRecord {
+    [key: string]: unknown;
+}
+
+// 右键菜单项：动作项必有 label，分隔项只有 separator
+interface ContextMenuActionItem {
+    label: string;
+    action?: () => void | Promise<unknown>;
+    separator?: false;
+}
+
+interface ContextMenuSeparatorItem {
+    separator: true;
+}
+
+type ContextMenuItem = ContextMenuActionItem | ContextMenuSeparatorItem;
+
+// 文件名校验结果：valid 为 false 时 error 必为文案，为 true 时必为 null
+type FileNameCheck = { valid: true; error: null } | { valid: false; error: string };
+
+// 收窄为对象记录，便于按方括号读取未知字段
+function csRecord(value: unknown): UnknownRecord | null {
+    return (typeof value === 'object' && value !== null) ? value as UnknownRecord : null;
+}
+
+// 未知字段取字符串，非字符串返回空串
+function csStr(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
+
+// 未知字段取数字，非数字返回 0
+function csNum(value: unknown): number {
+    return typeof value === 'number' ? value : 0;
+}
+
+// catch 到的未知错误取正文：Error 优先，其次带 message 字段的对象，都没有则空串
+function csErrMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    const message = csRecord(error)?.['message'];
+    if (typeof message === 'string') return message;
+    if (typeof message === 'number') return String(message);
+    return '';
+}
+
 class CloudSyncPanel {
+    rootPath: string;
+    currentPath: string;
+    itemsCache: Map<string, CloudItem[]>;
+    expandedFolders: Set<string>;
+    selectedItems: Map<string, CloudItem>;
+    remainingFiles: number | null;
+    allowedExtensions: Set<string>;
+    maxFileSize: number;
+    isLoading: boolean;
+    _lastLoggedIn: boolean;
+    _contextMenu: HTMLElement | null;
+    treeEl: HTMLElement | null | undefined;
+    summaryEl: HTMLElement | null | undefined;
+    remainingEl: HTMLElement | null | undefined;
+    quotaHelpBtn: HTMLElement | null | undefined;
+    uploadProgressEl: HTMLElement | null | undefined;
+    uploadProgressTextEl: HTMLElement | null | undefined;
+    uploadProgressFillEl: HTMLElement | null | undefined;
+
     constructor() {
         this.rootPath = '/';
         this.currentPath = '/';
@@ -15,18 +111,18 @@ class CloudSyncPanel {
     }
 
     init() {
-        this.treeEl = document.getElementById('cloud-tree');
-        this.summaryEl = document.getElementById('cloud-summary');
-        this.remainingEl = document.getElementById('cloud-remaining');
-        this.quotaHelpBtn = document.getElementById('cloud-quota-help-btn');
-        this.uploadProgressEl = document.getElementById('cloud-upload-progress');
-        this.uploadProgressTextEl = document.getElementById('cloud-upload-progress-text');
-        this.uploadProgressFillEl = document.getElementById('cloud-upload-progress-fill');
+        this.treeEl = (document.getElementById('cloud-tree'));
+        this.summaryEl = (document.getElementById('cloud-summary'));
+        this.remainingEl = (document.getElementById('cloud-remaining'));
+        this.quotaHelpBtn = (document.getElementById('cloud-quota-help-btn'));
+        this.uploadProgressEl = (document.getElementById('cloud-upload-progress'));
+        this.uploadProgressTextEl = (document.getElementById('cloud-upload-progress-text'));
+        this.uploadProgressFillEl = (document.getElementById('cloud-upload-progress-fill'));
         this.bindQuotaHelpAction();
         this.bindHeaderActions();
         this.setupTreeEvents();
         this.setupKeyboardShortcuts();
-        this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+        this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
     }
 
     bindQuotaHelpAction() {
@@ -34,7 +130,7 @@ class CloudSyncPanel {
         this.quotaHelpBtn.addEventListener('click', async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const faqUrl = 'https://oicppide.com/faqs.html';
+            const faqUrl = 'https://oicpp.mywwzh.top/faqs.html';
             try {
                 await window.electronAPI?.openExternal?.(faqUrl);
             } catch (_) {
@@ -44,12 +140,13 @@ class CloudSyncPanel {
     }
 
     bindHeaderActions() {
-        const panel = document.getElementById('cloud-panel');
+        const panel = (document.getElementById('cloud-panel'));
         if (!panel) return;
         panel.querySelectorAll('.icon-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const action = btn.dataset.action;
+                if (!(btn instanceof HTMLElement)) return;
+                const action = btn.dataset['action'];
                 switch (action) {
                     case 'cloud-new-file':
                         this.createNewFile();
@@ -74,12 +171,12 @@ class CloudSyncPanel {
     setupTreeEvents() {
         if (!this.treeEl) return;
         this.treeEl.addEventListener('click', (e) => {
-            const item = e.target.closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file, { toggle: e.ctrlKey || e.metaKey });
             if (type === 'folder') {
                 this.toggleFolder(item, file);
@@ -89,12 +186,12 @@ class CloudSyncPanel {
         });
 
         this.treeEl.addEventListener('dblclick', (e) => {
-            const item = e.target.closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file);
             if (type === 'folder') {
                 this.toggleFolder(item, file);
@@ -106,16 +203,16 @@ class CloudSyncPanel {
         this.treeEl.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const item = e.target.closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) {
                 this.clearSelection();
                 this.showEmptyAreaContextMenu(e);
                 return;
             }
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             if (!this.selectedItems.has(path)) {
                 this.selectItem(file);
             }
@@ -139,12 +236,15 @@ class CloudSyncPanel {
             }
         };
 
-        this.treeEl.addEventListener('dragstart', (e) => {
-            const item = e.target.closest('.tree-item');
+        const tree = this.treeEl;
+        if (!tree) return;
+
+        tree.addEventListener('dragstart', (e) => {
+            const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'];
+            const type = item.dataset['kind'];
+            const name = item.dataset['name'];
             if (!path || !type) return;
             const payload = JSON.stringify({ path, type, name });
             e.dataTransfer?.setData('text/plain', payload);
@@ -152,39 +252,43 @@ class CloudSyncPanel {
             item.classList.add('dragging');
         });
 
-        this.treeEl.addEventListener('dragend', (e) => {
-            const item = e.target.closest('.tree-item');
+        tree.addEventListener('dragend', (e) => {
+            const item = csTreeItem(e);
             if (item) item.classList.remove('dragging');
             clearDragState();
         });
 
-        this.treeEl.addEventListener('dragover', (e) => {
+        tree.addEventListener('dragover', (e) => {
             e.preventDefault();
             clearDragState();
-            const item = e.target.closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) {
-                this.treeEl.classList.add('drag-over-root');
+                tree.classList.add('drag-over-root');
                 return;
             }
-            const type = item.dataset.kind;
+            const type = item.dataset['kind'];
             if (type === 'folder') {
                 item.classList.add('drag-over');
             }
         });
 
-        this.treeEl.addEventListener('drop', async (e) => {
+        tree.addEventListener('drop', async (e) => {
             e.preventDefault();
             clearDragState();
             const data = e.dataTransfer?.getData('text/plain');
             if (!data) return;
-            let payload;
-            try { payload = JSON.parse(data); } catch (_) { return; }
-            if (!payload?.path || !payload?.type) return;
+            let parsed: unknown;
+            try { parsed = JSON.parse(data); } catch (_) { return; }
+            const record = csRecord(parsed);
+            const path = csStr(record?.['path']);
+            const type = csStr(record?.['type']);
+            if (!path || !type) return;
+            const payload: CloudRef = { path, type, name: csStr(record?.['name']) };
 
-            const item = e.target.closest('.tree-item');
+            const item = csTreeItem(e);
             let targetFolder = '/';
-            if (item && item.dataset.kind === 'folder') {
-                targetFolder = item.dataset.path;
+            if (item && item.dataset['kind'] === 'folder') {
+                targetFolder = item.dataset['path'] ?? '/';
             }
 
             await this.moveItem(payload, targetFolder);
@@ -197,7 +301,7 @@ class CloudSyncPanel {
             if (currentPanel !== 'cloud') return;
             const activeElement = document.activeElement;
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTyping = tag === 'input' || tag === 'textarea' || !!activeElement?.isContentEditable;
+            const isTyping = tag === 'input' || tag === 'textarea' || (activeElement instanceof HTMLElement && activeElement.isContentEditable);
             if (isTyping) return;
 
             const target = this.getPrimarySelection();
@@ -214,14 +318,14 @@ class CloudSyncPanel {
         }, true);
     }
 
-    setLoggedInState(loggedIn) {
+    setLoggedInState(loggedIn: boolean) {
         this._lastLoggedIn = !!loggedIn;
         if (!loggedIn) {
             this.itemsCache.clear();
             this.expandedFolders = new Set(['/']);
             this.selectedItems.clear();
             this.updateRemaining(null);
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.refresh({ silent: true });
@@ -236,17 +340,17 @@ class CloudSyncPanel {
         } catch (_) { }
 
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.refresh();
     }
 
-    async refresh(options = {}) {
+    async refresh(options: { silent?: boolean } = {}): Promise<void> {
         const silent = options && options.silent === true;
         if (this.isLoading) return;
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.isLoading = true;
@@ -254,7 +358,7 @@ class CloudSyncPanel {
             await this.loadDirectory('/');
             this.renderTree();
         } catch (error) {
-            const message = error?.message || (window.i18n ? window.i18n.t('cloud.refreshFail') : '刷新失败');
+            const message = csErrMessage(error) || window.i18n?.t?.('cloud.refreshFail');
             // 自动刷新（启动/登录状态变更）失败时只记日志，避免弹出无意义的错误提示
             if (silent) {
                 try { logWarn('[云空间] 自动刷新失败:', message); } catch (_) { }
@@ -266,17 +370,22 @@ class CloudSyncPanel {
         }
     }
 
-    async loadDirectory(dirPath) {
+    async loadDirectory(dirPath: string) {
         const data = await this.request('GET', '/cloudSync/list', { path: dirPath });
         if (!data) return;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const normalized = items.map(item => ({
-            name: item.name,
-            type: item.type,
-            path: this.normalizePath(item.path || this.joinPath(dirPath, item.name)),
-            size: item.size || 0,
-            updatedAt: item.updated_at || item.updatedAt || null
-        }));
+        const rawItems = data.items;
+        const items: unknown[] = Array.isArray(rawItems) ? rawItems : [];
+        const normalized: CloudItem[] = items.map(raw => {
+            const item: UnknownRecord = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            return {
+                name,
+                type: csStr(item['type']),
+                path: this.normalizePath(csStr(item['path']) || this.joinPath(dirPath, name)),
+                size: csNum(item['size']),
+                updatedAt: csStr(item['updated_at']) || csStr(item['updatedAt']) || null
+            };
+        });
         const filtered = normalized.filter(item => !this.isHiddenSettingsBackupName(item.name));
         this.itemsCache.set(this.normalizePath(dirPath), filtered);
         if (typeof data.remainingFiles === 'number') {
@@ -288,7 +397,7 @@ class CloudSyncPanel {
         if (!this.treeEl) return;
         const rootItems = this.itemsCache.get('/') || [];
         if (rootItems.length === 0) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.noFiles') : '云空间还没有文件');
+            this.renderEmptyState(window.i18n.t('cloud.noFiles'));
             return;
         }
         this.treeEl.innerHTML = '';
@@ -297,7 +406,7 @@ class CloudSyncPanel {
         this.treeEl.appendChild(fragment);
     }
 
-    renderItemsRecursive(dirPath, level, container) {
+    renderItemsRecursive(dirPath: string, level: number, container: DocumentFragment | Element) {
         const items = this.itemsCache.get(this.normalizePath(dirPath)) || [];
         const sorted = [...items].sort((a, b) => {
             if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
@@ -313,18 +422,18 @@ class CloudSyncPanel {
         }
     }
 
-    createTreeItem(item, level) {
+    createTreeItem(item: CloudRef, level: number) {
         const node = document.createElement('div');
         node.className = 'tree-item';
-        node.dataset.path = item.path;
-        node.dataset.kind = item.type;
+        node.dataset['path'] = item.path;
+        node.dataset['kind'] = item.type;
         if (item.type === 'folder') {
-            node.dataset.type = 'folder';
+            node.dataset['type'] = 'folder';
         } else {
             const ext = this.getExtension(item.name);
-            node.dataset.type = ext ? ext.replace(/^\./, '') : 'file';
+            node.dataset['type'] = ext ? ext.replace(/^\./, '') : 'file';
         }
-        node.dataset.name = item.name;
+        node.dataset['name'] = item.name;
         node.style.paddingLeft = `${level * 16 + 8}px`;
         node.setAttribute('draggable', 'true');
 
@@ -359,7 +468,7 @@ class CloudSyncPanel {
         return node;
     }
 
-    async moveItem(payload, targetFolder) {
+    async moveItem(payload: CloudRef, targetFolder: string) {
         const sourcePath = this.normalizePath(payload.path);
         const sourceType = payload.type;
         const name = payload.name || this.getBaseName(sourcePath);
@@ -367,18 +476,23 @@ class CloudSyncPanel {
 
         if (sourcePath === targetPath) return;
         if (sourceType === 'folder' && this.isDescendantPath(targetPath, sourcePath)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.moveSelf') : '不能将文件夹移动到自身或子目录中', 'warning');
+            this.showMessage(window.i18n.t('cloud.moveSelf'), 'warning');
             return;
         }
 
-        const ok = await window.dialogManager?.showConfirmDialog?.(window.i18n ? window.i18n.t('cloud.moveConfirm') : '移动确认', window.i18n ? window.i18n.t('cloud.moveConfirmMsg', {name, targetFolder}) : `确定移动 ${name} 到 ${targetFolder} 吗？`);
-        if (ok === false) return;
+        const ok = await window.dialogManager?.showConfirmDialog?.(window.i18n.t('cloud.moveConfirm'), window.i18n.t('cloud.moveConfirmMsg', {name, targetFolder}));
+        // 取消时 dialog 返回 null / false / undefined（见 dialog.js:315、331、200），
+        // 用 === false 判断恒假，会导致点「取消」仍执行移动+删除源文件
+        if (!ok) return;
 
         try {
             if (sourceType === 'file') {
                 const fileData = await this.request('GET', '/cloudSync/download', { path: sourcePath });
-                const content = typeof fileData?.content === 'string' ? fileData.content : '';
-                await this.request('POST', '/cloudSync/upload', { path: targetPath, content });
+                // 取不到内容必须抛错，不能用空串兜底 —— 否则等于「上传一个空文件再删掉源文件」
+                if (typeof fileData?.content !== 'string') {
+                    throw new Error(window.i18n.t('cloud.moveFail'));
+                }
+                await this.request('POST', '/cloudSync/upload', { path: targetPath, content: fileData.content });
                 await this.request('POST', '/cloudSync/delete', { path: sourcePath });
             } else if (sourceType === 'folder') {
                 await this.copyFolderRecursive(sourcePath, targetPath);
@@ -394,7 +508,7 @@ class CloudSyncPanel {
                 if (this.itemsCache.has(sourcePath)) {
                     const cached = this.itemsCache.get(sourcePath);
                     this.itemsCache.delete(sourcePath);
-                    this.itemsCache.set(targetPath, cached);
+                    if (cached) this.itemsCache.set(targetPath, cached);
                 }
                 if (this.expandedFolders.has(sourcePath)) {
                     this.expandedFolders.delete(sourcePath);
@@ -402,44 +516,49 @@ class CloudSyncPanel {
                 }
             }
             this.renderTree();
-            this.showMessage(window.i18n ? window.i18n.t('cloud.moveSuccess') : '移动完成', 'success');
+            this.showMessage(window.i18n.t('cloud.moveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.moveFail') : '移动失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.moveFail')), 'error');
         }
     }
 
-    async copyFolderRecursive(sourcePath, targetPath) {
+    async copyFolderRecursive(sourcePath: string, targetPath: string) {
         await this.request('POST', '/cloudSync/createFolder', { path: targetPath });
         const data = await this.request('GET', '/cloudSync/list', { path: sourcePath });
-        const items = Array.isArray(data?.items) ? data.items : [];
-        for (const item of items) {
-            const itemPath = this.normalizePath(item.path || this.joinPath(sourcePath, item.name));
-            const destPath = this.joinPath(targetPath, item.name);
-            if (item.type === 'folder') {
+        const rawItems = data?.items;
+        const items: unknown[] = Array.isArray(rawItems) ? rawItems : [];
+        for (const raw of items) {
+            const item: UnknownRecord = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            const itemPath = this.normalizePath(csStr(item['path']) || this.joinPath(sourcePath, name));
+            const destPath = this.joinPath(targetPath, name);
+            if (csStr(item['type']) === 'folder') {
                 await this.copyFolderRecursive(itemPath, destPath);
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             } else {
                 const fileData = await this.request('GET', '/cloudSync/download', { path: itemPath });
-                const content = typeof fileData?.content === 'string' ? fileData.content : '';
-                await this.request('POST', '/cloudSync/upload', { path: destPath, content });
+                if (typeof fileData?.content !== 'string') {
+                    throw new Error(window.i18n.t('cloud.moveFail'));
+                }
+                await this.request('POST', '/cloudSync/upload', { path: destPath, content: fileData.content });
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             }
         }
     }
 
-    isDescendantPath(target, source) {
+    isDescendantPath(target: string, source: string) {
         const src = this.normalizePath(source);
         const tgt = this.normalizePath(target);
         return tgt.startsWith(src + '/');
     }
 
-    getBaseName(p) {
+    getBaseName(p: string | undefined) {
         const norm = this.normalizePath(p);
         const parts = norm.split('/').filter(Boolean);
-        return parts.length ? parts[parts.length - 1] : '';
+        return parts.length ? (parts[parts.length - 1] ?? '') : '';
     }
 
-    getFileIcon(item) {
+    getFileIcon(item: CloudRef) {
         if (item.type === 'folder') return 'folder';
         const ext = this.getExtension(item.name);
         switch (ext) {
@@ -460,13 +579,13 @@ class CloudSyncPanel {
         }
     }
 
-    isHiddenSettingsBackupName(name) {
+    isHiddenSettingsBackupName(name: string) {
         const raw = String(name || '').trim();
         const base = raw.split('/').filter(Boolean).pop() || raw;
         return /^OICPP_user_\d{8}_\d{6}_.+_settings\.cpp$/i.test(base);
     }
 
-    toggleFolder(node, folder) {
+    toggleFolder(node: HTMLElement, folder: CloudRef) {
         if (folder.type !== 'folder') return;
         const path = folder.path;
         if (this.expandedFolders.has(path)) {
@@ -477,7 +596,7 @@ class CloudSyncPanel {
         this.expandedFolders.add(path);
         if (!this.itemsCache.has(path)) {
             this.loadDirectory(path).then(() => this.renderTree()).catch(err => {
-                this.showMessage(err?.message || (window.i18n ? window.i18n.t('cloud.loadFolderFail') : '加载文件夹失败'), 'error');
+                this.showMessage(err?.message || (window.i18n.t('cloud.loadFolderFail')), 'error');
                 this.renderTree();
             });
         } else {
@@ -485,7 +604,7 @@ class CloudSyncPanel {
         }
     }
 
-    selectItem(item, options = {}) {
+    selectItem(item: CloudRef, options: { toggle?: boolean } = {}) {
         const toggle = !!options.toggle;
         if (!toggle) {
             this.selectedItems.clear();
@@ -511,10 +630,15 @@ class CloudSyncPanel {
         return null;
     }
 
-    async openCloudFile(file) {
+    async openCloudFile(file: CloudRef) {
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
-            const content = typeof data?.content === 'string' ? data.content : '';
+            // 云端返回异常内容时回退成 ''，等于把一个 0 字节文件写到磁盘上，
+            // 而用户看到的是「保存成功」。
+            if (typeof data?.content !== 'string') {
+                throw new Error(window.i18n.t('cloud.dataFormatError'));
+            }
+            const content = data.content;
             const fileName = file.name;
             if (window.tabManager && typeof window.tabManager.openFile === 'function') {
                 await window.tabManager.openFile(fileName, content, false, `cloud://${file.path}`);
@@ -523,23 +647,23 @@ class CloudSyncPanel {
                 }
             }
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.openFileFail') : '打开文件失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.openFileFail')), 'error');
         }
     }
 
-    async saveCloudFile(cloudPath, content) {
+    async saveCloudFile(cloudPath: string, content: string) {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return false;
         }
         const bytes = new TextEncoder().encode(content || '').length;
         if (bytes > this.maxFileSize) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileSizeExceeded') : '文件大小超过 50KB，无法上传', 'error');
+            this.showMessage(window.i18n.t('cloud.fileSizeExceeded'), 'error');
             return false;
         }
         const ext = this.getExtension(cloudPath);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileTypeNotSupported') : '仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+            this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
             return false;
         }
         try {
@@ -551,18 +675,18 @@ class CloudSyncPanel {
             this.renderTree();
             return true;
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.saveFail') : '保存失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.saveFail')), 'error');
             return false;
         }
     }
 
     async createNewFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const name = await window.dialogManager?.showInputDialog('新建云端文件', 'untitled.cpp', '请输入文件名');
-        if (!name) return;
+        const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFileName'), window.i18n.t('cloud.untitled'), window.i18n.t('cloud.namePlaceholder'));
+        if (!name || typeof name !== 'string') return;
         const check = this.validateFileName(name);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -570,14 +694,14 @@ class CloudSyncPanel {
         }
         const ext = this.getExtension(name);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileTypeNotSupported') : '仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+            this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
             return;
         }
         if (!this.checkRemainingCapacity()) return;
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileExists') : '已存在同名文件或文件夹，请更换名称', 'warning');
+            this.showMessage(window.i18n.t('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -587,17 +711,17 @@ class CloudSyncPanel {
             this.renderTree();
             this.openCloudFile({ path: fullPath, name, type: 'file' });
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.newFileFail') : '新建文件失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFileFail')), 'error');
         }
     }
 
     async createNewFolder() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const name = await window.dialogManager?.showInputDialog('新建云端文件夹', 'new-folder', '请输入文件夹名');
-        if (!name) return;
+        const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFolderName'), window.i18n.t('cloud.defaultFolder'), window.i18n.t('cloud.folderPlaceholder'));
+        if (!name || typeof name !== 'string') return;
         const check = this.validateFileName(name);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -607,7 +731,7 @@ class CloudSyncPanel {
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileExists') : '已存在同名文件或文件夹，请更换名称', 'warning');
+            this.showMessage(window.i18n.t('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -616,26 +740,26 @@ class CloudSyncPanel {
             await this.loadDirectory(targetDir);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.newFolderFail') : '新建文件夹失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFolderFail')), 'error');
         }
     }
 
     async uploadLocalFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         if (!window.electronAPI?.showOpenDialog) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.uploadUnavailable') : '上传功能不可用', 'error');
+            this.showMessage(window.i18n.t('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('dialog.selectUploadFile') : '选择要上传的文件',
+                title: window.i18n?.t?.('dialog.selectUploadFile'),
                 properties: ['openFile'],
                 filters: [
                     {
-                        name: window.i18n ? window.i18n.t('cloud.supportedFileTypes') : 'Supported Files',
+                        name: window.i18n.t('cloud.supportedFileTypes'),
                         extensions: Array.from(this.allowedExtensions, (extension) => extension.slice(1))
                     }
                 ]
@@ -645,19 +769,21 @@ class CloudSyncPanel {
             const info = await window.electronAPI.getPathInfo(filePath);
             const ext = (info?.extname || '').toLowerCase();
             if (!this.allowedExtensions.has(ext)) {
-                this.showMessage('仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+                this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
                 return;
             }
             const buffer = await window.electronAPI.readFileBuffer(filePath);
-            const byteLength = buffer?.byteLength ?? buffer?.length ?? 0;
+            // read-file-buffer 主进程返回 base64 字符串（buffer.toString('base64')），string 无 byteLength，
+            // byteLength 分支恒 undefined，删死代码直接用 length
+            const byteLength = buffer?.length ?? 0;
             if (byteLength > this.maxFileSize) {
-                this.showMessage(window.i18n ? window.i18n.t('cloud.fileSizeExceeded') : '文件大小超过 50KB，无法上传', 'error');
+                this.showMessage(window.i18n.t('cloud.fileSizeExceeded'), 'error');
                 return;
             }
             const content = await window.electronAPI.readFileContent(filePath);
             if (!this.checkRemainingCapacity()) return;
             const targetDir = this.getActionTargetFolder();
-            const fileName = info?.basename || filePath.split(/[\\/]/).pop();
+            const fileName = info?.basename || filePath.split(/[\\/]/).pop() || '';
             const conflictAction = await this.resolveUploadConflict(targetDir, fileName, 'file');
             if (conflictAction === 'cancel' || conflictAction === 'skip') {
                 return;
@@ -666,24 +792,24 @@ class CloudSyncPanel {
             await this.request('POST', '/cloudSync/upload', { path: fullPath, content: content || '' });
             await this.loadDirectory(targetDir);
             this.renderTree();
-            this.showMessage((window.i18n ? window.i18n.t('cloud.uploadSuccessSimple') : '上传成功'), 'success');
+            this.showMessage((window.i18n.t('cloud.uploadSuccessSimple')), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.uploadFailSimple') : '上传失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
     async uploadLocalFolder() {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.walkDirectory) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.uploadUnavailable') : '上传功能不可用', 'error');
+            this.showMessage(window.i18n.t('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('dialog.selectUploadFolder') : '选择要上传的文件夹',
+                title: window.i18n?.t?.('dialog.selectUploadFolder'),
                 properties: ['openDirectory']
             });
             const folderPath = result?.filePaths?.[0];
@@ -702,16 +828,16 @@ class CloudSyncPanel {
                 includeExts: Array.from(this.allowedExtensions)
             });
             if (!walkResult?.success) {
-                throw new Error(walkResult?.error || '读取文件夹失败');
+                throw new Error(walkResult?.error || window.i18n.t('cloud.loadFolderFail'));
             }
             const rawFiles = Array.isArray(walkResult.files) ? walkResult.files : [];
             if (rawFiles.length === 0) {
-                this.showMessage('文件夹内没有可上传的文件', 'warning');
+                this.showMessage(window.i18n.t('dialog.uploadFolderEmpty'), 'warning');
                 return;
             }
 
             const rootNorm = this.normalizeLocalPath(folderPath);
-            const entries = [];
+            const entries: Array<{ path: string; rel: string }> = [];
             for (const file of rawFiles) {
                 const ext = (file.ext || this.getExtension(file.name)).toLowerCase();
                 if (!this.allowedExtensions.has(ext)) {
@@ -723,17 +849,17 @@ class CloudSyncPanel {
             }
 
             if (entries.length === 0) {
-                this.showMessage('文件夹内没有可上传的文件', 'warning');
+                this.showMessage(window.i18n.t('dialog.uploadFolderEmpty'), 'warning');
                 return;
             }
 
             if (typeof this.remainingFiles === 'number' && entries.length > this.remainingFiles) {
-                this.showMessage(`待上传文件 ${entries.length} 个，超过云端剩余数量 ${this.remainingFiles}`, 'warning');
+                this.showMessage(window.i18n.t('cloud.uploadExceedsRemaining', { count: entries.length, remaining: this.remainingFiles }), 'warning');
                 return;
             }
 
             await this.tryCreateCloudFolder(cloudRoot);
-            const folders = new Set();
+            const folders = new Set<string>();
             for (const entry of entries) {
                 const relDir = this.getRelativeDir(entry.rel);
                 if (!relDir) continue;
@@ -751,7 +877,7 @@ class CloudSyncPanel {
             let uploaded = 0;
             let skippedSize = 0;
             let processed = 0;
-            this.showUploadProgress(0, entries.length, `上传中: 0/${entries.length}`);
+            this.showUploadProgress(0, entries.length, window.i18n.t('cloud.uploadProgress', { current: 0, total: entries.length }));
             for (const entry of entries) {
                 const content = await window.electronAPI.readFileContent(entry.path);
                 const bytes = new TextEncoder().encode(content || '').length;
@@ -787,53 +913,56 @@ class CloudSyncPanel {
             this.expandedFolders.add(cloudRoot);
             this.renderTree();
 
-            let message = `上传完成：${uploaded} 个文件`;
+            let message = window.i18n.t('dialog.uploadComplete', { uploaded, count: uploaded });
             if (skippedSize > 0) {
-                message += `，跳过 ${skippedSize} 个超出 50KB 的文件`;
+                message += window.i18n.t('dialog.uploadSkipped', { count: skippedSize });
             }
             this.showUploadProgress(entries.length, entries.length, message);
             this.hideUploadProgress(2000);
             this.showMessage(message, uploaded > 0 ? 'success' : 'warning');
         } catch (error) {
             this.hideUploadProgress();
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.uploadFailSimple') : '上传失败'), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
-    async downloadFile(file) {
+    async downloadFile(file: CloudRef) {
         if (!window.electronAPI?.showSaveDialog) {
-            this.showMessage('下载功能不可用', 'error');
+            this.showMessage(window.i18n.t('cloud.downloadUnavailable'), 'error');
             return;
         }
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
+            // 云端返回异常内容时回退成 ''，等于把一个 0 字节文件写到磁盘上，
+            // 而用户看到的是「保存成功」。
             if (typeof data?.content !== 'string') {
-                throw new Error('云端返回数据格式异常');
+                throw new Error(window.i18n.t('cloud.dataFormatError'));
             }
             const content = data.content;
             const result = await window.electronAPI.showSaveDialog({
-                title: '保存云端文件',
+                title: window.i18n.t('cloud.saveCloudTitle'),
                 defaultPath: file.name
             });
             const targetPath = result?.filePath;
             if (!targetPath) return;
             const writeResult = await window.electronAPI.writeFile(targetPath, content);
             if (writeResult?.success === false) {
-                throw new Error(writeResult?.error || '写入失败');
+                throw new Error(writeResult?.error || window.i18n.t('cloud.writeFail'));
             }
-            this.showMessage('保存成功', 'success');
+            this.showMessage(window.i18n.t('cloud.saveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || '下载失败', 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.downloadFail'), 'error');
         }
     }
 
-    async renameItem(file) {
+    async renameItem(file: CloudRef) {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const newName = await window.dialogManager?.showInputDialog('重命名', file.name, '请输入新名称');
-        if (!newName || newName === file.name) return;
+        const newName = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.rename'), file.name, window.i18n.t('cloud.renamePlaceholder'));
+        if (!newName || typeof newName !== 'string') return;
+        if (newName === file.name) return;
         const check = this.validateFileName(newName);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -842,7 +971,7 @@ class CloudSyncPanel {
         if (file.type === 'file') {
             const ext = this.getExtension(newName);
             if (!this.allowedExtensions.has(ext)) {
-                this.showMessage('仅支持 .ans .in .out .cpp .py .txt', 'error');
+                this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
                 return;
             }
         }
@@ -869,11 +998,11 @@ class CloudSyncPanel {
             }
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || '重命名失败', 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.renameFail'), 'error');
         }
     }
 
-    updateOpenedCloudTabsForFolderRename(oldFolderPath, newFolderPath) {
+    updateOpenedCloudTabsForFolderRename(oldFolderPath: string, newFolderPath: string) {
         const tabManager = window.tabManager;
         if (!tabManager || !tabManager.tabs || typeof tabManager.tabs.entries !== 'function') {
             return;
@@ -881,7 +1010,7 @@ class CloudSyncPanel {
 
         const oldPrefix = `cloud://${this.normalizePath(oldFolderPath)}`;
         const newPrefix = `cloud://${this.normalizePath(newFolderPath)}`;
-        const updates = [];
+        const updates: Array<{ oldKey: string; newKey: string; newName: string }> = [];
 
         for (const [uniqueKey, tabData] of tabManager.tabs.entries()) {
             const key = typeof uniqueKey === 'string' ? uniqueKey : '';
@@ -897,12 +1026,12 @@ class CloudSyncPanel {
         });
     }
 
-    async deleteItem(file) {
+    async deleteItem(file: CloudRef) {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const ok = await window.dialogManager?.showConfirmDialog('删除确认', `确定删除 ${file.name} 吗？`);
+        const ok = await window.dialogManager?.showConfirmDialog(window.i18n.t('cloud.deleteConfirm'), window.i18n.t('cloud.deleteConfirmMsg', { name: file.name }));
         if (!ok) return;
         try {
             await this.request('POST', '/cloudSync/delete', { path: file.path });
@@ -910,40 +1039,40 @@ class CloudSyncPanel {
             await this.loadDirectory(parent);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || '删除失败', 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.deleteFail'), 'error');
         }
     }
 
-    showItemContextMenu(e, file) {
-        const items = [];
+    showItemContextMenu(e: MouseEvent, file: CloudRef) {
+        const items: ContextMenuItem[] = [];
         if (file.type === 'file') {
-            items.push({ label: '打开', action: () => this.openCloudFile(file) });
-            items.push({ label: '下载到本地', action: () => this.downloadFile(file) });
+            items.push({ label: window.i18n.t('cloud.open'), action: () => this.openCloudFile(file) });
+            items.push({ label: window.i18n.t('cloud.download'), action: () => this.downloadFile(file) });
         }
-        items.push({ label: '重命名', action: () => this.renameItem(file) });
-        items.push({ label: '删除', action: () => this.deleteItem(file) });
+        items.push({ label: window.i18n.t('cloud.rename'), action: () => this.renameItem(file) });
+        items.push({ label: window.i18n.t('cloud.delete'), action: () => this.deleteItem(file) });
         items.push({ separator: true });
-        items.push({ label: '新建文件', action: () => this.createNewFile() });
-        items.push({ label: '新建文件夹', action: () => this.createNewFolder() });
-        items.push({ label: '上传文件', action: () => this.uploadLocalFile() });
-        items.push({ label: '上传文件夹', action: () => this.uploadLocalFolder() });
-        items.push({ label: '刷新', action: () => this.refresh() });
+        items.push({ label: window.i18n.t('cloud.newFile'), action: () => this.createNewFile() });
+        items.push({ label: window.i18n.t('cloud.newFolder'), action: () => this.createNewFolder() });
+        items.push({ label: window.i18n.t('cloud.uploadFile'), action: () => this.uploadLocalFile() });
+        items.push({ label: window.i18n.t('cloud.uploadFolder'), action: () => this.uploadLocalFolder() });
+        items.push({ label: window.i18n.t('cloud.refresh'), action: () => this.refresh() });
         this.showContextMenu(items, e.clientX, e.clientY);
     }
 
-    showEmptyAreaContextMenu(e) {
-        const items = [
-            { label: '新建文件', action: () => this.createNewFile() },
-            { label: '新建文件夹', action: () => this.createNewFolder() },
-            { label: '上传文件', action: () => this.uploadLocalFile() },
-            { label: '上传文件夹', action: () => this.uploadLocalFolder() },
+    showEmptyAreaContextMenu(e: MouseEvent) {
+        const items: ContextMenuItem[] = [
+            { label: window.i18n.t('cloud.newFile'), action: () => this.createNewFile() },
+            { label: window.i18n.t('cloud.newFolder'), action: () => this.createNewFolder() },
+            { label: window.i18n.t('cloud.uploadFile'), action: () => this.uploadLocalFile() },
+            { label: window.i18n.t('cloud.uploadFolder'), action: () => this.uploadLocalFolder() },
             { separator: true },
-            { label: '刷新', action: () => this.refresh() }
+            { label: window.i18n.t('cloud.refresh'), action: () => this.refresh() }
         ];
         this.showContextMenu(items, e.clientX, e.clientY);
     }
 
-    showContextMenu(items, x, y) {
+    showContextMenu(items: ContextMenuItem[], x: number, y: number) {
         this.clearContextMenu();
         const menu = document.createElement('div');
         menu.className = 'context-menu';
@@ -953,16 +1082,17 @@ class CloudSyncPanel {
             if (item.separator) {
                 const sep = document.createElement('div');
                 sep.className = 'context-menu-item';
-                sep.dataset.separator = 'true';
+                sep.dataset['separator'] = 'true';
                 menu.appendChild(sep);
                 return;
             }
             const entry = document.createElement('div');
             entry.className = 'context-menu-item';
-            entry.textContent = item.label;
+            const actionItem = item as ContextMenuActionItem;
+            entry.textContent = actionItem.label;
             entry.addEventListener('click', () => {
                 this.clearContextMenu();
-                item.action?.();
+                actionItem.action?.();
             });
             menu.appendChild(entry);
         });
@@ -1004,13 +1134,13 @@ class CloudSyncPanel {
         }
     }
 
-    renderEmptyState(message) {
+    renderEmptyState(message: string) {
         if (!this.treeEl) return;
         this.treeEl.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon" data-ui-icon="cloud"></div>
                 <div class="empty-state-title">${message}</div>
-                <div class="empty-state-subtitle">云空间文件将在此显示</div>
+                <div class="empty-state-subtitle">${window.i18n.t('cloud.filesWillAppear')}</div>
             </div>
         `;
         if (window.uiIcons?.hydrate) {
@@ -1018,29 +1148,29 @@ class CloudSyncPanel {
         }
     }
 
-    updateRemaining(value) {
+    updateRemaining(value: number | null) {
         this.remainingFiles = typeof value === 'number' ? value : null;
         if (this.remainingEl) {
             this.remainingEl.textContent = typeof value === 'number'
-                ? `剩余文件数量: ${value}`
-                : '剩余文件数量: --';
+                ? window.i18n.t('cloud.remainingFiles', { count: value })
+                : window.i18n.t('cloud.remainingFilesUnknown');
         }
     }
 
-    showUploadProgress(current, total, text) {
+    showUploadProgress(current: number, total: number, text: string) {
         if (!this.uploadProgressEl) return;
         this.uploadProgressEl.style.display = 'block';
         this.updateUploadProgress(current, total, true, text);
     }
 
-    updateUploadProgress(current, total, force = false, text) {
+    updateUploadProgress(current: number, total: number, force: boolean = false, text?: string) {
         if (!this.uploadProgressEl || !this.uploadProgressFillEl) return;
         if (!force && current > 0 && current < total && current % 3 !== 0) return;
         const safeTotal = total > 0 ? total : 1;
         const percent = Math.min(100, Math.round((current / safeTotal) * 100));
         this.uploadProgressFillEl.style.width = `${percent}%`;
         if (this.uploadProgressTextEl) {
-            this.uploadProgressTextEl.textContent = text || `上传中: ${current}/${total}`;
+            this.uploadProgressTextEl.textContent = text || window.i18n.t('cloud.uploadProgress', { current, total });
         }
     }
 
@@ -1061,7 +1191,7 @@ class CloudSyncPanel {
     checkRemainingCapacity() {
         if (typeof this.remainingFiles !== 'number') return true;
         if (this.remainingFiles <= 0) {
-            this.showMessage('云端剩余文件数量不足', 'warning');
+            this.showMessage(window.i18n.t('cloud.remainingInsufficient'), 'warning');
             return false;
         }
         return true;
@@ -1074,7 +1204,7 @@ class CloudSyncPanel {
         return this.getParentPath(primary.path);
     }
 
-    async ensureDirectoryLoaded(dirPath) {
+    async ensureDirectoryLoaded(dirPath: string) {
         const norm = this.normalizePath(dirPath);
         if (this.itemsCache.has(norm)) return;
         try {
@@ -1083,45 +1213,45 @@ class CloudSyncPanel {
         }
     }
 
-    hasNameInDirectory(dirPath, name) {
+    hasNameInDirectory(dirPath: string, name: string) {
         const norm = this.normalizePath(dirPath);
         const items = this.itemsCache.get(norm) || [];
         return items.some(item => item.name === name);
     }
 
-    getItemInDirectory(dirPath, name) {
+    getItemInDirectory(dirPath: string, name: string) {
         const norm = this.normalizePath(dirPath);
         const items = this.itemsCache.get(norm) || [];
         return items.find(item => item.name === name) || null;
     }
 
-    async resolveUploadConflict(dirPath, name, targetKind) {
+    async resolveUploadConflict(dirPath: string, name: string, targetKind: 'file' | 'folder') {
         await this.ensureDirectoryLoaded(dirPath);
         const existing = this.getItemInDirectory(dirPath, name);
         if (!existing) return 'none';
 
-        const existingKind = existing.type === 'folder' ? '文件夹' : '文件';
-        const targetLabel = targetKind === 'folder' ? '文件夹' : '文件';
+        const existingKind = existing.type === 'folder' ? window.i18n.t('cloud.folder') : window.i18n.t('cloud.file');
+        const targetLabel = targetKind === 'folder' ? window.i18n.t('cloud.folder') : window.i18n.t('cloud.file');
 
         if (existing.type === 'folder' && targetKind === 'file') {
             const action = await window.dialogManager?.showActionDialog?.(
-                '上传冲突',
-                `云端已存在同名文件夹: ${name}，无法用${targetLabel}覆盖。`,
+                window.i18n.t('cloud.uploadConflict'),
+                window.i18n.t('cloud.uploadConflictFolderMsg', { name, target: targetLabel }),
                 [
-                    { id: 'skip', label: '跳过' },
-                    { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' }
+                    { id: 'skip', label: window.i18n.t('cloud.skip') },
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
                 ]
             );
             return action || 'cancel';
         }
 
         const action = await window.dialogManager?.showActionDialog?.(
-            '上传冲突',
-            `云端已存在同名${existingKind}: ${name}，是否覆盖该${existingKind}？`,
+            window.i18n.t('cloud.uploadConflict'),
+            window.i18n.t('cloud.uploadConflictOverwriteMsg', { kind: existingKind, name }),
             [
-                { id: 'overwrite', label: '覆盖', className: 'dialog-btn-confirm' },
-                { id: 'skip', label: '跳过' },
-                { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' }
+                { id: 'overwrite', label: window.i18n.t('cloud.overwrite'), className: 'dialog-btn-confirm' },
+                { id: 'skip', label: window.i18n.t('cloud.skip') },
+                { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ]
         );
 
@@ -1137,28 +1267,28 @@ class CloudSyncPanel {
         return action || 'cancel';
     }
 
-    validateFileName(name) {
+    validateFileName(name: unknown): FileNameCheck {
         if (!name || typeof name !== 'string') {
-            return { valid: false, error: '名称不能为空' };
+            return { valid: false, error: window.i18n.t('cloud.nameEmpty') };
         }
         const trimmedName = name.trim();
         if (trimmedName.length === 0) {
-            return { valid: false, error: '名称不能为空' };
+            return { valid: false, error: window.i18n.t('cloud.nameEmpty') };
         }
         const illegalChars = /[<>:"/\\|?*]/;
         if (illegalChars.test(trimmedName)) {
-            return { valid: false, error: '文件名不能包含以下字符: < > : " / \\ | ? *' };
+            return { valid: false, error: window.i18n.t('cloud.illegalChars') };
         }
         return { valid: true, error: null };
     }
 
-    getExtension(name) {
+    getExtension(name: string | undefined) {
         if (!name) return '';
         const idx = name.lastIndexOf('.');
         return idx >= 0 ? name.slice(idx).toLowerCase() : '';
     }
 
-    normalizePath(p) {
+    normalizePath(p: string | undefined) {
         if (!p) return '/';
         let out = String(p).replace(/\\/g, '/');
         if (!out.startsWith('/')) out = '/' + out;
@@ -1166,15 +1296,16 @@ class CloudSyncPanel {
         return out;
     }
 
-    normalizeLocalPath(p) {
+    normalizeLocalPath(p: string | undefined) {
         if (!p) return '';
         return String(p).replace(/\\/g, '/').replace(/\/+$/g, '');
     }
 
-    getRelativeLocalPath(filePath, rootPath) {
+    getRelativeLocalPath(filePath: string, rootPath: string) {
         const fileNorm = this.normalizeLocalPath(filePath);
         const rootNorm = this.normalizeLocalPath(rootPath);
-        // 必须带路径分隔符比较，否则 proj-evil 会被当成 proj 的子目录。
+        // 必须带分隔符比较，否则 /proj-evil 会被当成 /proj 的子目录；
+        // rootNorm 为空时 startsWith('') 恒真，也要一并挡住。
         if (!rootNorm) return '';
         if (fileNorm !== rootNorm && !fileNorm.startsWith(rootNorm + '/')) return '';
         let rel = fileNorm.slice(rootNorm.length);
@@ -1182,7 +1313,7 @@ class CloudSyncPanel {
         return rel;
     }
 
-    getRelativeDir(relPath) {
+    getRelativeDir(relPath: string) {
         if (!relPath) return '';
         const parts = relPath.split('/').filter(Boolean);
         if (parts.length <= 1) return '';
@@ -1190,13 +1321,13 @@ class CloudSyncPanel {
         return parts.join('/');
     }
 
-    joinPath(parent, name) {
+    joinPath(parent: string, name: string) {
         const base = this.normalizePath(parent);
         if (base === '/') return `/${name}`;
         return `${base}/${name}`;
     }
 
-    getParentPath(p) {
+    getParentPath(p: string) {
         const norm = this.normalizePath(p);
         if (norm === '/') return '/';
         const parts = norm.split('/').filter(Boolean);
@@ -1204,17 +1335,17 @@ class CloudSyncPanel {
         return '/' + parts.join('/');
     }
 
-    async tryCreateCloudFolder(path) {
+    async tryCreateCloudFolder(path: string) {
         try {
             await this.request('POST', '/cloudSync/createFolder', { path });
         } catch (error) {
-            const msg = error?.message || '';
+            const msg = csErrMessage(error) || '';
             if (/已存在|exists/i.test(msg)) return;
             throw error;
         }
     }
 
-    showMessage(message, type = 'info') {
+    showMessage(message: string, type: string = 'info') {
         if (window.oicppApp?.showMessage) {
             window.oicppApp.showMessage(message, type);
         } else {
@@ -1224,9 +1355,9 @@ class CloudSyncPanel {
         }
     }
 
-    async request(method, path, params) {
+    async request(method: string, path: string, params?: Record<string, unknown>) {
         if (!window.electronAPI?.cloudSyncRequest) {
-            throw new Error('云同步接口不可用');
+            throw new Error(window.i18n.t('cloud.apiUnavailable'));
         }
         const payload = {
             method: method,
@@ -1239,9 +1370,9 @@ class CloudSyncPanel {
             if (response?.status === 401) {
                 try { await window.electronAPI.logoutIdeAccount?.(); } catch (_) { }
                 this.setLoggedInState(false);
-                throw new Error('登录已过期，请重新登录');
+                throw new Error(window.i18n.t('cloud.loginExpired'));
             }
-            const msg = response?.data?.msg || response?.error || '请求失败';
+            const msg = response?.data?.msg || response?.error || window.i18n.t('cloud.requestFail');
             // 底层 fetch 失败时只会返回 "fetch failed" 这类晦涩文案，统一换成可读提示
             const friendly = /fetch failed|failed to fetch|network|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|请求超时/i.test(String(msg))
                 ? '网络连接失败，请检查网络后重试'
@@ -1250,12 +1381,16 @@ class CloudSyncPanel {
         }
         const data = response?.data;
         if (data && data.code && data.code !== 200) {
-            throw new Error(data.msg || '服务器返回错误');
+            throw new Error(data.msg || window.i18n.t('cloud.serverError'));
         }
-        return data?.data ?? data;
+        // request 返回 HTTP body 的 data ?? body 本身；消费方访问 items/remainingFiles/content，
+        // 用守卫（Array.isArray/typeof）消费，cast 给出守卫所需形状
+        return (data?.data ?? data) as CloudPayload;
     }
 }
 
-if (typeof window !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = CloudSyncPanel;
+} else if (typeof window !== 'undefined') {
     window.CloudSyncPanel = CloudSyncPanel;
 }

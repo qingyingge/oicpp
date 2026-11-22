@@ -1,4 +1,117 @@
+type SyntaxFontStyle = { bold: boolean; italic: boolean };
+type SyntaxColors = { [key: string]: string };
+type SyntaxFontStyles = { [key: string]: SyntaxFontStyle };
+type SyntaxColorsByTheme = { [key: string]: SyntaxColors };
+type Keybindings = { [key: string]: string };
+type RawRecord = { [key: string]: unknown };
+type ClangFormatStyleRaw = {
+    BasedOnStyle?: unknown;
+    IndentWidth?: unknown;
+    TabWidth?: unknown;
+    UseTab?: unknown;
+    ColumnLimit?: unknown;
+    BreakBeforeBraces?: unknown;
+    AllowShortIfStatementsOnASingleLine?: unknown;
+    AllowShortFunctionsOnASingleLine?: unknown;
+    IndentCaseLabels?: unknown;
+    PointerAlignment?: unknown;
+    SpaceBeforeParens?: unknown;
+    SortIncludes?: unknown;
+    AlignConsecutiveAssignments?: unknown;
+    AlignConsecutiveDeclarations?: unknown;
+    formatterIndentStyle?: unknown;
+};
+
+type ClangFormatStyle = {
+    BasedOnStyle: string;
+    IndentWidth: number;
+    TabWidth: number;
+    UseTab: string;
+    ColumnLimit: number;
+    BreakBeforeBraces: string;
+    AllowShortIfStatementsOnASingleLine: string;
+    AllowShortFunctionsOnASingleLine: string;
+    IndentCaseLabels: boolean;
+    PointerAlignment: string;
+    SpaceBeforeParens: string;
+    SortIncludes: boolean;
+    AlignConsecutiveAssignments: boolean;
+    AlignConsecutiveDeclarations: boolean;
+};
+
+// clang-format-options UMD (utils/clang-format-options.js) 挂到 window.clangFormatOptions。
+// 这里只声明形状，用类型断言就地收窄（断言会完全擦除，emit 与 main 的 .js 逐字一致），
+// 避免改动全局 Window 声明。
+type ClangFormatOptionsApi = {
+    getDefaultClangFormatStyle?: () => ClangFormatStyle;
+    normalizeClangFormatStyle?: (raw?: ClangFormatStyleRaw | null) => ClangFormatStyle;
+    parseClangFormatText?: (text?: string) => RawRecord;
+    generateClangFormatText?: (style?: RawRecord | ClangFormatStyle | null) => string;
+};
+
+type EditorSettingsState = {
+    font?: string;
+    fontSize?: number;
+    terminalFontSize?: number;
+    terminalStartupCommand?: string;
+    syntaxCheckEnabled?: boolean;
+    lineHeight?: number;
+    theme?: string;
+    language?: string;
+    syntaxColorsByTheme?: SyntaxColorsByTheme;
+    syntaxFontStyles?: SyntaxFontStyles;
+    unifiedPreprocessorColor?: boolean;
+    tabSize?: number;
+    formatterIndentStyle?: string;
+    clangFormatStyle?: ClangFormatStyle;
+    clangFormatRaw?: string;
+    fontLigaturesEnabled?: boolean;
+    foldingEnabled?: boolean;
+    stickyScrollEnabled?: boolean;
+    enableAutoCompletion?: boolean;
+    wordWrap?: boolean;
+    bracketMatching?: boolean;
+    highlightCurrentLine?: boolean;
+    autoSave?: boolean;
+    autoSaveInterval?: number;
+    autoOpenLastWorkspace?: boolean;
+    receiveBetaUpdates?: boolean;
+    glassEffectEnabled?: boolean;
+    windowOpacity?: number;
+    backgroundImage?: string;
+    markdownMode?: string;
+    keybindings?: Keybindings;
+}
+
+const elById = (id: string): HTMLElement | null => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLElement ? el : null;
+};
+const elSelect = (id: string): HTMLSelectElement | null => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLSelectElement ? el : null;
+};
+const elInputLike = (id: string) => {
+    const el = document.getElementById(id);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el;
+    return null;
+};
+const elCheckbox = (id: string) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLInputElement && el.type === 'checkbox' ? el : null;
+};
+
 class EditorSettings {
+    declare settings: EditorSettingsState;
+    declare _initialLoadedSettings: EditorSettingsState | null;
+    declare _saved: boolean;
+    declare _clangFormatRawDirty: boolean;
+    declare _clangFormatControlsDirty: boolean;
+    declare _languageSelectorListenerBound: boolean;
+    declare keybindingSchema: Array<{ key: string; labelKey: string }>;
+    declare previewTimeout: ReturnType<typeof setTimeout>;
+    declare opacityTimeout: ReturnType<typeof setTimeout>;
+
     constructor() {
         this.settings = {
             font: 'Consolas, "Courier New", monospace',
@@ -32,96 +145,27 @@ class EditorSettings {
         this._saved = false;
         this._clangFormatRawDirty = false;
         this._clangFormatControlsDirty = false;
+        this._languageSelectorListenerBound = false;
 
         this.keybindingSchema = this.getKeybindingSchema();
     }
 
-    getDefaultKeybindings() {
-        const isMacPlatform = (() => {
-            try {
-                const platform = String(window.process?.platform || navigator?.platform || '').toLowerCase();
-                return platform.includes('darwin') || platform.includes('mac');
-            } catch (_) {
-                return false;
-            }
-        })();
-
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: isMacPlatform ? 'Ctrl+F11' : 'F11',
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: isMacPlatform ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+    getDefaultKeybindings(): Keybindings {
+        // 表 / 平台判定 / schema / 可改键清单都在 src/utils/keybindings.ts。
+        // 这里曾经是第三份抄写（8054ef5「新增自定义快捷键」），而平台判定是本文件独有的第四份嗅探。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
 
-    getEditableKeybindingKeys() {
-        return [
-            'formatCode',
-            'showFunctionPicker',
-            'markdownPreview',
-            'renameSymbol',
-            'deleteLine',
-            'duplicateLine',
-            'moveLineUp',
-            'moveLineDown',
-            'compileCode',
-            'runCode',
-            'compileAndRun',
-            'toggleDebug',
-            'debugContinue',
-            'debugStepOver',
-            'debugStepInto',
-            'debugStepOut',
-            'cloudCompile',
-            'openTerminal',
-            'runAllSamples'
-        ];
+    getEditableKeybindingKeys(): string[] {
+        return window.oicppKeybindings?.editableKeybindingKeys() || [];
     }
 
-    getKeybindingSchema() {
-        return [
-            { key: 'formatCode', labelKey: 'keybinding.formatCode', label: '格式化代码' },
-            { key: 'showFunctionPicker', labelKey: 'keybinding.showFunctionPicker', label: '跳转符号选择器' },
-            { key: 'markdownPreview', labelKey: 'keybinding.markdownPreview', label: 'Markdown 预览' },
-            { key: 'renameSymbol', labelKey: 'keybinding.renameSymbol', label: '重命名符号' },
-            { key: 'deleteLine', labelKey: 'keybinding.deleteLine', label: '删除行' },
-            { key: 'duplicateLine', labelKey: 'keybinding.duplicateLine', label: '复制行' },
-            { key: 'moveLineUp', labelKey: 'keybinding.moveLineUp', label: '上移行' },
-            { key: 'moveLineDown', labelKey: 'keybinding.moveLineDown', label: '下移行' },
-            { key: 'compileCode', labelKey: 'keybinding.compileCode', label: '编译当前文件' },
-            { key: 'runCode', labelKey: 'keybinding.runCode', label: '运行当前文件' },
-            { key: 'compileAndRun', labelKey: 'keybinding.compileAndRun', label: '编译并运行' },
-            { key: 'toggleDebug', labelKey: 'keybinding.toggleDebug', label: '启动/继续调试' },
-            { key: 'debugContinue', labelKey: 'keybinding.debugContinue', label: '调试继续 (继续/暂停)' },
-            { key: 'debugStepOver', labelKey: 'keybinding.debugStepOver', label: '单步跳过' },
-            { key: 'debugStepInto', labelKey: 'keybinding.debugStepInto', label: '单步进入' },
-            { key: 'debugStepOut', labelKey: 'keybinding.debugStepOut', label: '单步跳出' },
-            { key: 'cloudCompile', labelKey: 'keybinding.cloudCompile', label: '云端编译' },
-            { key: 'openTerminal', labelKey: 'keybinding.openTerminal', label: '打开内置终端' },
-            { key: 'runAllSamples', labelKey: 'keybinding.runAllSamples', label: '运行所有样例' }
-        ];
+    getKeybindingSchema(): Array<{ key: string; labelKey: string }> {
+        return window.oicppKeybindings?.keybindingSchema() || [];
     }
 
     getDefaultClangFormatStyle() {
-        return {
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.getDefaultClangFormatStyle?.() || {
             BasedOnStyle: 'LLVM',
             IndentWidth: 4,
             TabWidth: 4,
@@ -139,127 +183,29 @@ class EditorSettings {
         };
     }
 
-    normalizeClangFormatStyle(raw = null) {
-        const defaults = this.getDefaultClangFormatStyle();
-        const normalized = { ...defaults };
-        if (!raw || typeof raw !== 'object') {
-            return normalized;
-        }
-
-        const toInt = (value, fallback) => {
-            const parsed = parseInt(value, 10);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-        };
-        const toBool = (value, fallback) => {
-            if (typeof value === 'boolean') return value;
-            if (typeof value === 'string') {
-                const lowered = value.trim().toLowerCase();
-                if (['true', 'yes', 'on'].includes(lowered)) return true;
-                if (['false', 'no', 'off'].includes(lowered)) return false;
-            }
-            return fallback;
-        };
-        const toEnum = (value, allowed, fallback) => {
-            const rawValue = String(value || '').trim();
-            if (!rawValue) return fallback;
-            const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
-            return matched || fallback;
-        };
-
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-        if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
-            if (legacyStyle === 'tabs') {
-                normalized.UseTab = 'Always';
-            } else if (legacyStyle === 'spaces') {
-                normalized.UseTab = 'Never';
-            }
-        }
-
-        return normalized;
+    normalizeClangFormatStyle(raw: ClangFormatStyleRaw | null = null): ClangFormatStyle {
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.normalizeClangFormatStyle?.(raw) ?? this.getDefaultClangFormatStyle();
     }
 
-    parseClangFormatText(text = '') {
-        const parsed = {};
-        String(text || '').split(/\r?\n/).forEach((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed === '---' || trimmed === '...') {
-                return;
-            }
-            const match = trimmed.match(/^([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+)$/);
-            if (!match) {
-                return;
-            }
-            const key = match[1];
-            let value = match[2].trim();
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1);
-            }
-            if (/^(true|false)$/i.test(value)) {
-                value = value.toLowerCase() === 'true';
-            } else if (/^-?\d+$/.test(value)) {
-                value = parseInt(value, 10);
-            }
-            parsed[key] = value;
-        });
-        return parsed;
+    parseClangFormatText(text: string = ''): RawRecord {
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.parseClangFormatText?.(text) || {};
     }
 
-    generateClangFormatText(style = null) {
-        const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
-        const serialize = (value) => {
-            if (typeof value === 'boolean') return value ? 'true' : 'false';
-            if (typeof value === 'number') return String(value);
-            const text = String(value || '');
-            if (/\s/.test(text)) {
-                return `"${text.replace(/"/g, '\\"')}"`;
-            }
-            return text;
-        };
-
-        return [
-            `BasedOnStyle: ${serialize(normalized.BasedOnStyle)}`,
-            `IndentWidth: ${serialize(normalized.IndentWidth)}`,
-            `TabWidth: ${serialize(normalized.TabWidth)}`,
-            `UseTab: ${serialize(normalized.UseTab)}`,
-            `ColumnLimit: ${serialize(normalized.ColumnLimit)}`,
-            `BreakBeforeBraces: ${serialize(normalized.BreakBeforeBraces)}`,
-            `AllowShortIfStatementsOnASingleLine: ${serialize(normalized.AllowShortIfStatementsOnASingleLine)}`,
-            `AllowShortFunctionsOnASingleLine: ${serialize(normalized.AllowShortFunctionsOnASingleLine)}`,
-            `IndentCaseLabels: ${serialize(normalized.IndentCaseLabels)}`,
-            `PointerAlignment: ${serialize(normalized.PointerAlignment)}`,
-            `SpaceBeforeParens: ${serialize(normalized.SpaceBeforeParens)}`,
-            `SortIncludes: ${serialize(normalized.SortIncludes)}`,
-            `AlignConsecutiveAssignments: ${serialize(normalized.AlignConsecutiveAssignments)}`,
-            `AlignConsecutiveDeclarations: ${serialize(normalized.AlignConsecutiveDeclarations)}`
-        ].join('\n');
+    generateClangFormatText(style: RawRecord | null = null): string {
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.generateClangFormatText?.(style || this.settings.clangFormatStyle || null) || '';
     }
 
-    applyClangFormatStyleToUI(style = null, options = {}) {
+    applyClangFormatStyleToUI(style: RawRecord | null = null, options: { rawText?: string } = {}): void {
         const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
         const rawTextOverride = Object.prototype.hasOwnProperty.call(options || {}, 'rawText') ? options.rawText : undefined;
-        const mapValue = (id, value) => {
-            const element = document.getElementById(id);
+        const mapValue = (id: string, value: unknown) => {
+            const element = elInputLike(id);
             if (element) {
                 element.value = String(value);
             }
         };
-        const mapChecked = (id, value) => {
-            const element = document.getElementById(id);
+        const mapChecked = (id: string, value: unknown) => {
+            const element = elCheckbox(id);
             if (element) {
                 element.checked = !!value;
             }
@@ -278,30 +224,30 @@ class EditorSettings {
         mapChecked('clang-format-align-assignments', normalized.AlignConsecutiveAssignments);
         mapChecked('clang-format-align-declarations', normalized.AlignConsecutiveDeclarations);
 
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (rawTextArea && rawTextOverride !== undefined) {
             rawTextArea.value = String(rawTextOverride || '');
         }
     }
 
     collectClangFormatStyleFromUI() {
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (this._clangFormatControlsDirty && !this._clangFormatRawDirty) {
             return this.normalizeClangFormatStyle({
-                BasedOnStyle: document.getElementById('clang-format-based-on-style')?.value || 'LLVM',
-                IndentWidth: parseInt(document.getElementById('clang-format-indent-width')?.value, 10) || 4,
-                TabWidth: parseInt(document.getElementById('clang-format-tab-width')?.value, 10) || 4,
-                UseTab: document.getElementById('clang-format-use-tab')?.value || 'Never',
-                ColumnLimit: parseInt(document.getElementById('clang-format-column-limit')?.value, 10) || 0,
-                BreakBeforeBraces: document.getElementById('clang-format-break-before-braces')?.value || 'Attach',
+                BasedOnStyle: elInputLike('clang-format-based-on-style')?.value || 'LLVM',
+                IndentWidth: parseInt(elInputLike('clang-format-indent-width')?.value as string, 10) || 4,
+                TabWidth: parseInt(elInputLike('clang-format-tab-width')?.value as string, 10) || 4,
+                UseTab: elInputLike('clang-format-use-tab')?.value || 'Never',
+                ColumnLimit: parseInt(elInputLike('clang-format-column-limit')?.value as string, 10) || 0,
+                BreakBeforeBraces: elInputLike('clang-format-break-before-braces')?.value || 'Attach',
                 AllowShortIfStatementsOnASingleLine: 'Never',
                 AllowShortFunctionsOnASingleLine: 'Empty',
-                IndentCaseLabels: !!document.getElementById('clang-format-indent-case-labels')?.checked,
-                PointerAlignment: document.getElementById('clang-format-pointer-alignment')?.value || 'Left',
-                SpaceBeforeParens: document.getElementById('clang-format-space-before-parens')?.value || 'ControlStatements',
-                SortIncludes: !!document.getElementById('clang-format-sort-includes')?.checked,
-                AlignConsecutiveAssignments: !!document.getElementById('clang-format-align-assignments')?.checked,
-                AlignConsecutiveDeclarations: !!document.getElementById('clang-format-align-declarations')?.checked
+                IndentCaseLabels: !!elCheckbox('clang-format-indent-case-labels')?.checked,
+                PointerAlignment: elInputLike('clang-format-pointer-alignment')?.value || 'Left',
+                SpaceBeforeParens: elInputLike('clang-format-space-before-parens')?.value || 'ControlStatements',
+                SortIncludes: !!elCheckbox('clang-format-sort-includes')?.checked,
+                AlignConsecutiveAssignments: !!elCheckbox('clang-format-align-assignments')?.checked,
+                AlignConsecutiveDeclarations: !!elCheckbox('clang-format-align-declarations')?.checked
             });
         }
 
@@ -310,20 +256,20 @@ class EditorSettings {
             return this.normalizeClangFormatStyle(parsed);
         }
 
-        const readNumber = (id, fallback) => {
-            const element = document.getElementById(id);
+        const readNumber = (id: string, fallback: number): number => {
+            const element = elInputLike(id);
             if (!element) {
                 return fallback;
             }
-            const parsed = parseInt(element.value, 10);
+            const parsed = parseInt(element.value as string, 10);
             return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
         };
-        const readCheckbox = (id, fallback) => {
-            const element = document.getElementById(id);
+        const readCheckbox = (id: string, fallback: boolean): boolean => {
+            const element = elCheckbox(id);
             return element ? !!element.checked : fallback;
         };
-        const readValue = (id, fallback) => {
-            const element = document.getElementById(id);
+        const readValue = (id: string, fallback: string): string => {
+            const element = elInputLike(id);
             return element && element.value ? element.value : fallback;
         };
 
@@ -348,31 +294,31 @@ class EditorSettings {
     async importClangFormatFromFile() {
         try {
             if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.readFileContent) {
-                this.showMessage((window.i18n ? window.i18n.t('settings.importNotSupported') : '当前环境不支持文件导入'), 'error');
+                this.showMessage(window.i18n.t('settings.importNotSupported'), 'error');
                 return;
             }
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('settings.importClangFormat') : '导入 .clang-format',
+                title: window.i18n.t('settings.importClangFormat'),
                 properties: ['openFile'],
                 filters: [
                     { name: '.clang-format', extensions: ['clang-format', 'yml', 'yaml', 'txt'] },
-                    { name: 'All Files', extensions: ['*'] }
+                    { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                 ]
             });
             if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
                 return;
             }
             const filePath = result.filePaths[0];
-            const content = await window.electronAPI.readFileContent(filePath);
+            const content = await window.electronAPI.readFileContent(filePath as string);
             this.loadClangFormatFromText(String(content || ''));
-            this.showMessage((window.i18n ? window.i18n.t('message.importSuccess') : '已导入 .clang-format'), 'success');
+            this.showMessage(window.i18n.t('message.importSuccess'), 'success');
         } catch (error) {
             logError('导入 .clang-format 失败:', error);
-            this.showMessage((window.i18n ? window.i18n.t('message.importFailed', {msg: error.message}) : '导入 .clang-format 失败：' + error.message), 'error');
+            this.showMessage(window.i18n.t('message.importFailed', { msg: (error as Error).message }), 'error');
         }
     }
 
-    loadClangFormatFromText(text) {
+    loadClangFormatFromText(text: string): void {
         const parsed = this.parseClangFormatText(text);
         const normalized = this.normalizeClangFormatStyle(parsed);
         this.settings.clangFormatStyle = normalized;
@@ -386,30 +332,30 @@ class EditorSettings {
     async saveClangFormatToFile() {
         try {
             if (!window.electronAPI?.showSaveDialog || !window.electronAPI?.writeFile) {
-                this.showMessage((window.i18n ? window.i18n.t('settings.saveNotSupported') : '当前环境不支持文件保存'), 'error');
+                this.showMessage(window.i18n.t('settings.saveNotSupported'), 'error');
                 return;
             }
-            const rawTextArea = document.getElementById('clang-format-raw-text');
+            const rawTextArea = elInputLike('clang-format-raw-text');
             const style = this.collectClangFormatStyleFromUI();
             const content = (this._clangFormatRawDirty && !this._clangFormatControlsDirty && rawTextArea && String(rawTextArea.value || '').trim())
                 ? String(rawTextArea.value)
                 : this.generateClangFormatText(style);
             const result = await window.electronAPI.showSaveDialog({
-                title: window.i18n ? window.i18n.t('settings.saveClangFormat') : '写入 .clang-format',
+                title: window.i18n.t('settings.saveClangFormat'),
                 defaultPath: '.clang-format',
                 filters: [
                     { name: '.clang-format', extensions: ['clang-format', 'yml', 'yaml', 'txt'] },
-                    { name: 'All Files', extensions: ['*'] }
+                    { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                 ]
             });
             if (!result || result.canceled || !result.filePath) {
                 return;
             }
             await window.electronAPI.writeFile(result.filePath, content);
-            this.showMessage((window.i18n ? window.i18n.t('message.exportSuccess') : '已写入 .clang-format'), 'success');
+            this.showMessage(window.i18n.t('message.exportSuccess'), 'success');
         } catch (error) {
             logError('写入 .clang-format 失败:', error);
-            this.showMessage((window.i18n ? window.i18n.t('message.exportFailed', {msg: error.message}) : '写入 .clang-format 失败：' + error.message), 'error');
+            this.showMessage(window.i18n.t('message.exportFailed', { msg: (error as Error).message }), 'error');
         }
     }
 
@@ -420,9 +366,9 @@ class EditorSettings {
             this.settings.clangFormatRaw = this.generateClangFormatText(style);
             this._clangFormatControlsDirty = true;
             this._clangFormatRawDirty = false;
-            const rawTextArea = document.getElementById('clang-format-raw-text');
+            const rawTextArea = elInputLike('clang-format-raw-text');
             if (rawTextArea) {
-                rawTextArea.value = this.settings.clangFormatRaw;
+                rawTextArea.value = this.settings.clangFormatRaw as string;
             }
             this.notifyMainWindowPreview();
         };
@@ -443,15 +389,15 @@ class EditorSettings {
         ];
 
         bindingIds.forEach((id) => {
-            const element = document.getElementById(id);
+            const element = elById(id);
             if (!element) {
                 return;
             }
-            const eventName = element.tagName === 'INPUT' && element.type === 'number' ? 'input' : 'change';
+            const eventName = element instanceof HTMLInputElement && element.type === 'number' ? 'input' : 'change';
             element.addEventListener(eventName, updateFromControls);
         });
 
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (rawTextArea) {
             rawTextArea.addEventListener('input', () => {
                 this._clangFormatRawDirty = true;
@@ -460,12 +406,12 @@ class EditorSettings {
             });
         }
 
-        const importBtn = document.getElementById('import-clang-format');
+        const importBtn = elById('import-clang-format');
         if (importBtn) {
             importBtn.addEventListener('click', () => this.importClangFormatFromFile());
         }
 
-        const applyBtn = document.getElementById('apply-clang-format-text');
+        const applyBtn = elById('apply-clang-format-text');
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
                 const rawText = String(rawTextArea?.value || '');
@@ -473,12 +419,12 @@ class EditorSettings {
             });
         }
 
-        const saveBtn = document.getElementById('save-clang-format-file');
+        const saveBtn = elById('save-clang-format-file');
         if (saveBtn) {
             saveBtn.addEventListener('click', () => this.saveClangFormatToFile());
         }
 
-        const resetBtn = document.getElementById('reset-clang-format');
+        const resetBtn = elById('reset-clang-format');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 const defaults = this.getDefaultClangFormatStyle();
@@ -492,12 +438,12 @@ class EditorSettings {
         }
     }
 
-    normalizeThemeKey(theme) {
+    normalizeThemeKey(theme: unknown): string {
         const raw = (typeof theme === 'string' && theme.trim()) ? theme.trim() : 'dark';
         return raw;
     }
 
-    getSyntaxTokenKeys() {
+    getSyntaxTokenKeys(): string[] {
         return [
             'keyword',
             'string',
@@ -515,9 +461,9 @@ class EditorSettings {
         ];
     }
 
-    getDefaultSyntaxColors(theme = 'dark') {
+    getDefaultSyntaxColors(theme: unknown = 'dark'): SyntaxColors {
         const themeKey = this.normalizeThemeKey(theme);
-        const presets = {
+        const presets: Record<string, SyntaxColors> = {
             dark: {
                 keyword: '#c586c0',
                 string: '#ce9178',
@@ -639,19 +585,19 @@ class EditorSettings {
                 variable: '#f8f8f2'
             }
         };
-        return { ...(presets[themeKey] || presets.dark) };
+        return { ...(presets[themeKey] || (presets as { dark: SyntaxColors }).dark) };
     }
 
-    getDefaultSyntaxFontStyles() {
-        const styles = {};
+    getDefaultSyntaxFontStyles(): SyntaxFontStyles {
+        const styles: SyntaxFontStyles = {};
         this.getSyntaxTokenKeys().forEach((key) => {
             styles[key] = { bold: false, italic: false };
         });
-        styles.comment.italic = true;
+        (styles as { comment: SyntaxFontStyle }).comment.italic = true;
         return styles;
     }
 
-    normalizeHexColor(color, fallback = '#c586c0') {
+    normalizeHexColor(color: unknown, fallback: string = '#c586c0'): string {
         if (typeof color !== 'string') {
             return fallback;
         }
@@ -662,7 +608,7 @@ class EditorSettings {
         return fallback;
     }
 
-    resolveSyntaxTokenValue(raw, key, legacyKeys = []) {
+    resolveSyntaxTokenValue(raw: RawRecord | null | undefined, key: string, legacyKeys: string[] = []): unknown {
         if (!raw || typeof raw !== 'object') {
             return undefined;
         }
@@ -675,9 +621,9 @@ class EditorSettings {
         return undefined;
     }
 
-    normalizeSyntaxColors(raw, theme = 'dark') {
+    normalizeSyntaxColors(raw: RawRecord | null | undefined, theme: unknown = 'dark'): SyntaxColors {
         const defaults = this.getDefaultSyntaxColors(theme);
-        const normalized = { ...defaults };
+        const normalized: SyntaxColors = { ...defaults };
         if (raw && typeof raw === 'object') {
             Object.keys(defaults).forEach((key) => {
                 const legacyKeys = key === 'variable' ? ['localVariable', 'globalVariable'] : [];
@@ -687,24 +633,24 @@ class EditorSettings {
         return normalized;
     }
 
-    normalizeSyntaxFontStyles(raw) {
+    normalizeSyntaxFontStyles(raw: RawRecord | null | undefined): SyntaxFontStyles {
         const defaults = this.getDefaultSyntaxFontStyles();
-        const normalized = JSON.parse(JSON.stringify(defaults));
+        const normalized: SyntaxFontStyles = JSON.parse(JSON.stringify(defaults));
         if (raw && typeof raw === 'object') {
             Object.keys(defaults).forEach((key) => {
                 const legacyKeys = key === 'variable' ? ['localVariable', 'globalVariable'] : [];
                 const style = this.resolveSyntaxTokenValue(raw, key, legacyKeys);
                 if (style && typeof style === 'object') {
-                    normalized[key].bold = !!style.bold;
-                    normalized[key].italic = !!style.italic;
+                    (normalized[key] as { bold?: boolean }).bold = !!(style as { bold?: unknown }).bold;
+                    (normalized[key] as { italic?: boolean }).italic = !!(style as { italic?: unknown }).italic;
                 }
             });
         }
         return normalized;
     }
 
-    normalizeSyntaxColorsByTheme(raw) {
-        const normalized = {};
+    normalizeSyntaxColorsByTheme(raw: RawRecord | null | undefined): SyntaxColorsByTheme {
+        const normalized: SyntaxColorsByTheme = {};
         if (!raw || typeof raw !== 'object') {
             return normalized;
         }
@@ -712,27 +658,27 @@ class EditorSettings {
             if (!raw[themeKey] || typeof raw[themeKey] !== 'object') {
                 return;
             }
-            normalized[this.normalizeThemeKey(themeKey)] = this.normalizeSyntaxColors(raw[themeKey], themeKey);
+            normalized[this.normalizeThemeKey(themeKey)] = this.normalizeSyntaxColors(raw[themeKey] as RawRecord, themeKey);
         });
         return normalized;
     }
 
-    areSyntaxColorsEqual(left, right) {
+    areSyntaxColorsEqual(left: SyntaxColors, right: SyntaxColors): boolean {
         const keys = this.getSyntaxTokenKeys();
         return keys.every((key) => left[key] === right[key]);
     }
 
-    areSyntaxFontStylesEqual(left, right) {
+    areSyntaxFontStylesEqual(left: SyntaxFontStyles, right: SyntaxFontStyles): boolean {
         const keys = this.getSyntaxTokenKeys();
         return keys.every((key) => !!left[key]?.bold === !!right[key]?.bold && !!left[key]?.italic === !!right[key]?.italic);
     }
 
     getCurrentThemeFromUI() {
-        const themeSelect = document.getElementById('editor-theme');
+        const themeSelect = elSelect('editor-theme');
         return this.normalizeThemeKey(themeSelect?.value || this.settings.theme || 'dark');
     }
 
-    getEffectiveSyntaxColors(theme = this.getCurrentThemeFromUI(), syntaxColorsByTheme = this.settings.syntaxColorsByTheme) {
+    getEffectiveSyntaxColors(theme: unknown = this.getCurrentThemeFromUI(), syntaxColorsByTheme: RawRecord | undefined = this.settings.syntaxColorsByTheme as RawRecord): SyntaxColors {
         const themeKey = this.normalizeThemeKey(theme);
         const defaults = this.getDefaultSyntaxColors(themeKey);
         const byTheme = this.normalizeSyntaxColorsByTheme(syntaxColorsByTheme);
@@ -742,7 +688,7 @@ class EditorSettings {
         return defaults;
     }
 
-    getEffectiveSyntaxStyles(syntaxStyles = this.settings.syntaxFontStyles) {
+    getEffectiveSyntaxStyles(syntaxStyles: RawRecord | undefined = this.settings.syntaxFontStyles as RawRecord): SyntaxFontStyles {
         const defaults = this.getDefaultSyntaxFontStyles();
         if (syntaxStyles && typeof syntaxStyles === 'object' && Object.keys(syntaxStyles).length > 0) {
             return this.normalizeSyntaxFontStyles(syntaxStyles);
@@ -750,11 +696,11 @@ class EditorSettings {
         return defaults;
     }
 
-    setThemeSyntaxColorOverride(theme, colors, targetByTheme = null) {
+    setThemeSyntaxColorOverride(theme: unknown, colors: RawRecord, targetByTheme: SyntaxColorsByTheme | null = null): SyntaxColorsByTheme {
         const themeKey = this.normalizeThemeKey(theme);
         const defaults = this.getDefaultSyntaxColors(themeKey);
         const normalizedColors = this.normalizeSyntaxColors(colors, themeKey);
-        const byTheme = targetByTheme || this.settings.syntaxColorsByTheme || {};
+        const byTheme: SyntaxColorsByTheme = targetByTheme || this.settings.syntaxColorsByTheme || {};
         if (this.areSyntaxColorsEqual(normalizedColors, defaults)) {
             delete byTheme[themeKey];
         } else {
@@ -766,7 +712,7 @@ class EditorSettings {
         return byTheme;
     }
 
-    setSyntaxStyleOverride(styles) {
+    setSyntaxStyleOverride(styles: RawRecord): SyntaxFontStyles {
         const defaults = this.getDefaultSyntaxFontStyles();
         const normalizedStyles = this.normalizeSyntaxFontStyles(styles);
         if (this.areSyntaxFontStylesEqual(normalizedStyles, defaults)) {
@@ -777,26 +723,26 @@ class EditorSettings {
         return this.settings.syntaxFontStyles;
     }
 
-    persistCurrentThemeSyntaxColors(theme = this.getCurrentThemeFromUI()) {
+    persistCurrentThemeSyntaxColors(theme: unknown = this.getCurrentThemeFromUI()): void {
         const currentColors = this.getSyntaxColorsFromUI(theme);
         const currentStyles = this.getSyntaxStylesFromUI(theme);
-        this.setThemeSyntaxColorOverride(theme, currentColors);
-        this.setSyntaxStyleOverride(currentStyles);
+        this.setThemeSyntaxColorOverride(theme, currentColors as RawRecord);
+        this.setSyntaxStyleOverride(currentStyles as RawRecord);
     }
 
-    updateSyntaxColorUI(colors, theme = this.getCurrentThemeFromUI()) {
+    updateSyntaxColorUI(colors: RawRecord, theme: unknown = this.getCurrentThemeFromUI()): void {
         const normalized = this.normalizeSyntaxColors(colors, theme);
         const normalizedStyles = this.getEffectiveSyntaxStyles();
         Object.keys(normalized).forEach((key) => {
-            const colorInput = document.getElementById(`syntax-color-${key}`);
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+            const colorInput = elInputLike(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (colorInput) {
-                colorInput.value = normalized[key];
+                colorInput.value = normalized[key] as string;
             }
             if (textInput) {
-                textInput.value = normalized[key].toUpperCase();
+                textInput.value = (normalized[key] as string).toUpperCase();
             }
             if (boldInput) {
                 boldInput.checked = !!normalizedStyles[key]?.bold;
@@ -808,50 +754,50 @@ class EditorSettings {
         this.updateSyntaxPreview(normalized, theme, normalizedStyles);
     }
 
-    getSyntaxColorsFromUI(theme = this.getCurrentThemeFromUI()) {
+    getSyntaxColorsFromUI(theme: unknown = this.getCurrentThemeFromUI()): SyntaxColors {
         const defaults = this.getDefaultSyntaxColors(theme);
-        const result = { ...defaults };
+        const result: SyntaxColors = { ...defaults };
         this.getSyntaxTokenKeys().forEach((key) => {
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const colorInput = document.getElementById(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const colorInput = elInputLike(`syntax-color-${key}`);
             const raw = textInput?.value || colorInput?.value;
             result[key] = this.normalizeHexColor(raw, defaults[key]);
         });
         return result;
     }
 
-    getSyntaxStylesFromUI() {
+    getSyntaxStylesFromUI(theme?: unknown): SyntaxFontStyles {
         const defaults = this.getDefaultSyntaxFontStyles();
-        const result = JSON.parse(JSON.stringify(defaults));
+        const result: SyntaxFontStyles = JSON.parse(JSON.stringify(defaults));
         this.getSyntaxTokenKeys().forEach((key) => {
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (boldInput) {
-                result[key].bold = !!boldInput.checked;
+                (result[key] as { bold?: boolean }).bold = !!boldInput.checked;
             }
             if (italicInput) {
-                result[key].italic = !!italicInput.checked;
+                (result[key] as { italic?: boolean }).italic = !!italicInput.checked;
             }
         });
         return this.normalizeSyntaxFontStyles(result);
     }
 
-    updateSyntaxPreview(colors = null, theme = this.getCurrentThemeFromUI(), styles = null) {
-        const preview = document.getElementById('syntax-color-preview');
+    updateSyntaxPreview(colors: RawRecord | null = null, theme: unknown = this.getCurrentThemeFromUI(), styles: RawRecord | null = null): void {
+        const preview = elById('syntax-color-preview');
         if (!preview) {
             return;
         }
-        const normalized = this.normalizeSyntaxColors(colors || this.getSyntaxColorsFromUI(theme), theme);
-        const normalizedStyles = this.normalizeSyntaxFontStyles(styles || this.getSyntaxStylesFromUI(theme));
+        const normalized = this.normalizeSyntaxColors(colors || (this.getSyntaxColorsFromUI(theme) as RawRecord), theme);
+        const normalizedStyles = this.normalizeSyntaxFontStyles(styles || (this.getSyntaxStylesFromUI(theme) as RawRecord));
 
         this.getSyntaxTokenKeys().forEach((key) => {
-            preview.style.setProperty(`--syntax-${key}`, normalized[key]);
+            preview.style.setProperty(`--syntax-${key}`, normalized[key] as string);
             preview.style.setProperty(`--syntax-${key}-weight`, normalizedStyles[key]?.bold ? '700' : '400');
             preview.style.setProperty(`--syntax-${key}-style`, normalizedStyles[key]?.italic ? 'italic' : 'normal');
         });
 
-        const fontSelect = document.getElementById('editor-font');
-        const fontSizeInput = document.getElementById('editor-font-size');
+        const fontSelect = elSelect('editor-font');
+        const fontSizeInput = elInputLike('editor-font-size');
         if (fontSelect && fontSelect.value) {
             preview.style.fontFamily = fontSelect.value;
         }
@@ -863,25 +809,25 @@ class EditorSettings {
 
     bindSyntaxColorControls() {
         const defaults = this.getDefaultSyntaxColors(this.getCurrentThemeFromUI());
-        const bindColorPair = (key) => {
-            const colorInput = document.getElementById(`syntax-color-${key}`);
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+        const bindColorPair = (key: string): void => {
+            const colorInput = elInputLike(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (!colorInput || !textInput) {
                 return;
             }
 
-            const normalizeDraftHex = (raw) => {
+            const normalizeDraftHex = (raw: unknown): string => {
                 const body = String(raw || '').trim().replace(/^#/, '').replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
                 return body.toUpperCase();
             };
 
-            const formatDraftHex = (raw) => `#${normalizeDraftHex(raw)}`;
+            const formatDraftHex = (raw: unknown): string => `#${normalizeDraftHex(raw)}`;
 
-            const hasFullHex = (raw) => normalizeDraftHex(raw).length === 6;
+            const hasFullHex = (raw: unknown): boolean => normalizeDraftHex(raw).length === 6;
 
-            const commitTextColor = (fallbackColor) => {
+            const commitTextColor = (fallbackColor: unknown): void => {
                 const currentTheme = this.getCurrentThemeFromUI();
                 const themeDefaults = this.getDefaultSyntaxColors(currentTheme);
                 const fallback = this.normalizeHexColor(fallbackColor, themeDefaults[key]);
@@ -931,7 +877,7 @@ class EditorSettings {
             });
 
             textInput.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter') {
+                if (event instanceof KeyboardEvent && event.key === 'Enter') {
                     event.preventDefault();
                     commitTextColor(colorInput.value);
                     textInput.blur();
@@ -957,7 +903,7 @@ class EditorSettings {
 
         Object.keys(defaults).forEach(bindColorPair);
 
-        const resetBtn = document.getElementById('reset-syntax-colors');
+        const resetBtn = elById('reset-syntax-colors');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 const currentTheme = this.getCurrentThemeFromUI();
@@ -988,6 +934,7 @@ class EditorSettings {
             this._initialLoadedSettings = { ...this.settings };
         }
 
+        this.setupLanguageListener();
         this.renderKeybindingsUI();
 
         await this.loadSystemFonts();
@@ -997,8 +944,6 @@ class EditorSettings {
         this.setupSidebarNavigation();
 
         this.setupThemeListener();
-
-        this.setupLanguageListener();
 
         this.applyTheme(this.settings.theme);
 
@@ -1019,7 +964,7 @@ class EditorSettings {
                 sections.forEach(section => section.classList.remove('active'));
                 
                 const targetId = item.getAttribute('data-target');
-                const targetSection = document.getElementById(targetId);
+                const targetSection = elById(targetId as string);
                 if (targetSection) {
                     targetSection.classList.add('active');
                 }
@@ -1028,7 +973,7 @@ class EditorSettings {
     }
 
     setupEventListeners() {
-        const saveBtn = document.getElementById('save-settings');
+        const saveBtn = elById('save-settings');
         logInfo('保存按钮元素:', saveBtn);
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
@@ -1042,24 +987,24 @@ class EditorSettings {
             this.revertPreviewToLoadedSettings();
         });
 
-        document.getElementById('cancel-settings').addEventListener('click', () => {
+        (document.getElementById('cancel-settings')!).addEventListener('click', () => {
             this.cancelAndClose();
         });
 
-        const resetBtn = document.getElementById('reset-settings');
+        const resetBtn = elById('reset-settings');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 this.resetSettings();
             });
         }
-        const resetKeybindingBtn = document.getElementById('reset-keybindings');
+        const resetKeybindingBtn = elById('reset-keybindings');
         if (resetKeybindingBtn) {
             resetKeybindingBtn.addEventListener('click', () => {
                 this.resetKeybindingsToDefault();
             });
         }
 
-        const closeFontDialogBtn = document.getElementById('close-font-dialog');
+        const closeFontDialogBtn = elById('close-font-dialog');
         if (closeFontDialogBtn) {
             closeFontDialogBtn.addEventListener('click', () => {
                 this.closeFontDialog();
@@ -1070,11 +1015,11 @@ class EditorSettings {
         this.bindSyntaxColorControls();
         this.bindClangFormatControls();
 
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
         if (autoSaveCheckbox && autoSaveIntervalInput) {
             autoSaveCheckbox.addEventListener('change', (e) => {
-                this.toggleAutoSaveInterval(autoSaveIntervalInput, e.target.checked);
+                this.toggleAutoSaveInterval(autoSaveIntervalInput, autoSaveCheckbox.checked);
                 this.notifyMainWindowPreview();
             });
             autoSaveIntervalInput.addEventListener('input', () => {
@@ -1082,88 +1027,95 @@ class EditorSettings {
             });
         }
 
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
         if (autoOpenLastWorkspaceCheckbox) {
             autoOpenLastWorkspaceCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
         if (receiveBetaUpdatesCheckbox) {
             receiveBetaUpdatesCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
         if (autoCompletionCheckbox) {
             autoCompletionCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
         if (unifiedPreprocessorCheckbox) {
             unifiedPreprocessorCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const tabSizeInput = document.getElementById('editor-tab-size');
+        const tabSizeInput = elInputLike('editor-tab-size');
         if (tabSizeInput) {
             tabSizeInput.addEventListener('input', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const opacityInput = document.getElementById('editor-opacity');
-        const opacityValue = document.getElementById('editor-opacity-value');
+        const opacityInput = elInputLike('editor-opacity');
+        const opacityValue = elById('editor-opacity-value');
         if (opacityInput && opacityValue) {
             opacityInput.addEventListener('input', (e) => {
-                const transparency = Math.max(0, Math.min(0.8, parseFloat(e.target.value) || 0));
+                const transparency = Math.max(0, Math.min(0.8, parseFloat(opacityInput.value) || 0));
                 const windowOpacity = 1 - transparency;
                 opacityValue.textContent = Math.round(transparency * 100) + '%';
                 // 实时预览透明度
-                if (window.electronAPI && window.electronAPI.updateSettings) {
-                    // 简单的防抖
+                if (window.electronAPI && window.electronAPI.sendSettingsPreview) {
                     clearTimeout(this.opacityTimeout);
                     this.opacityTimeout = setTimeout(() => {
-                        window.electronAPI.updateSettings({ windowOpacity });
+                        window.electronAPI.sendSettingsPreview({ windowOpacity });
                     }, 100);
                 }
             });
         }
 
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
         if (glassEffectCheckbox) {
             glassEffectCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const browseBgBtn = document.getElementById('browse-bg-image');
-        const bgImageInput = document.getElementById('editor-bg-image');
+        const browseBgBtn = elById('browse-bg-image');
+        const bgImageInput = elInputLike('editor-bg-image');
         if (browseBgBtn && bgImageInput) {
             browseBgBtn.addEventListener('click', async () => {
-                if (window.electronAPI && window.electronAPI.showOpenDialog) {
+                if (!window.electronAPI?.showOpenDialog) {
+                    this.showMessage(window.i18n.t('settings.apiUnavailable'), 'error');
+                    return;
+                }
+
+                try {
                     const result = await window.electronAPI.showOpenDialog({
-                        title: '选择背景图片',
+                        title: window.i18n.t('settings.selectBgImage'),
                         filters: [
-                            { name: 'Images', extensions: ['jpg', 'png', 'gif', 'jpeg', 'webp'] },
-                            { name: 'All Files', extensions: ['*'] }
+                            { name: window.i18n.t('settings.imageFilesFilter'), extensions: ['jpg', 'png', 'gif', 'jpeg', 'webp'] },
+                            { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                         ],
                         properties: ['openFile']
                     });
                     
-                    if (!result.canceled && result.filePaths.length > 0) {
-                        bgImageInput.value = result.filePaths[0];
+                    if (result && !result.canceled && (result.filePaths as string[]).length > 0) {
+                        bgImageInput.value = (result.filePaths as string[])[0] as string;
                     }
+                } catch (error) {
+                    logError('选择背景图片失败:', error);
+                    this.showMessage(window.i18n.t('settings.backgroundImageSelectFailed', { error: (error as Error).message }), 'error');
                 }
             });
         }
 
-        const clearBgBtn = document.getElementById('clear-bg-image');
+        const clearBgBtn = elById('clear-bg-image');
         if (clearBgBtn && bgImageInput) {
             clearBgBtn.addEventListener('click', () => {
                 bgImageInput.value = '';
@@ -1171,16 +1123,16 @@ class EditorSettings {
         }
     }
 
-    toggleAutoSaveInterval(inputElement, enabled) {
+    toggleAutoSaveInterval(inputElement: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null, enabled: boolean) {
         if (!inputElement) return;
         inputElement.disabled = !enabled;
     }
 
     setupThemeListener() {
         if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('theme-changed', (event, theme) => {
+            window.electronIPC.on('theme-changed', (event: unknown, theme: string) => {
                 logInfo('编辑器设置页面收到主题变更:', theme);
-                this.settings.theme = theme;
+                this.settings.theme = theme as string;
                 this.applyTheme(theme);
                 this.updateUI();
             });
@@ -1188,43 +1140,30 @@ class EditorSettings {
     }
 
     setupLanguageListener() {
-        // Listen for language-changed events from main process
-        if (window.electronAPI && typeof window.electronAPI.onLanguageChanged === 'function') {
-            window.electronAPI.onLanguageChanged((langCode) => {
-                logInfo('编辑器设置页面收到语言变更:', langCode);
-                this.settings.language = langCode;
-                // Re-translate the page
-                if (window.i18n) {
-                    window.i18n._applyToDOM();
-                    this.renderKeybindingsUI();
-                }
-            });
+        if (!window.i18n || typeof window.i18n.onChange !== 'function') {
+            return;
         }
-        // Also listen via electronIPC
-        if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('language-changed', (event, langCode) => {
-                logInfo('编辑器设置页面收到语言变更(IPC):', langCode);
-                if (window.i18n) {
-                    window.i18n._applyToDOM();
-                    this.renderKeybindingsUI();
-                }
-            });
-        }
+
+        window.i18n.onChange((langCode) => {
+            logInfo('编辑器设置页面收到语言变更:', langCode);
+            this.settings.language = langCode;
+            this.updateKeybindingTranslations();
+        });
     }
 
-    applyTheme(theme) {
+    applyTheme(theme: unknown) {
         logInfo('应用主题到编辑器设置页面:', theme);
 
-        document.body.setAttribute('data-theme', theme);
-        document.documentElement.setAttribute('data-theme', theme);
+        document.body.setAttribute('data-theme', theme as string);
+        document.documentElement.setAttribute('data-theme', theme as string);
     }
 
     setupRealTimePreview() {
-        const fontSizeInput = document.getElementById('editor-font-size');
+        const fontSizeInput = elInputLike('editor-font-size');
         logInfo('字体大小输入框元素:', fontSizeInput);
         if (fontSizeInput) {
             fontSizeInput.addEventListener('input', (e) => {
-                const newFontSize = parseInt(e.target.value);
+                const newFontSize = parseInt(fontSizeInput.value, 10);
                 logInfo('字体大小输入变化:', { oldValue: this.settings.fontSize, newValue: newFontSize });
                 this.updatePreview();
                 this.updateSyntaxPreview();
@@ -1234,7 +1173,7 @@ class EditorSettings {
             logError('未找到字体大小输入框元素');
         }
 
-        const lineHeightInput = document.getElementById('editor-line-height');
+        const lineHeightInput = elInputLike('editor-line-height');
         if (lineHeightInput) {
             lineHeightInput.addEventListener('input', () => {
                 this.updatePreview();
@@ -1242,17 +1181,17 @@ class EditorSettings {
             });
         }
 
-        const fontSelect = document.getElementById('editor-font');
+        const fontSelect = elSelect('editor-font');
         if (fontSelect) {
             fontSelect.addEventListener('change', (e) => {
-                logInfo('字体选择变化:', { oldValue: this.settings.font, newValue: e.target.value });
+                logInfo('字体选择变化:', { oldValue: this.settings.font, newValue: fontSelect.value });
                 this.updatePreview();
                 this.updateSyntaxPreview();
                 this.notifyMainWindowPreview();
             });
         }
 
-        const themeSelect = document.getElementById('editor-theme');
+        const themeSelect = elSelect('editor-theme');
         if (themeSelect) {
             themeSelect.addEventListener('change', () => {
                 const previousTheme = this.settings.theme || 'dark';
@@ -1268,9 +1207,25 @@ class EditorSettings {
 
     }
 
-    normalizeKeybindings(raw) {
+    /** 屏幕上显示的写法（跟随平台与改键）；存回去的永远是规范写法，见 collectSettings 里的 shortcutStore。 */
+    shortcutDisplay(combo: string | undefined): string {
+        const raw = String(combo || '');
+        return window.oicppKeybindings?.formatShortcutLabel(raw) ?? raw;
+    }
+
+    /**
+     * 文本框里的内容 → 存储用的规范写法。
+     * 这一步是「显示与存储分离」的另一半：显示一旦平台化（mac 上是 ⇧⌘G），
+     * 把屏幕上那串原样存回去就会得到一个永远不触发的死键（匹配层比的是 Ctrl/Alt/Shift token）。
+     * 解析不出来返回空串，调用方回落默认值并把输入框刷回默认 —— 存进去的必须和看见的一致。
+     */
+    shortcutStore(display: string): string {
+        return window.oicppKeybindings?.parseCombo(display) ?? '';
+    }
+
+    normalizeKeybindings(raw: Keybindings | null | undefined) {
         const defaults = this.getDefaultKeybindings();
-        const normalized = { ...defaults };
+        const normalized: Keybindings = { ...defaults };
         const editableKeys = new Set(this.getEditableKeybindingKeys());
         if (raw && typeof raw === 'object') {
             Object.keys(defaults).forEach((key) => {
@@ -1287,7 +1242,7 @@ class EditorSettings {
     }
 
     renderKeybindingsUI() {
-        const container = document.getElementById('keybindings-list');
+        const container = elById('keybindings-list');
         if (!container) return;
         const defaults = this.getDefaultKeybindings();
         const current = this.normalizeKeybindings(this.settings.keybindings);
@@ -1296,35 +1251,136 @@ class EditorSettings {
         this.keybindingSchema.forEach((item) => {
             const row = document.createElement('div');
             row.className = 'keybinding-row';
+            row.dataset['keybindingKey'] = item.key;
 
             const label = document.createElement('div');
             label.className = 'keybinding-label';
-            // Use i18n translation if available
-            if (window.i18n && item.labelKey) {
-                label.textContent = window.i18n.t(item.labelKey) || item.label;
-            } else {
-                label.textContent = item.label;
-            }
 
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'keybinding-input';
-            input.value = current[item.key] || defaults[item.key];
-            input.dataset.keybindingKey = item.key;
-            input.placeholder = defaults[item.key];
+            // 显示跟随平台（mac 上 ⇧⌘G），存储仍是规范写法；两者靠 parseCombo/formatShortcutLabel 成对往返。
+            input.value = this.shortcutDisplay(current[item.key] || defaults[item.key]);
+            input.dataset['keybindingKey'] = item.key;
+            input.placeholder = this.shortcutDisplay(defaults[item.key]);
 
             const reset = document.createElement('button');
             reset.className = 'btn btn-secondary keybinding-reset';
-            reset.textContent = window.i18n ? window.i18n.t('settings.resetKeybinding') : '恢复默认';
             reset.addEventListener('click', () => {
-                input.value = defaults[item.key];
+                input.value = this.shortcutDisplay(defaults[item.key]);
+                this.refreshKeybindingConflicts();
             });
+
+            // 冲突提示有自己独占的元素：警告只由 refreshKeybindingConflicts 写，
+            // 标签只由 updateKeybindingTranslations 写 —— 同一个属性两套机制各写一遍
+            // 就是 #9 那个 bug 的形状（切语言会把 JS 覆写的文案冲回静态值）。
+            const warning = document.createElement('span');
+            warning.className = 'keybinding-warning';
 
             row.appendChild(label);
             row.appendChild(input);
             row.appendChild(reset);
+            row.appendChild(warning);
             container.appendChild(row);
         });
+
+        this.updateKeybindingTranslations();
+        this.refreshKeybindingConflicts();
+        // 边打字边查，不点保存也能立刻看到撞车。监听挂在容器上（重渲染只清 innerHTML，
+        // 容器节点不变），所以必须防重复绑定。
+        if (!container.dataset['conflictBound']) {
+            container.dataset['conflictBound'] = '1';
+            container.addEventListener('input', () => { this.refreshKeybindingConflicts(); });
+        }
+    }
+
+    /**
+     * 标出撞车的键位，两类一起查：
+     *   · 用户可改的键互相重复；
+     *   · 与**不可改**的固定键（菜单 accelerator、内置 quickOpen）重复 —— 这类最该提示，
+     *     因为主进程有个 hasConflictingModifiedKey 会把撞上的裸 Fn 菜单加速器静默摘掉，
+     *     用户看到的只是「这个键忽然没反应」，从来没人生过告诉他原因。
+     * 输入框里的值是**现读现解析**的（parseCombo），所以不打断输入、也不要求先点保存。
+     */
+    refreshKeybindingConflicts() {
+        const container = elById('keybindings-list');
+        if (!container) return;
+        const kb = window.oicppKeybindings;
+        const defaults = this.getDefaultKeybindings();
+        const stored = this.normalizeKeybindings(this.settings.keybindings);
+        const rows = Array.prototype.slice.call(container.querySelectorAll('.keybinding-row')) as HTMLElement[];
+
+        const effective: Record<string, string> = {};
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            if (!key) continue;
+            const input = row.querySelector('.keybinding-input');
+            const typed = (input instanceof HTMLInputElement && kb) ? kb.parseCombo(input.value) : '';
+            effective[key] = typed || stored[key] || defaults[key] || '';
+        }
+
+        const byKey = new Map<string, { combo: string; others: string[]; withFixed: boolean }>();
+        if (kb) {
+            for (const group of kb.findComboConflicts(effective)) {
+                for (const key of group.keys) {
+                    if (key.startsWith('fixed:')) continue;
+                    const hit = byKey.get(key) || { combo: group.combo, others: [], withFixed: false };
+                    hit.combo = group.combo;
+                    hit.withFixed = hit.withFixed || group.keys.some((k) => k.startsWith('fixed:'));
+                    hit.others.push(...group.keys.filter((k) => k !== key && !k.startsWith('fixed:')));
+                    byKey.set(key, hit);
+                }
+            }
+        }
+        const labelOf = (key: string) => {
+            const item = this.keybindingSchema.find((entry) => entry.key === key);
+            return item ? window.i18n.t(item.labelKey) : key;
+        };
+
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            const warning = row.querySelector('.keybinding-warning');
+            if (!(warning instanceof HTMLElement)) continue;
+            const hit = byKey.get(key);
+            const messages: string[] = [];
+            if (hit) {
+                if (hit.others.length > 0) {
+                    // 分隔符用 ASCII：'、' 会在这条带 textContent 的行上被 I8 当成硬编码中文
+                    messages.push(window.i18n.t('keybinding.conflictWith', { others: hit.others.map(labelOf).join(' / ') }));
+                }
+                if (hit.withFixed && kb) {
+                    messages.push(window.i18n.t('keybinding.conflictFixed', { combo: kb.formatShortcutLabel(hit.combo) }));
+                }
+            }
+            warning.textContent = messages.join('; ');
+            row.classList.toggle('keybinding-conflict', messages.length > 0);
+        }
+    }
+
+    updateKeybindingTranslations() {
+        const container = elById('keybindings-list');
+        if (!container) return;
+
+        container.querySelectorAll('.keybinding-row').forEach((row) => {
+            if (!(row instanceof HTMLElement)) return;
+            const item = this.keybindingSchema.find((entry) => entry.key === row.dataset['keybindingKey']);
+            if (!item) return;
+
+            const labelText = window.i18n.t(item.labelKey);
+            const label = row.querySelector('.keybinding-label');
+            const input = row.querySelector('.keybinding-input');
+            const reset = row.querySelector('.keybinding-reset');
+            const resetText = window.i18n.t('settings.reset');
+
+            if (label) label.textContent = labelText;
+            if (input) input.setAttribute('aria-label', labelText);
+            if (reset) {
+                reset.textContent = resetText;
+                reset.setAttribute('aria-label', `${resetText}: ${labelText}`);
+            }
+        });
+        // 冲突提示里引用了其它动作的名字，语言一变这些文案就得重算
+        this.refreshKeybindingConflicts();
     }
 
     resetKeybindingsToDefault() {
@@ -1336,8 +1392,8 @@ class EditorSettings {
     updatePreview() {
         const currentSettings = this.collectSettings();
         const preview = document.querySelector('.settings-preview');
-        if (preview) {
-            preview.style.fontFamily = currentSettings.font;
+        if (preview instanceof HTMLElement) {
+            preview.style.fontFamily = currentSettings.font as string;
             preview.style.fontSize = currentSettings.fontSize + 'px';
             if (currentSettings.lineHeight && currentSettings.lineHeight > 0) {
                 preview.style.lineHeight = currentSettings.lineHeight + 'px';
@@ -1347,8 +1403,9 @@ class EditorSettings {
         }
 
         const codeExamples = document.querySelectorAll('.code-example, pre, code');
-        codeExamples.forEach(element => {
-            element.style.fontFamily = currentSettings.font;
+        codeExamples.forEach((element) => {
+            if (!(element instanceof HTMLElement)) return;
+            element.style.fontFamily = currentSettings.font as string;
             element.style.fontSize = currentSettings.fontSize + 'px';
             if (currentSettings.lineHeight && currentSettings.lineHeight > 0) {
                 element.style.lineHeight = currentSettings.lineHeight + 'px';
@@ -1465,6 +1522,9 @@ class EditorSettings {
                     foldingEnabled: allSettings.foldingEnabled !== false,
                     stickyScrollEnabled: allSettings.stickyScrollEnabled !== false,
                     enableAutoCompletion: allSettings.enableAutoCompletion !== false,
+                    wordWrap: allSettings.wordWrap === true,
+                    bracketMatching: allSettings.bracketMatching !== false,
+                    highlightCurrentLine: allSettings.highlightCurrentLine !== false,
                     autoSave: allSettings.autoSave !== false,
                     autoSaveInterval: typeof allSettings.autoSaveInterval === 'number' ? allSettings.autoSaveInterval : 60000,
                     autoOpenLastWorkspace: allSettings.autoOpenLastWorkspace !== false,
@@ -1495,7 +1555,11 @@ class EditorSettings {
                     clangFormatRaw: this.generateClangFormatText(),
                     stickyScrollEnabled: true,
                     foldingEnabled: true,
+                    fontLigaturesEnabled: true,
                     enableAutoCompletion: true,
+                    wordWrap: false,
+                    bracketMatching: true,
+                    highlightCurrentLine: true,
                     autoSave: true,
                     autoSaveInterval: 60000,
                     autoOpenLastWorkspace: true,
@@ -1526,7 +1590,11 @@ class EditorSettings {
                 clangFormatRaw: this.generateClangFormatText(),
                 stickyScrollEnabled: true,
                 foldingEnabled: true,
+                fontLigaturesEnabled: true,
                 enableAutoCompletion: true,
+                wordWrap: false,
+                bracketMatching: true,
+                highlightCurrentLine: true,
                 autoSave: true,
                 autoSaveInterval: 60000,
                 autoOpenLastWorkspace: true,
@@ -1543,15 +1611,18 @@ class EditorSettings {
     async loadSystemFonts() {
         logInfo('开始加载系统字体');
 
-        const fontSelect = document.getElementById('editor-font');
+        const fontSelect = elSelect('editor-font');
         if (!fontSelect) {
             logError('找不到字体选择器元素');
             return;
         }
 
-        fontSelect.innerHTML = `<option value="">${window.i18n ? window.i18n.t('settings.loadingFonts') : '正在加载字体...'}</option>`;
+        const loadingOption = document.createElement('option');
+        loadingOption.value = '';
+        loadingOption.textContent = window.i18n.t('settings.loadingFonts');
+        fontSelect.replaceChildren(loadingOption);
 
-        let availableFonts = [];
+        let availableFonts: string[] = [];
         if (window.fontDetector) {
             try {
                 if (typeof window.fontDetector.getAllAvailableFonts === 'function') {
@@ -1572,9 +1643,9 @@ class EditorSettings {
             availableFonts = this.getDefaultFontList();
         }
 
-        fontSelect.innerHTML = '';
+        fontSelect.replaceChildren();
 
-        availableFonts.forEach(font => {
+        availableFonts.forEach((font: string) => {
             const option = document.createElement('option');
             option.value = font;
             option.textContent = font;
@@ -1614,22 +1685,22 @@ class EditorSettings {
     }
 
     closeFontDialog() {
-        const dialog = document.getElementById('font-download-dialog');
+        const dialog = elById('font-download-dialog');
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
 
-    collectSettings() {
-        const fontSelect = document.getElementById('editor-font');
-        const themeSelect = document.getElementById('editor-theme');
-        const fontSizeInput = document.getElementById('editor-font-size');
-        const terminalFontSizeInput = document.getElementById('editor-terminal-font-size');
-        const lineHeightInput = document.getElementById('editor-line-height');
+    collectSettings(): EditorSettingsState {
+        const fontSelect = elSelect('editor-font');
+        const themeSelect = elSelect('editor-theme');
+        const fontSizeInput = elInputLike('editor-font-size');
+        const terminalFontSizeInput = elInputLike('editor-terminal-font-size');
+        const lineHeightInput = elInputLike('editor-line-height');
 
-        const newSettings = {};
+        const newSettings: EditorSettingsState = {};
 
-        const languageSelect = document.getElementById('editor-language');
+        const languageSelect = elSelect('editor-language');
         if (languageSelect) {
             const langValue = languageSelect.value;
             if (langValue) newSettings.language = langValue;
@@ -1649,19 +1720,19 @@ class EditorSettings {
                 newSettings.terminalFontSize = parsedTerminalFontSize;
             }
         }
-        const terminalStartupCommandInput = document.getElementById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = elInputLike('editor-terminal-startup-command');
         if (terminalStartupCommandInput) newSettings.terminalStartupCommand = terminalStartupCommandInput.value.trim();
         if (lineHeightInput) {
             const parsedLineHeight = parseInt(lineHeightInput.value, 10);
             newSettings.lineHeight = !Number.isNaN(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 0;
         }
-        const foldingCheckbox = document.getElementById('editor-folding');
+        const foldingCheckbox = elCheckbox('editor-folding');
         if (foldingCheckbox) newSettings.foldingEnabled = !!foldingCheckbox.checked;
-        const stickyScrollCheckbox = document.getElementById('editor-sticky-scroll');
+        const stickyScrollCheckbox = elCheckbox('editor-sticky-scroll');
         if (stickyScrollCheckbox) newSettings.stickyScrollEnabled = !!stickyScrollCheckbox.checked;
-        const ligaturesCheckbox = document.getElementById('editor-font-ligatures');
+        const ligaturesCheckbox = elCheckbox('editor-font-ligatures');
         if (ligaturesCheckbox) newSettings.fontLigaturesEnabled = !!ligaturesCheckbox.checked;
-        const tabSizeInput = document.getElementById('editor-tab-size');
+        const tabSizeInput = elInputLike('editor-tab-size');
         if (tabSizeInput) {
             const parsedTabSize = parseInt(tabSizeInput.value, 10);
             if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
@@ -1670,36 +1741,36 @@ class EditorSettings {
         }
 
         const clangFormatStyle = this.collectClangFormatStyleFromUI();
-        const clangFormatRawTextArea = document.getElementById('clang-format-raw-text');
+        const clangFormatRawTextArea = elInputLike('clang-format-raw-text');
         const clangFormatRawText = clangFormatRawTextArea && String(clangFormatRawTextArea.value || '').trim()
             ? String(clangFormatRawTextArea.value)
             : this.generateClangFormatText(clangFormatStyle);
         newSettings.clangFormatStyle = clangFormatStyle;
         newSettings.clangFormatRaw = clangFormatRawText;
 
-        const syntaxCheckCheckbox = document.getElementById('editor-syntax-check-enabled');
+        const syntaxCheckCheckbox = elCheckbox('editor-syntax-check-enabled');
         if (syntaxCheckCheckbox) {
             newSettings.syntaxCheckEnabled = !!syntaxCheckCheckbox.checked;
         }
 
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
         if (autoCompletionCheckbox) {
             newSettings.enableAutoCompletion = !!autoCompletionCheckbox.checked;
         }
 
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
         if (autoSaveCheckbox) {
             newSettings.autoSave = !!autoSaveCheckbox.checked;
         }
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
         if (autoOpenLastWorkspaceCheckbox) {
             newSettings.autoOpenLastWorkspace = !!autoOpenLastWorkspaceCheckbox.checked;
         }
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
         if (receiveBetaUpdatesCheckbox) {
             newSettings.receiveBetaUpdates = !!receiveBetaUpdatesCheckbox.checked;
         }
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
         if (autoSaveIntervalInput) {
             const parsedInterval = parseInt(autoSaveIntervalInput.value, 10);
             if (!Number.isNaN(parsedInterval) && parsedInterval > 0) {
@@ -1707,18 +1778,18 @@ class EditorSettings {
             }
         }
 
-        const opacityInput = document.getElementById('editor-opacity');
+        const opacityInput = elInputLike('editor-opacity');
         if (opacityInput) {
             const transparency = Math.max(0, Math.min(0.8, parseFloat(opacityInput.value) || 0));
             newSettings.windowOpacity = 1 - transparency;
         }
 
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
         if (glassEffectCheckbox) {
             newSettings.glassEffectEnabled = !!glassEffectCheckbox.checked;
         }
 
-        const bgImageInput = document.getElementById('editor-bg-image');
+        const bgImageInput = elInputLike('editor-bg-image');
         if (bgImageInput) {
             newSettings.backgroundImage = bgImageInput.value;
         }
@@ -1731,7 +1802,7 @@ class EditorSettings {
         this.setSyntaxStyleOverride(syntaxFontStyles);
         newSettings.syntaxColorsByTheme = syntaxColorsByTheme;
         newSettings.syntaxFontStyles = this.normalizeSyntaxFontStyles(this.settings.syntaxFontStyles);
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
         if (unifiedPreprocessorCheckbox) {
             newSettings.unifiedPreprocessorColor = !!unifiedPreprocessorCheckbox.checked;
         }
@@ -1741,11 +1812,21 @@ class EditorSettings {
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
         const keybindings = this.normalizeKeybindings(this.settings.keybindings);
         keybindingInputs.forEach((input) => {
-            const key = input.dataset.keybindingKey;
+            if (!(input instanceof HTMLInputElement)) return;
+            const key = input.dataset['keybindingKey'];
             if (!key) return;
             if (!editableKeys.has(key)) return;
-            const val = (input.value || '').trim();
-            keybindings[key] = val || defaultKeybindings[key];
+            // 框里是**显示写法**，先解析回规范串。解析不出来（"hello"、"super+K"、只按了修饰键）
+            // 就回落默认值，并把框里的文本刷成默认值的显示写法 —— 存进去的必须和看见的一致，
+            // 否则界面显示一个能用的键、实际存进去一个永不触发的死键。
+            const stored = this.shortcutStore((input.value || '').trim());
+            if (stored) {
+                keybindings[key] = stored;
+            } else {
+                const fallback = defaultKeybindings[key] as string;
+                keybindings[key] = fallback;
+                input.value = this.shortcutDisplay(fallback);
+            }
         });
         newSettings.keybindings = keybindings;
 
@@ -1777,7 +1858,7 @@ class EditorSettings {
                 requireAvailable: typeof require !== 'undefined'
             });
 
-            let result = null;
+            let result: { success?: boolean; error?: string } | null = null;
 
             if (window.electronAPI && window.electronAPI.updateSettings) {
                 try {
@@ -1814,23 +1895,15 @@ class EditorSettings {
 
                 Object.assign(this.settings, newSettings);
 
-                this.showMessage(
-                    window.i18n ? window.i18n.t('settings.saveSuccess') : '编辑器设置保存成功！',
-                    'success'
-                );
+                this.showMessage(window.i18n.t('settings.saveSuccess'), 'success');
 
 
                 // 不再自动关闭窗口
             } else {
                 const errorMsg = result
-                    ? (result.error || (window.i18n ? window.i18n.t('settings.unknownError') : '未知错误'))
-                    : (window.i18n ? window.i18n.t('settings.apiUnavailable') : '设置 API 不可用');
-                this.showMessage(
-                    window.i18n
-                        ? window.i18n.t('settings.saveFail', { error: errorMsg })
-                        : '保存设置失败：' + errorMsg,
-                    'error'
-                );
+                    ? (result.error || window.i18n.t('settings.unknownError'))
+                    : window.i18n.t('settings.apiUnavailable');
+                this.showMessage(window.i18n.t('settings.saveFail', { error: errorMsg }), 'error');
                 logError('保存设置失败，详细信息:', {
                     result,
                     electronAPI: !!window.electronAPI,
@@ -1841,87 +1914,66 @@ class EditorSettings {
 
         } catch (error) {
             logError('保存编辑器设置失败:', error);
-            this.showMessage(
-                window.i18n
-                    ? window.i18n.t('settings.saveFail', { error: error.message })
-                    : '保存设置失败：' + error.message,
-                'error'
-            );
+            this.showMessage(window.i18n.t('settings.saveFail', { error: (error as Error).message }), 'error');
         }
     }
 
     async resetSettings() {
         try {
             if (window.electronAPI && window.electronAPI.resetSettings) {
-                const result = await window.electronAPI.resetSettings();
+                const result = await window.electronAPI.resetSettings() as { success?: boolean; error?: string };
                 if (result.success) {
                     await this.loadSettings();
                     this.renderKeybindingsUI();
                     this.updateUI();
-                    this.showMessage(
-                        window.i18n ? window.i18n.t('settings.resetSuccess') : '编辑器设置已重置为默认值',
-                        'success'
-                    );
+                    this.showMessage(window.i18n.t('settings.resetSuccess'), 'success');
                 } else {
-                    const resetError = result.error || (window.i18n ? window.i18n.t('settings.unknownError') : '未知错误');
-                    this.showMessage(
-                        window.i18n
-                            ? window.i18n.t('settings.resetFail', { error: resetError })
-                            : '重置设置失败：' + resetError,
-                        'error'
-                    );
+                    const errorMsg = result.error || window.i18n.t('settings.unknownError');
+                    this.showMessage(window.i18n.t('settings.resetFail', { error: errorMsg }), 'error');
                 }
             } else {
-                this.showMessage(
-                    window.i18n ? window.i18n.t('settings.apiUnavailable') : '设置 API 不可用',
-                    'error'
-                );
+                this.showMessage(window.i18n.t('settings.apiUnavailable'), 'error');
             }
         } catch (error) {
             logError('重置设置失败:', error);
-            this.showMessage(
-                window.i18n
-                    ? window.i18n.t('settings.resetFail', { error: error.message })
-                    : '重置设置失败：' + error.message,
-                'error'
-            );
+            this.showMessage(window.i18n.t('settings.resetFail', { error: (error as Error).message }), 'error');
         }
     }
 
     updateUI() {
-        const fontSelect = document.getElementById('editor-font');
-        const fontSizeInput = document.getElementById('editor-font-size');
-        const terminalFontSizeInput = document.getElementById('editor-terminal-font-size');
-        const lineHeightInput = document.getElementById('editor-line-height');
-        const themeSelect = document.getElementById('editor-theme');
-        const foldingCheckbox = document.getElementById('editor-folding');
-        const stickyScrollCheckbox = document.getElementById('editor-sticky-scroll');
-        const ligaturesCheckbox = document.getElementById('editor-font-ligatures');
-        const tabSizeInput = document.getElementById('editor-tab-size');
-        const clangFormatBasedOnStyleSelect = document.getElementById('clang-format-based-on-style');
-        const clangFormatUseTabSelect = document.getElementById('clang-format-use-tab');
-        const clangFormatIndentWidthInput = document.getElementById('clang-format-indent-width');
-        const clangFormatTabWidthInput = document.getElementById('clang-format-tab-width');
-        const clangFormatColumnLimitInput = document.getElementById('clang-format-column-limit');
-        const clangFormatBreakBeforeBracesSelect = document.getElementById('clang-format-break-before-braces');
-        const clangFormatPointerAlignmentSelect = document.getElementById('clang-format-pointer-alignment');
-        const clangFormatSpaceBeforeParensSelect = document.getElementById('clang-format-space-before-parens');
-        const clangFormatIndentCaseLabelsCheckbox = document.getElementById('clang-format-indent-case-labels');
-        const clangFormatSortIncludesCheckbox = document.getElementById('clang-format-sort-includes');
-        const clangFormatAlignAssignmentsCheckbox = document.getElementById('clang-format-align-assignments');
-        const clangFormatAlignDeclarationsCheckbox = document.getElementById('clang-format-align-declarations');
-        const clangFormatRawTextArea = document.getElementById('clang-format-raw-text');
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
-        const syntaxCheckCheckbox = document.getElementById('editor-syntax-check-enabled');
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
-        const opacityInput = document.getElementById('editor-opacity');
-        const opacityValue = document.getElementById('editor-opacity-value');
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
-        const bgImageInput = document.getElementById('editor-bg-image');
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const fontSelect = elSelect('editor-font');
+        const fontSizeInput = elInputLike('editor-font-size');
+        const terminalFontSizeInput = elInputLike('editor-terminal-font-size');
+        const lineHeightInput = elInputLike('editor-line-height');
+        const themeSelect = elSelect('editor-theme');
+        const foldingCheckbox = elCheckbox('editor-folding');
+        const stickyScrollCheckbox = elCheckbox('editor-sticky-scroll');
+        const ligaturesCheckbox = elCheckbox('editor-font-ligatures');
+        const tabSizeInput = elInputLike('editor-tab-size');
+        const clangFormatBasedOnStyleSelect = elSelect('clang-format-based-on-style');
+        const clangFormatUseTabSelect = elSelect('clang-format-use-tab');
+        const clangFormatIndentWidthInput = elInputLike('clang-format-indent-width');
+        const clangFormatTabWidthInput = elInputLike('clang-format-tab-width');
+        const clangFormatColumnLimitInput = elInputLike('clang-format-column-limit');
+        const clangFormatBreakBeforeBracesSelect = elSelect('clang-format-break-before-braces');
+        const clangFormatPointerAlignmentSelect = elSelect('clang-format-pointer-alignment');
+        const clangFormatSpaceBeforeParensSelect = elSelect('clang-format-space-before-parens');
+        const clangFormatIndentCaseLabelsCheckbox = elCheckbox('clang-format-indent-case-labels');
+        const clangFormatSortIncludesCheckbox = elCheckbox('clang-format-sort-includes');
+        const clangFormatAlignAssignmentsCheckbox = elCheckbox('clang-format-align-assignments');
+        const clangFormatAlignDeclarationsCheckbox = elCheckbox('clang-format-align-declarations');
+        const clangFormatRawTextArea = elInputLike('clang-format-raw-text');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
+        const syntaxCheckCheckbox = elCheckbox('editor-syntax-check-enabled');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
+        const opacityInput = elInputLike('editor-opacity');
+        const opacityValue = elById('editor-opacity-value');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
+        const bgImageInput = elInputLike('editor-bg-image');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
 
         // Populate language selector
         this.populateLanguageSelector();
@@ -1932,7 +1984,7 @@ class EditorSettings {
         if (fontSelect && this.settings.font) {
             let fontValue = this.settings.font;
             if (fontValue.includes(',')) {
-                fontValue = fontValue.split(',')[0].trim().replace(/["']/g, '');
+                fontValue = (fontValue.split(',')[0] as string).trim().replace(/["']/g, '');
             }
             const options = Array.from(fontSelect.options);
             const matchingOption = options.find(option => option.value === fontValue);
@@ -1945,24 +1997,24 @@ class EditorSettings {
         }
 
         if (fontSizeInput && this.settings.fontSize) {
-            fontSizeInput.value = this.settings.fontSize;
+            fontSizeInput.value = String(this.settings.fontSize);
             logInfo('字体大小已更新:', fontSizeInput.value);
         }
 
         if (terminalFontSizeInput && this.settings.terminalFontSize) {
-            terminalFontSizeInput.value = this.settings.terminalFontSize;
+            terminalFontSizeInput.value = String(this.settings.terminalFontSize);
             logInfo('终端字号已更新:', terminalFontSizeInput.value);
         }
 
-        const terminalStartupCommandInput = document.getElementById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = elInputLike('editor-terminal-startup-command');
         if (terminalStartupCommandInput) {
             terminalStartupCommandInput.value = this.settings.terminalStartupCommand || '';
             logInfo('终端启动命令已更新:', terminalStartupCommandInput.value);
         }
 
         if (lineHeightInput) {
-            const lh = Number.isFinite(this.settings.lineHeight) ? this.settings.lineHeight : 0;
-            lineHeightInput.value = lh > 0 ? lh : '';
+            const lh = Number.isFinite(this.settings.lineHeight) ? this.settings.lineHeight as number : 0;
+            lineHeightInput.value = lh > 0 ? String(lh) : '';
         }
 
         if (themeSelect && this.settings.theme) {
@@ -1988,15 +2040,15 @@ class EditorSettings {
         }
         if (tabSizeInput) {
             const tabSize = Number.isFinite(this.settings.tabSize) ? this.settings.tabSize : 4;
-            tabSizeInput.value = tabSize;
+            tabSizeInput.value = String(tabSize);
         }
 
         const clangFormatStyle = this.normalizeClangFormatStyle(this.settings.clangFormatStyle);
         if (clangFormatBasedOnStyleSelect) clangFormatBasedOnStyleSelect.value = clangFormatStyle.BasedOnStyle;
         if (clangFormatUseTabSelect) clangFormatUseTabSelect.value = clangFormatStyle.UseTab;
-        if (clangFormatIndentWidthInput) clangFormatIndentWidthInput.value = clangFormatStyle.IndentWidth;
-        if (clangFormatTabWidthInput) clangFormatTabWidthInput.value = clangFormatStyle.TabWidth;
-        if (clangFormatColumnLimitInput) clangFormatColumnLimitInput.value = clangFormatStyle.ColumnLimit;
+        if (clangFormatIndentWidthInput) clangFormatIndentWidthInput.value = String(clangFormatStyle.IndentWidth);
+        if (clangFormatTabWidthInput) clangFormatTabWidthInput.value = String(clangFormatStyle.TabWidth);
+        if (clangFormatColumnLimitInput) clangFormatColumnLimitInput.value = String(clangFormatStyle.ColumnLimit);
         if (clangFormatBreakBeforeBracesSelect) clangFormatBreakBeforeBracesSelect.value = clangFormatStyle.BreakBeforeBraces;
         if (clangFormatPointerAlignmentSelect) clangFormatPointerAlignmentSelect.value = clangFormatStyle.PointerAlignment;
         if (clangFormatSpaceBeforeParensSelect) clangFormatSpaceBeforeParensSelect.value = clangFormatStyle.SpaceBeforeParens;
@@ -2021,8 +2073,8 @@ class EditorSettings {
             autoSaveCheckbox.checked = autoSaveEnabled;
         }
         if (autoSaveIntervalInput) {
-            const intervalMs = Number.isFinite(this.settings.autoSaveInterval) && this.settings.autoSaveInterval > 0 ? this.settings.autoSaveInterval : 60000;
-            autoSaveIntervalInput.value = Math.max(1, Math.round(intervalMs / 1000));
+            const intervalMs = Number.isFinite(this.settings.autoSaveInterval) && (this.settings.autoSaveInterval as number) > 0 ? this.settings.autoSaveInterval as number : 60000;
+            autoSaveIntervalInput.value = String(Math.max(1, Math.round(intervalMs / 1000)));
             this.toggleAutoSaveInterval(autoSaveIntervalInput, autoSaveEnabled);
         }
 
@@ -2038,7 +2090,7 @@ class EditorSettings {
         if (opacityInput && opacityValue) {
             const opacity = typeof this.settings.windowOpacity === 'number' ? this.settings.windowOpacity : 1.0;
             const transparency = Math.max(0, Math.min(0.8, 1 - opacity));
-            opacityInput.value = transparency;
+            opacityInput.value = String(transparency);
             opacityValue.textContent = Math.round(transparency * 100) + '%';
         }
 
@@ -2054,14 +2106,15 @@ class EditorSettings {
         const defaultKeybindings = this.getDefaultKeybindings();
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
         keybindingInputs.forEach((input) => {
-            const key = input.dataset.keybindingKey;
+            if (!(input instanceof HTMLInputElement)) return;
+            const key = input.dataset['keybindingKey'];
             if (!key) return;
-            input.value = normalizedKeybindings[key] || defaultKeybindings[key] || '';
+            input.value = this.shortcutDisplay(normalizedKeybindings[key] || defaultKeybindings[key] || '');
         });
     }
 
     async populateLanguageSelector() {
-        const langSelect = document.getElementById('editor-language');
+        const langSelect = elSelect('editor-language');
         if (!langSelect) return;
 
         try {
@@ -2083,27 +2136,29 @@ class EditorSettings {
                 langSelect.appendChild(option);
             }
 
-            // Listen for language changes
-            langSelect.addEventListener('change', async (e) => {
-                const newLang = e.target.value;
-                if (newLang && window.i18n) {
-                    await window.i18n.setLanguage(newLang);
-                    // Immediately apply to current page
-                    if (window.i18n && typeof window.i18n._applyToDOM === 'function') {
-                        window.i18n._applyToDOM();
+            if (!this._languageSelectorListenerBound) {
+                langSelect.addEventListener('change', async (e) => {
+                    const newLang = langSelect.value;
+                    if (newLang && window.i18n) {
+                        await window.i18n.setLanguage(newLang);
+                        this.settings.language = newLang;
                     }
-                    this.settings.language = newLang;
-                }
-            });
+                });
+                this._languageSelectorListenerBound = true;
+            }
         } catch (error) {
             logError('加载语言列表失败:', error);
         }
     }
 
-    showMessage(message, type = 'info') {
+    showMessage(message: string | Error, type: string = 'info') {
+        const existingToast = (document.querySelector('.message-toast'));
+        if (existingToast) {
+            existingToast.remove();
+        }
         const messageDiv = document.createElement('div');
         messageDiv.className = `message-toast ${type}`;
-        messageDiv.textContent = message;
+        messageDiv.textContent = String(message);
         messageDiv.style.cssText = `
             position: fixed;
             top: 20px;
@@ -2161,4 +2216,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     const editorSettings = new EditorSettings();
     await editorSettings.init();
+    // 挂到 window 只为冒烟测试：它要在真实页面里换平台后驱动一次重渲染
+    // （沿用 window.oicppApp / window.compilerManager 那个惯例，测试才有地方调）。
+    (window as unknown as { editorSettings: EditorSettings }).editorSettings = editorSettings;
 });
