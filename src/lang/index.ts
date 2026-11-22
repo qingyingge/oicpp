@@ -9,15 +9,18 @@
  *   lang.t('message.updateDownloading', { version: ' (v2.0)', progress: 50 }); // template substitution
  */
 
+export {};
+
 const fs = require('fs');
 const path = require('path');
 
 class LanguageManager {
+    _currentLang: string = 'zh-cn';
+    _messages: Record<string, unknown> = {};
+    _fallbackMessages: Record<string, unknown> = {};
+    _loaded: boolean = false;
+
     constructor() {
-        this._currentLang = 'zh-cn';
-        this._messages = {};
-        this._fallbackMessages = {};
-        this._loaded = false;
         this._loadFallback();
     }
 
