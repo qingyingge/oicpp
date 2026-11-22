@@ -1,22 +1,24 @@
 class FontDetector {
+    testString: string = 'mmmmmmmmmmlli';
+    testSize: string = '72px';
+    fallbackFont: string = 'monospace';
+    defaultFont: string = '';
+    _warnedFonts: Set<string> = new Set();
+
     constructor() {
-        this.testString = 'mmmmmmmmmmlli';
-        this.testSize = '72px';
-        this.fallbackFont = 'monospace';
-        const platform = (typeof process!=='undefined' && process.platform)||'';
-        if(platform==='win32') {
+        const platform = (typeof process !== 'undefined' && process.platform) || '';
+        if (platform === 'win32') {
             this.defaultFont = 'Consolas';
         } else {
             this.defaultFont = 'monospace, monospace';
         }
-        this._warnedFonts = new Set();
     }
 
     isFontAvailable(fontName) {
     if(!fontName) return false;
     const genericFamilies = ['monospace','serif','sans-serif'];
     if (genericFamilies.includes(fontName.toLowerCase())) return true;
-        const testElement = document.createElement('span');
+        const testElement = document.createElement('span') as HTMLElement;
         testElement.style.position = 'absolute';
         testElement.style.left = '-9999px';
         testElement.style.top = '-9999px';
@@ -72,7 +74,7 @@ class FontDetector {
     }
 
     showFontNotAvailableMessage(fontName) {
-        const message = document.createElement('div');
+        const message = document.createElement('div') as HTMLElement;
         message.className = 'font-warning-message';
         message.innerHTML = `
             <div class="font-warning-content">
@@ -84,7 +86,7 @@ class FontDetector {
                 <button class="font-warning-close" onclick="this.parentElement.parentElement.remove()">×</button>
             </div>
         `;
-        const detail = message.querySelector('.font-warning-detail');
+        const detail = message.querySelector('.font-warning-detail') as unknown as HTMLElement;
         if (detail) {
             detail.textContent = `系统中未找到字体 "${fontName}"，已自动切换到 "${this.defaultFont}"`;
         }
@@ -104,7 +106,7 @@ class FontDetector {
             animation: slideInRight 0.3s ease-out;
         `;
         
-        const content = message.querySelector('.font-warning-content');
+        const content = message.querySelector('.font-warning-content') as unknown as HTMLElement;
         content.style.cssText = `
             display: flex;
             align-items: flex-start;
@@ -112,18 +114,19 @@ class FontDetector {
             gap: 12px;
         `;
         
-        const icon = message.querySelector('.font-warning-icon');
+        const icon = message.querySelector('.font-warning-icon') as unknown as HTMLElement;
         icon.style.cssText = `
             font-size: 20px;
             flex-shrink: 0;
             margin-top: 2px;
         `;
 
-        if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
-            window.uiIcons.hydrate(message);
+        const uiIcons = window.uiIcons as { hydrate?: (el: unknown) => void } | undefined;
+        if (uiIcons && typeof uiIcons.hydrate === 'function') {
+            uiIcons.hydrate(message);
         }
         
-        const text = message.querySelector('.font-warning-text');
+        const text = message.querySelector('.font-warning-text') as unknown as HTMLElement;
         text.style.cssText = `
             flex: 1;
             color: #856404;
@@ -131,7 +134,7 @@ class FontDetector {
             line-height: 1.4;
         `;
         
-        const closeBtn = message.querySelector('.font-warning-close');
+        const closeBtn = message.querySelector('.font-warning-close') as unknown as HTMLElement;
         closeBtn.style.cssText = `
             background: none;
             border: none;
@@ -156,7 +159,7 @@ class FontDetector {
             closeBtn.style.backgroundColor = 'transparent';
         });
         
-        const style = document.createElement('style');
+        const style = document.createElement('style') as HTMLStyleElement;
         style.textContent = `
             @keyframes slideInRight {
                 from {
@@ -205,10 +208,10 @@ class FontDetector {
         });
     }
 
-    async getSystemFontsFromAPI() {
+    async getSystemFontsFromAPI(): Promise<string[]> {
         try {
             if ('queryLocalFonts' in window) {
-                const fonts = await window.queryLocalFonts();
+                const fonts = await (window as { queryLocalFonts?: () => Promise<{ family: string }[]> }).queryLocalFonts!();
                 const fontNames = [...new Set(fonts.map(font => font.family))].sort();
                 logInfo('通过API获取到的系统字体:', fontNames.length, '个');
                 return fontNames;
@@ -220,7 +223,7 @@ class FontDetector {
     }
 
     async getAllAvailableFonts() {
-        const systemFonts = await this.getSystemFontsFromAPI();
+        const systemFonts: string[] = await this.getSystemFontsFromAPI();
         
         const commonFonts = [
             'Consolas',

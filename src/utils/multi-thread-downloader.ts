@@ -1,3 +1,5 @@
+export {};
+
 const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
@@ -5,8 +7,22 @@ const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
 
-function makeRequest(url, options = {}) {
-    return new Promise((resolve, reject) => {
+interface RequestOptions {
+    method?: string;
+    headers?: Record<string, string>;
+    timeout?: number;
+}
+
+interface HttpResponse {
+    ok: boolean;
+    status: number;
+    statusText: string;
+    headers: { get: (name: string) => string | undefined };
+    body: unknown;
+}
+
+function makeRequest(url: string, options: RequestOptions = {}): Promise<HttpResponse> {
+    return new Promise<HttpResponse>((resolve, reject) => {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
         const client = isHttps ? https : http;
@@ -45,13 +61,29 @@ function makeRequest(url, options = {}) {
 
 
 class MultiThreadDownloader {
-    constructor(options = {}) {
+    isCancelled: boolean = false;
+    cancelError: Error | null = null;
+    maxConcurrency: number = 16;
+    chunkSize: number = 1024 * 1024 * 2;
+    timeout: number = 30000;
+    retryCount: number = 8;
+    minMultiThreadSize: number = 1024 * 1024 * 2;
+    progressCallback: (progress: { type: string; chunkIndex?: number; downloadedBytes: number; totalBytes: number; progress?: number; speed?: number; activeChunks?: number }) => void = () => { };
+
+    constructor(options: {
+        maxConcurrency?: number;
+        chunkSize?: number;
+        timeout?: number;
+        retryCount?: number;
+        minMultiThreadSize?: number;
+        progressCallback?: (progress: { type: string; chunkIndex?: number; downloadedBytes: number; totalBytes: number; progress?: number; speed?: number; activeChunks?: number }) => void;
+    } = {}) {
         this.isCancelled = false;
         this.cancelError = null;
-        this.maxConcurrency = options.maxConcurrency || 16; // 最大并发数
-        this.chunkSize = options.chunkSize || 1024 * 1024 * 2; // 每个分片大小 (2MB)
-        this.timeout = options.timeout || 30000; // 超时时间 (30秒)
-        this.retryCount = options.retryCount || 8; // 增加重试次数到8次
+        this.maxConcurrency = options.maxConcurrency || 16;
+        this.chunkSize = options.chunkSize || 1024 * 1024 * 2;
+        this.timeout = options.timeout || 30000;
+        this.retryCount = options.retryCount || 8;
         this.minMultiThreadSize = options.minMultiThreadSize || 1024 * 1024 * 2;
         this.progressCallback = options.progressCallback || (() => { });
     }
@@ -101,7 +133,7 @@ class MultiThreadDownloader {
     }
 
 
-    async downloadChunk(url, start, end, chunkIndex, tempDir) {
+    async downloadChunk(url: string, start: number, end: number, chunkIndex: number, tempDir: string): Promise<{ chunkIndex: number; file: string; size: number }> {
         const chunkFile = path.join(tempDir, `chunk_${chunkIndex}.tmp`);
         let retries = 0;
 
@@ -125,27 +157,28 @@ class MultiThreadDownloader {
                     // 服务器忽略了 Range 头并返回完整文件。若继续写入，每个分片都会得到
                     // 整份文件，合并后大小会变成 N 倍。必须中止并回退到单线程下载。
                     const rangeError = new Error(`服务器未按范围请求返回数据（HTTP ${response.status}）`);
-                    rangeError.code = 'RANGE_NOT_SUPPORTED';
-                    try { response.body.destroy(); } catch (_) { }
+                    (rangeError as { code?: string }).code = 'RANGE_NOT_SUPPORTED';
+                    try { (response.body as { destroy?: () => void }).destroy?.(); } catch (_) { }
                     throw rangeError;
                 }
 
                 const writer = fs.createWriteStream(chunkFile);
                 let downloadedBytes = 0;
 
-                return new Promise((resolve, reject) => {
-                    response.body.on('data', (chunk) => {
+                return new Promise<{ chunkIndex: number; file: string; size: number }>((resolve, reject) => {
+                    const body = response.body as { on: (event: string, listener: (chunk: unknown) => void) => void; destroy?: () => void };
+                    body.on('data', (chunk) => {
                         if (this.isCancelled) {
                             writer.end(() => {
                                 if (fs.existsSync(chunkFile)) {
                                     fs.unlinkSync(chunkFile); // 清理文件
                                 }
                             });
-                            response.body.destroy();
+                            body.destroy?.();
                             return reject(this.cancelError || new Error('下载已取消'));
                         }
-                        writer.write(chunk);
-                        downloadedBytes += chunk.length;
+                        writer.write(chunk as Buffer);
+                        downloadedBytes += (chunk as Buffer).length;
 
                         if (this.progressCallback) {
                             this.progressCallback({
@@ -157,7 +190,7 @@ class MultiThreadDownloader {
                         }
                     });
 
-                    response.body.on('end', () => {
+                    body.on('end', () => {
                         writer.end((error) => {
                             if (error) {
                                 reject(error);
@@ -165,7 +198,7 @@ class MultiThreadDownloader {
                                 const expectedBytes = end - start + 1;
                                 if (downloadedBytes !== expectedBytes) {
                                     const sizeError = new Error(`分片 ${chunkIndex} 大小异常（${downloadedBytes}/${expectedBytes}）`);
-                                    sizeError.code = 'RANGE_SIZE_MISMATCH';
+                                    (sizeError as { code?: string }).code = 'RANGE_SIZE_MISMATCH';
                                     return reject(sizeError);
                                 }
                                 logInfo(`[多线程下载] 分片 ${chunkIndex} 下载完成`);
@@ -174,7 +207,7 @@ class MultiThreadDownloader {
                         });
                     });
 
-                    response.body.on('error', (error) => {
+                    body.on('error', (error) => {
                         if (this.isCancelled) {
                             return reject(this.cancelError);
                         }
@@ -237,9 +270,10 @@ class MultiThreadDownloader {
                     logInfo(`[多线程下载] 分片 ${chunkIndex} 将在 ${delay / 1000}s 后重试`);
                 }
 
-                await new Promise(resolve => setTimeout(resolve, delay));
+                await new Promise<void>(resolve => setTimeout(resolve, delay));
             }
         }
+        throw new Error(`分片 ${chunkIndex} 下载失败: 达到最大重试次数`);
     }
 
 
@@ -260,7 +294,7 @@ class MultiThreadDownloader {
                 }
             }
 
-            await new Promise((resolve, reject) => {
+            await new Promise<void>((resolve, reject) => {
                 writer.end((error) => {
                     if (error) reject(error);
                     else resolve();
@@ -301,6 +335,7 @@ class MultiThreadDownloader {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
+                const body = response.body as { destroy?: (err?: Error) => void; on: (event: string, listener: (chunk: unknown) => void) => void; pause?: () => void; resume?: () => void };
                 const totalSize = parseInt(response.headers.get('content-length') || '0');
                 writer = fs.createWriteStream(outputFile);
 
@@ -311,7 +346,7 @@ class MultiThreadDownloader {
                 const resetInactivityTimer = () => {
                     if (inactivityTimer) clearTimeout(inactivityTimer);
                     inactivityTimer = setTimeout(() => {
-                        try { response.body.destroy(new Error('下载超时(无数据)')); } catch (_) { }
+                        try { body.destroy?.(new Error('下载超时(无数据)')); } catch (_) { }
                     }, this.timeout);
                 };
 
@@ -324,23 +359,23 @@ class MultiThreadDownloader {
                     try { writer.end(() => { }); } catch (_) { }
                 };
 
-                await new Promise((resolve, reject) => {
-                    response.body.on('data', (chunk) => {
+                await new Promise<void>((resolve, reject) => {
+                    body.on('data', (chunk) => {
                         if (this.isCancelled) {
                             try { writer.end(() => { if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile); }); } catch (_) { }
-                            try { response.body.destroy(); } catch (_) { }
+                            try { body.destroy?.(); } catch (_) { }
                             return reject(this.cancelError || new Error('下载已取消'));
                         }
 
                         resetInactivityTimer();
                         const canContinue = writer.write(chunk);
                         if (!canContinue) {
-                            response.body.pause();
+                            body.pause?.();
                             writer.once('drain', () => {
-                                try { response.body.resume(); } catch (_) { }
+                                try { body.resume?.(); } catch (_) { }
                             });
                         }
-                        downloadedBytes += chunk.length;
+                        downloadedBytes += (chunk as Buffer).length;
 
                         const now = Date.now();
                         if (now - lastProgressTime > 500) { // 每500ms报告一次进度
@@ -364,7 +399,7 @@ class MultiThreadDownloader {
                         }
                     });
 
-                    response.body.on('end', () => {
+                    body.on('end', () => {
                         finishSuccessfully();
                         const elapsed = Math.max(0.001, (Date.now() - startTime) / 1000);
                         if (this.progressCallback) {
@@ -379,13 +414,13 @@ class MultiThreadDownloader {
                         resolve();
                     });
 
-                    response.body.on('close', () => {
+                    body.on('close', () => {
                         if (!finished) {
                             return reject(new Error('连接关闭但未完成下载'));
                         }
                     });
 
-                    response.body.on('error', (error) => {
+                    body.on('error', (error) => {
                         if (this.isCancelled) {
                             return reject(this.cancelError);
                         }

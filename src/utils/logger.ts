@@ -1,13 +1,27 @@
+export {};
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+interface SerializableError {
+    name?: unknown;
+    message?: unknown;
+    stack?: unknown;
+    code?: unknown;
+    errno?: unknown;
+    syscall?: unknown;
+    path?: unknown;
+    address?: unknown;
+    port?: unknown;
+    cause?: unknown;
+    data?: unknown;
+}
+
 class Logger {
-    constructor() {
-        this.initialized = false;
-        this.logDir = path.join(os.homedir(), '.oicpp', 'logs');
-        this.logFile = null;
-    }
+    initialized: boolean = false;
+    logDir: string = path.join(os.homedir(), '.oicpp', 'logs');
+    logFile: string | null = null;
 
     static timestampFilename(date = new Date()) {
         const pad = (n) => String(n).padStart(2, '0');
@@ -66,38 +80,39 @@ class Logger {
         }
     }
 
-    static serializeError(err) {
+    static serializeError(err: unknown) {
         try {
-            const base = {
-                name: err?.name || 'Error',
-                message: Logger.redactString(err?.message || String(err)),
-                stack: err?.stack ? Logger.redactString(err.stack) : undefined,
+            const e = err as SerializableError;
+            const base: SerializableError = {
+                name: e?.name || 'Error',
+                message: Logger.redactString(e?.message || String(e)),
+                stack: e?.stack ? Logger.redactString(e.stack) : undefined,
             };
             ['code', 'errno', 'syscall', 'path', 'address', 'port'].forEach((k) => {
-                if (err && err[k] !== undefined) {
-                    base[k] = typeof err[k] === 'string' ? Logger.redactString(err[k]) : err[k];
+                if (e && e[k] !== undefined) {
+                    base[k] = typeof e[k] === 'string' ? Logger.redactString(e[k]) : e[k];
                 }
             });
-            if (err && err.cause) {
-                base.cause = typeof err.cause === 'object'
-                    ? Logger.serializeError(err.cause)
-                    : Logger.redactString(String(err.cause));
+            if (e && e.cause) {
+                base.cause = typeof e.cause === 'object'
+                    ? Logger.serializeError(e.cause)
+                    : Logger.redactString(String(e.cause));
             }
-            if (err && err.data) {
+            if (e && e.data) {
                 try {
-                    base.data = JSON.parse(JSON.stringify(err.data, (key, value) => {
+                    base.data = JSON.parse(JSON.stringify(e.data, (key, value) => {
                         if (key && /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i.test(key)) {
                             return '[REDACTED]';
                         }
                         return typeof value === 'string' ? Logger.redactString(value) : value;
                     }));
                 } catch (_) {
-                    base.data = Logger.redactString(String(err.data));
+                    base.data = Logger.redactString(String(e.data));
                 }
             }
             return base;
         } catch (_) {
-            return { message: String(err) };
+            return { message: String(_) };
         }
     }
 
