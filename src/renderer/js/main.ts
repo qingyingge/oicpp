@@ -1,4 +1,207 @@
-﻿class OICPPApp {
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
+
+interface AppSettings {
+    theme: string;
+    fontSize: number;
+    terminalFontSize: number;
+    syntaxCheckEnabled: boolean;
+    syntaxColorsByTheme: Record<string, unknown>;
+    syntaxFontStyles: Record<string, unknown>;
+    tabSize: number;
+    formatterIndentStyle: string;
+    clangFormatStyle: string | null;
+    clangFormatRaw: string;
+    wordWrap: boolean;
+    enableAutoCompletion: boolean;
+    glassEffectEnabled: boolean;
+    compilerPath: string;
+    compilerArgs: string;
+    pythonInterpreterPath?: string;
+    testlibPath?: string;
+    cppTemplate: string;
+    codeSnippets?: Array<{ keyword?: string; description?: string; content?: string }>;
+    autoBackupSettings?: boolean;
+    autoSave?: boolean;
+    autoSaveInterval?: number;
+    backgroundImage?: string;
+    font?: string;
+    foldingEnabled?: boolean;
+    keybindings?: Record<string, string>;
+    language?: string;
+    lastOpen?: string;
+    runMode?: string;
+    stickyScrollEnabled?: boolean;
+    syntaxColors?: Record<string, unknown>;
+    workingDirectory?: string;
+    [key: string]: unknown;
+}
+
+interface SettingsPatch {
+    fontSize?: number;
+    font?: string;
+    compilerPath?: string;
+    compilerArgs?: string;
+    autoSave?: boolean;
+    autoSaveInterval?: number;
+    language?: string;
+    [key: string]: unknown;
+}
+
+type KeybindingMap = Record<string, string>;
+
+interface DebouncedFn {
+    (...args: unknown[]): void;
+    cancel?: () => void;
+}
+
+interface AppKeyboardEvent extends KeyboardEvent {
+    target: HTMLElement;
+}
+
+interface Errorish {
+    message?: string;
+}
+
+/**
+ * 「不是失败、只是当前状态」的调试错误码 —— 只有出现在这里的行为良性。
+ *
+ * 生产者侧的同名码写在 src/main.ts（codedDebugError）与 src/gdb-mi-debugger.ts
+ * （codedError），三处必须对齐；tests/debug-error-classification.test.js 双向核对：
+ * 生产侧新增一个良性码而这里没登记 → 红；这里登记了而没人发 → 也红。
+ * 方向是安全的：不在集合里的码一律按真错误弹出去，宁可多报也不静默吞失败。
+ */
+const BENIGN_DEBUG_CODES = new Set(['debuggerNotRunning', 'programAlreadyRunning']);
+
+interface ErrorPayload {
+    // 定性只看 code（AGENTS.md M57 / #10）：措辞是译文，拿它当语义状态用，改一次译文
+    // 就可能静默翻转判定方向 —— 之前那条正则里裸的 running 分支连 SIGSEGV 都判成良性。
+    // 主进程 src/main.ts 的 debugErrorPayload 负责把码送过 IPC 边界。
+    code?: string;
+    detail?: ErrorPayload | string | null;
+    error?: ErrorPayload | string | null;
+    message?: string;
+    result?: {
+        errors?: unknown[];
+        stderr?: string;
+        stdout?: string;
+        message?: string;
+    };
+}
+
+interface DebugVarInfo {
+    name?: string;
+    type?: string;
+    value?: string;
+    isContainer?: boolean;
+    isArray?: boolean;
+    elementCount?: number | null;
+    children?: unknown[];
+}
+
+type DebugVarMap = Record<string, DebugVarInfo>;
+
+interface DebugVariablesPayload {
+    local?: DebugVarMap;
+    global?: DebugVarMap;
+    watches?: DebugVarMap;
+}
+
+interface DebugStackFrame {
+    function?: string;
+    file?: string;
+    line?: number | string;
+}
+
+interface DebugStartedPayload {
+    executable?: string;
+    sourceFile?: string;
+}
+
+interface DebugStoppedPayload {
+    reason?: string;
+    success?: boolean;
+    exitCode?: number;
+    code?: number;
+    file?: string;
+    line?: number | string;
+    frame?: { file?: string; line?: number | string };
+}
+
+interface DebugExitedPayload {
+    exitCode?: number;
+}
+
+interface DebugWaitingPayload {
+    message?: string;
+    hasBreakpoints?: boolean;
+}
+
+interface DebugBreakpointPayload {
+    file?: string;
+    line?: number | string;
+    function?: string;
+}
+
+interface ClientLogEntry {
+    name?: string;
+    path?: string;
+    mtimeMs?: number;
+    size?: number;
+}
+
+interface FileHistoryEntry {
+    path: string;
+    name?: string;
+    lastOpened?: number;
+    [key: string]: unknown;
+}
+
+interface PdfResolution {
+    filePath: string | null;
+    isTempFile: boolean;
+    base64Data: string | null;
+}
+
+type I18nParams = Record<string, unknown> | undefined;
+
+class OICPPApp {
+    currentFile: string | null;
+    files: Map<string, unknown>;
+    settings: AppSettings;
+    editorManager: InstanceType<typeof MonacoEditorManager> | null;
+    initialized: boolean;
+    accountLoggedIn: boolean;
+    accountInfo: { username?: string } | null;
+    _accountIpcBound: boolean;
+    isDebugging: boolean;
+    _autoContinueOnStart: boolean;
+    _debugSessionId: number;
+    _debugExited: boolean;
+    _debugTerminalId: string | null;
+    _debugTerminalBridgeEnabled: boolean;
+    _debugSessionTerminalId: string | null;
+    terminalPanel: InstanceType<typeof IntegratedTerminalPanel> | null;
+    updateDownloadState: {
+        autoChecking: boolean;
+        downloading: boolean;
+        version: string;
+        progress: number;
+        pendingInstall: boolean;
+        pendingVersion: string;
+    };
+    compilerManager: InstanceType<typeof CompilerManager> | null;
+    autoSaveController: {
+        timerId: ReturnType<typeof setTimeout> | null;
+        enabled: boolean;
+        intervalMs: number;
+        running: boolean;
+    };
+    supportedDropTextExtensions: Set<string>;
+    _isWindowsPlatform: boolean | undefined;
+    _origUpdateStatusBar: (() => void) | null | undefined;
+
     constructor() {
         this.currentFile = null;
         this.files = new Map();
@@ -15,9 +218,17 @@
             clangFormatRaw: '',
             wordWrap: false,
             enableAutoCompletion: true,
-            glassEffectEnabled: false
+            glassEffectEnabled: false,
+            compilerPath: '',
+            compilerArgs: '-std=c++14 -O2 -static',
+            runMode: 'popup',
+            workingDirectory: '',
+            cppTemplate: '',
+            codeSnippets: [],
+            autoBackupSettings: false
         };
         this.editorManager = null;
+        this.compilerManager = null;
         this.initialized = false;
         this.accountLoggedIn = false;
         this.accountInfo = null;
@@ -46,18 +257,18 @@
     };
     this.supportedDropTextExtensions = new Set(['cpp', 'c', 'cc', 'cxx', 'h', 'hpp', 'hh', 'txt', 'in', 'out', 'ans', 'md', 'json']);
         this._isWindowsPlatform = undefined;
-        this._isMacPlatform = undefined;
-        this._pendingCtrlKFolderTimer = null;
-        this._ctrlKChordPending = false;
-    }
-
-    t(key, params, fallback) {
-        return window.i18n?.t?.(key, params) || fallback || key;
     }
 
     async init() {
         try {
-            logInfo('开始初始化 OICPP App...');
+            logInfo('开始初始化 OICPP-Plus App...');
+            // 让「@shortcut:keybinding:*」这类引用能解析到**用户改过的**组合键：keybindings 模块
+            // 不认得 settings 的形状，也不该反向依赖 app 实例，所以在这里注入一个取值函数。
+            // 注入是惰性的（绘制时才调），所以 settings 还没加载完也没关系。
+            window.oicppKeybindings?.setUserComboSource((key: string) => {
+                const value = this.settings?.keybindings?.[key];
+                return typeof value === 'string' ? value : '';
+            });
             if (typeof MonacoEditorManager !== 'undefined') {
                 this.editorManager = new MonacoEditorManager();
                 window.editorManager = this.editorManager;
@@ -75,7 +286,7 @@
                 if (this.editorManager.isInitialized) {
                     logInfo('编辑器管理器初始化完成');
                     break;
-                }
+            }
                 await new Promise(resolve => setTimeout(resolve, 50));
                 attempts++;
             }
@@ -85,6 +296,7 @@
             }
             
             this.setupEventListeners();
+            this.setupLanguageChangeRefresh();
             this.updatePlatformSpecificMenu();
             this.setupIPC();
             await this.initAccountMenu();
@@ -112,10 +324,51 @@
             // 监听 Monaco 标记变化，实时更新状态栏
             this._setupMarkerChangeListener();
             
-            logInfo('OICPP App 初始化完成');
+            logInfo('OICPP-Plus App 初始化完成');
         } catch (error) {
-            logError('OICPP App 初始化失败', error);
+            logError('OICPP-Plus App 初始化失败', error);
         }
+    }
+
+    /**
+     * 语言切换后刷新那些由 JS 直接写文案、data-i18n 覆盖不到的常驻控件：
+     * 状态栏（LSP / 错误警告）、账号菜单、调试继续按钮标题。
+     *
+     * 这些刷新必须是幂等重入既有渲染函数，不能像 highlightContinueButton()
+     * 那样的带副作用调用（脉冲动画 + 5s 定时器）。
+     */
+    setupLanguageChangeRefresh() {
+        document.addEventListener('i18n-language-changed', () => {
+            // 延后一拍：i18n 先 _notifyListeners() 再同步跑 _applyToDOM()，
+            // 而状态栏两项带 data-i18n-title，同步执行会被覆写回静态文案。
+            setTimeout(() => {
+                try {
+                    this.updateLspStatusBar();
+                    this.updateMarkerStatusBar();
+                    this.updateAccountMenu();
+                    this.refreshDebugButtonTranslations();
+                } catch (_) { }
+            }, 0);
+        });
+    }
+
+    /**
+     * 只刷新继续按钮的标题，不重放高亮动画。
+     */
+    refreshDebugButtonTranslations() {
+        const continueBtn = document.getElementById('debug-continue');
+        if (!continueBtn) return;
+        // 标题里的键名以前焊在文案里（「继续执行 (F6)」），现在走 {keys}：
+        // 于是它跟着用户的改键和当前平台显示，而不是永远印着 F6。
+        const keys = { keys: this.shortcutText('keybinding:debugContinue') };
+        continueBtn.title = continueBtn.style.animation
+            ? window.i18n.t('debug.clickToStartRun', keys)
+            : window.i18n.t('debug.continueTitle', keys);
+    }
+
+    /** 界面上要显示某个动作的键名时走这里（来源写法与 HTML 里的 @shortcut: 引用同一套）。 */
+    shortcutText(source: string) {
+        return window.oicppKeybindings?.formattedComboFor(source) ?? '';
     }
 
     setupEventListeners() {
@@ -125,7 +378,7 @@
 
         // Use capture phase so global shortcuts are still handled even if Monaco stops bubbling.
         document.addEventListener('keydown', (e) => {
-            this.handleKeyDown(e);
+            this.handleKeyDown(e as AppKeyboardEvent);
         }, true);
 
 
@@ -139,12 +392,13 @@
         });
 
         document.addEventListener('contextmenu', (e) => {
-            const isInEditor = e.target.closest('.monaco-editor') || 
-                              e.target.closest('.monaco-editor-container') ||
-                              e.target.classList.contains('monaco-editor') ||
-                              e.target.classList.contains('monaco-editor-container');
+            const target = e.target instanceof Element ? e.target : null;
+            const isInEditor = !!target && (target.closest('.monaco-editor') ||
+                              target.closest('.monaco-editor-container') ||
+                              target.classList.contains('monaco-editor') ||
+                              target.classList.contains('monaco-editor-container'));
 
-            const isInCloudPanel = e.target.closest('#cloud-panel') || e.target.closest('.cloud-tree');
+            const isInCloudPanel = !!target && (target.closest('#cloud-panel') || target.closest('.cloud-tree'));
             if (isInCloudPanel) {
                 return;
             }
@@ -158,7 +412,8 @@
         });
 
         document.addEventListener('settings-changed', (e) => {
-            this.applySettings(e.detail.type, e.detail.settings);
+            const evt = e as CustomEvent<{ type: string; settings: unknown }>;
+            this.applySettings(evt.detail.type, evt.detail.settings as SettingsPatch | null);
         });
 
         this.setupMenuBarEvents();
@@ -166,54 +421,57 @@
 
     setupMenuBarEvents() {
         document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('menu-dropdown-item') || 
-                e.target.closest('.menu-dropdown-item')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (target && (target.classList.contains('menu-dropdown-item') ||
+                target.closest('.menu-dropdown-item'))) {
                 
-                const menuItem = e.target.classList.contains('menu-dropdown-item') ? 
-                    e.target : e.target.closest('.menu-dropdown-item');
-                if (!menuItem) {
+                const menuItem = target.classList.contains('menu-dropdown-item') ?
+                    target : target.closest('.menu-dropdown-item');
+                if (!(menuItem instanceof HTMLElement)) {
                     return;
-                }
+            }
 
                 if (menuItem.classList.contains('disabled') || menuItem.getAttribute('aria-disabled') === 'true') {
                     e.preventDefault();
-                    const blockedAction = menuItem.dataset.action;
+                    const blockedAction = menuItem.dataset['action'];
                     if (blockedAction === 'check-update') {
                         if (this.updateDownloadState.pendingInstall) {
-                            this.showMessage(window.i18n ? window.i18n.t('message.updatePendingInstall') : '已有更新等待安装，请先退出 OICPP 完成安装', 'info');
+                            this.showMessage(window.i18n.t('message.updatePendingInstall'), 'info');
                             return;
                         }
                         if (this.updateDownloadState.autoChecking) {
-                            this.showMessage(window.i18n ? window.i18n.t('message.updateAutoChecking') : '正在执行启动自动检查，请稍后再手动检查更新', 'info');
+                            this.showMessage(window.i18n.t('message.updateAutoChecking'), 'info');
                         } else if (this.updateDownloadState.downloading) {
                             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
-                            this.showMessage((window.i18n ? window.i18n.t('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress}) : `更新正在后台下载${versionSuffix}，当前进度 ${this.updateDownloadState.progress}%`), 'info');
+                            this.showMessage(window.i18n.t('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress}), 'info');
                         }
                     }
                     return;
-                }
+            }
                 
-                const action = menuItem.dataset.action;
+                const action = menuItem.dataset['action'];
                 if (action) {
                     this.handleMenuAction(action);
-                }
+            }
             }
         });
 
         document.addEventListener('mouseover', (e) => {
-            if (e.target.classList.contains('menu-item')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (target && target.classList.contains('menu-item')) {
                 document.querySelectorAll('.menu-dropdown.active').forEach(menu => {
                     menu.classList.remove('active');
                 });
-                const dropdown = e.target.querySelector('.menu-dropdown');
-                if (dropdown) {
+                const dropdown = target.querySelector('.menu-dropdown');
+                if (dropdown instanceof HTMLElement) {
                     dropdown.classList.add('active');
-                }
+            }
             }
         });
 
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('.menu-bar')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (!target || !target.closest('.menu-bar')) {
                 document.querySelectorAll('.menu-dropdown.active').forEach(menu => {
                     menu.classList.remove('active');
                 });
@@ -221,7 +479,7 @@
         });
     }
 
-    async handleMenuAction(action) {
+    async handleMenuAction(action: string) {
         logInfo('菜单动作:', action);
         
         switch (action) {
@@ -274,12 +532,7 @@
                 await this.openIntegratedTerminal();
                 break;
             case 'cloud-compile':
-                if (!this.ensureLocalFileForFeature(window.i18n ? window.i18n.t('message.cloudCompile') : '云端编译')) {
-                    break;
-                }
-                if (this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                    this.compilerManager.cloudCompileCurrentFile();
-                }
+                this.showMessage(window.i18n.t('message.cloudCompileUnavailable'), 'warning');
                 break;
             case 'find-replace':
                 this.showFindReplace();
@@ -300,7 +553,7 @@
                 this.checkForUpdates();
                 break;
             case 'open-source-licenses':
-                this.showOpenSourceLicenses();
+                await this.showOpenSourceLicenses();
                 break;
             case 'open-file-history':
                 this.openFileHistory();
@@ -326,7 +579,7 @@
         await this.refreshAccountState();
 
         if (!window.electronAPI || this._accountIpcBound) {
-            return;
+        return;
         }
 
         this._accountIpcBound = true;
@@ -338,13 +591,13 @@
                 this.updateAccountMenu();
                 if (payload?.message) {
                     this.showMessage(payload.message, payload.loggedIn ? 'success' : 'info');
-                }
+            }
             });
         }
 
         if (typeof window.electronAPI.onIdeLoginError === 'function') {
             window.electronAPI.onIdeLoginError((payload) => {
-                const msg = payload?.message || (window.i18n ? window.i18n.t('message.loginFailed') : '登录失败');
+                const msg = payload?.message || window.i18n.t('message.loginFailed');
                 this.showMessage(msg, 'error');
             });
         }
@@ -353,7 +606,7 @@
     async refreshAccountState() {
         if (!window.electronAPI || typeof window.electronAPI.getIdeLoginStatus !== 'function') {
             this.updateAccountMenu();
-            return;
+        return;
         }
         try {
             const status = await window.electronAPI.getIdeLoginStatus();
@@ -364,15 +617,15 @@
                 user: this.accountInfo?.username || ''
             });
         } catch (error) {
-            logWarn('获取登录状态失败:', error?.message || error);
+            logWarn('获取登录状态失败:', (error as Errorish)?.message || error);
         }
         this.updateAccountMenu();
     }
 
     updateAccountMenu() {
-        const loginItem = document.querySelector('.menu-dropdown-item[data-action="ide-login"]');
-        const accountItem = document.querySelector('.menu-dropdown-item[data-action="ide-account"]');
-        const logoutItem = document.querySelector('.menu-dropdown-item[data-action="ide-logout"]');
+        const loginItem = document.querySelector('.menu-dropdown-item[data-action="ide-login"]') as HTMLElement | null;
+        const accountItem = document.querySelector('.menu-dropdown-item[data-action="ide-account"]') as HTMLElement | null;
+        const logoutItem = document.querySelector('.menu-dropdown-item[data-action="ide-logout"]') as HTMLElement | null;
 
         try {
             if (window.sidebarManager && typeof window.sidebarManager.setCloudPanelVisible === 'function') {
@@ -387,18 +640,18 @@
         const username = this.accountInfo?.username || '';
 
         if (this.accountLoggedIn) {
-            loginItem.style.display = 'none';
-            accountItem.style.display = '';
-            logoutItem.style.display = '';
+            (loginItem as HTMLElement).style.display = 'none';
+            (accountItem as HTMLElement).style.display = '';
+            (logoutItem as HTMLElement).style.display = '';
             if (accountLabel) {
-                accountLabel.textContent = username ? `我的账户(${username})` : '我的账户';
+                accountLabel.textContent = username ? window.i18n.t('menu.accountWithName', { username }) : window.i18n.t('menu.myAccount');
             }
         } else {
-            loginItem.style.display = '';
-            accountItem.style.display = 'none';
-            logoutItem.style.display = 'none';
+            (loginItem as HTMLElement).style.display = '';
+            (accountItem as HTMLElement).style.display = 'none';
+            (logoutItem as HTMLElement).style.display = 'none';
             if (accountLabel) {
-                accountLabel.textContent = '我的账户';
+                accountLabel.textContent = window.i18n.t('menu.myAccount');
             }
         }
 
@@ -406,59 +659,52 @@
 
     async startIdeLogin() {
         if (!window.electronAPI || typeof window.electronAPI.startIdeLogin !== 'function') {
-            this.showMessage(this.t('message.loginUnavailable', null, 'Login is unavailable'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('message.loginUnavailable'), 'error');
+        return;
         }
         try {
             const result = await window.electronAPI.startIdeLogin();
             if (result && result.ok === false && result.message) {
                 this.showMessage(result.message, 'warning');
             } else {
-                this.showMessage(this.t('message.browserOpenedForLogin', null, 'Browser opened. Please complete sign-in.'), 'info');
+                this.showMessage(window.i18n?.t?.('message.browserOpenedForLogin'), 'info');
             }
         } catch (error) {
-            this.showMessage(this.t('message.loginStartFailed', { error: error?.message || error }, `Failed to start login: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.loginStartFailed', { error: (error as Errorish)?.message || error }), 'error');
         }
     }
 
     openIdeAccount() {
-        if (!this.accountLoggedIn) {
-            this.showMessage(this.t('message.loginRequired', null, 'Please log in first'), 'warning');
-            return;
-        }
-        if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
-            window.electronAPI.openExternal('https://auth.mywwzh.top/account');
-        }
+        // OICPP-Plus: 云服务已禁用（登录不可用），不跳转原版账户中心
+        this.showMessage(window.i18n?.t?.('message.loginRequired'), 'warning');
     }
 
     async logoutIdeAccount() {
         if (!window.electronAPI || typeof window.electronAPI.logoutIdeAccount !== 'function') {
-            this.showMessage(this.t('message.logoutUnavailable', null, 'Logout is unavailable'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('message.logoutUnavailable'), 'error');
+        return;
         }
         try {
             const result = await window.electronAPI.logoutIdeAccount();
             if (result && result.ok) {
-                this.showMessage(this.t('message.logoutSuccess', null, 'Logged out'), 'success');
+                this.showMessage(window.i18n?.t?.('message.logoutSuccess'), 'success');
             }
         } catch (error) {
-            this.showMessage(this.t('message.logoutFailed', { error: error?.message || error }, `Failed to log out: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.logoutFailed', { error: (error as Errorish)?.message || error }), 'error');
         } finally {
-            if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
-                try { window.electronAPI.openExternal('https://auth.mywwzh.top/logout'); } catch (_) { }
-            }
+            // OICPP-Plus: 云服务已禁用（无独立认证服务），不跳转原版退出页
         }
     }
 
     updatePlatformSpecificMenu() {
         try {
             const isWindows = !!(window.process && window.process.platform === 'win32');
-            const cloudMenuItem = document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]');
+            const cloudMenuItem = document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]') as HTMLElement | null;
             if (cloudMenuItem) {
-                cloudMenuItem.style.display = isWindows ? '' : 'none';
+                (cloudMenuItem as HTMLElement).style.display = isWindows ? '' : 'none';
                 if (!isWindows) {
-                    cloudMenuItem.setAttribute('title', '云编译目前仅在 Windows 版本提供');
-                }
+                    cloudMenuItem.setAttribute('title', window.i18n.t('message.cloudCompileWindowsOnly'));
+            }
             }
         } catch (error) {
             logWarn('更新平台特定菜单失败:', error);
@@ -470,7 +716,7 @@
     updateCheckUpdateMenuItem(state = this.updateDownloadState) {
         const menuItem = document.querySelector('.menu-dropdown-item[data-action="check-update"]');
         if (!menuItem) {
-            return;
+        return;
         }
 
         const labelNode = menuItem.querySelector('span') || menuItem;
@@ -483,24 +729,24 @@
         const version = state?.version ? ` (${state.version})` : '';
 
         if (pendingInstall) {
-            labelNode.textContent = this.t('menu.updatePendingInstall', null, 'Update ready to install');
+            labelNode.textContent = window.i18n?.t?.('menu.updatePendingInstall');
         } else if (autoChecking) {
-            labelNode.textContent = this.t('menu.updateAutoChecking', null, 'Checking for updates...');
+            labelNode.textContent = window.i18n?.t?.('menu.updateAutoChecking');
         } else {
             labelNode.textContent = downloading
-                ? this.t('menu.updateDownloading', { progress }, `Downloading update ${progress}%`)
-                : this.t('menu.checkUpdate', null, 'Check for Updates');
+                ? window.i18n?.t?.('menu.updateDownloading', { progress })
+                : window.i18n?.t?.('menu.checkUpdate');
         }
 
         if (autoChecking || downloading || pendingInstall) {
             menuItem.classList.add('disabled');
             menuItem.setAttribute('aria-disabled', 'true');
             if (pendingInstall) {
-                menuItem.setAttribute('title', this.t('message.updatePendingInstall', null, 'An update is ready to install. Quit OICPP to finish installation.'));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updatePendingInstall'));
             } else if (autoChecking) {
-                menuItem.setAttribute('title', this.t('message.updateAutoChecking', null, 'The startup update check is in progress.'));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updateAutoChecking'));
             } else {
-                menuItem.setAttribute('title', this.t('message.updateDownloading', { version, progress }, `Downloading update${version}, ${progress}%`));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updateDownloading', { version, progress }));
             }
         } else {
             menuItem.classList.remove('disabled');
@@ -509,7 +755,7 @@
         }
     }
 
-    applyUpdateDownloadStatus(payload = {}) {
+    applyUpdateDownloadStatus(payload: { progress?: number | string; autoChecking?: boolean; downloading?: boolean; version?: string; pendingInstall?: boolean; pendingVersion?: string } = {}) {
         const progressRaw = Number(payload.progress);
         const progress = Number.isFinite(progressRaw)
             ? Math.max(0, Math.min(100, Math.round(progressRaw)))
@@ -530,7 +776,7 @@
     setupIPC() {
         if (!window.electronAPI) {
             logWarn('Electron IPC 不可用');
-            return;
+        return;
         }
         try {
             window.electronAPI.onMenuSaveFile(() => {
@@ -593,12 +839,12 @@
                 else this.startDebug();
             });
 
-            window.electronAPI.onSettingsChanged((_event, settingsType, newSettings) => {
+            window.electronAPI.onSettingsChanged((_event, settingsType, newSettings: SettingsPatch) => {
                 logInfo(`收到设置变化通知: ${settingsType}`, newSettings);
-                this.applySettings(settingsType, newSettings);
+                this.applySettings(settingsType as string | null, newSettings);
                 if (newSettings && Object.prototype.hasOwnProperty.call(newSettings, 'codeSnippets')) {
                     try { window.monacoEditorManager?.refreshUserSnippets?.(); } catch (_) {}
-                }
+            }
             });
             
             if (window.electronAPI.onThemeChanged) {
@@ -630,33 +876,39 @@
                     this.openFile(data.filePath, data.content);
                 } else if (typeof data === 'string') {
                     this.openFile(data, '');
-                }
+            }
             });
 
             window.electronAPI.onFileSaved((filePath, error) => {
+                // 只打一行：此前这里与 onFileSaved 各打一行，一次正常保存产生 2 行日志，
+                // 按行数统计「重复保存」时会把正常情况误判成重复
                 try { logInfo('[渲染进程] 收到 file-saved:', { filePath, error }); } catch (_) {}
                 if (error) {
-                    this.showMessage(this.t('message.saveFailed', { error }, `Save failed: ${error}`), 'error');
+                    this.showMessage(window.i18n?.t?.('message.saveFailed', { error }), 'error');
+            }
+                if (typeof filePath === 'string') {
+                    this.onFileSaved(filePath);
                 }
-                this.onFileSaved(filePath);
             });
 
             window.electronAPI.onFolderOpened((folderPath) => {
-                this.onFolderOpened(folderPath);
+                if (typeof folderPath === 'string') {
+                    this.onFolderOpened(folderPath);
+                }
             });
 
-            window.electronAPI.onFileOpenedFromArgs((data) => {
+            window.electronAPI.onFileOpenedFromArgs((data: { path?: string; fileName?: string; content?: string; viewType?: string } | null) => {
                 logInfo('收到命令行文件打开请求:', data);
                 if (!data || !data.path) {
                     return;
-                }
+            }
 
                 const fileName = data.fileName || (data.path.split(/[\\/]/).pop() || 'untitled.cpp');
                 const content = data.content ?? '';
-                const openOptions = { filePath: data.path };
+                const openOptions: { filePath: string; viewType?: string } = { filePath: data.path };
                 if (data.viewType) {
                     openOptions.viewType = data.viewType;
-                }
+            }
 
                 const tryOpenWithTabManager = () => {
                     if (window.tabManager && typeof window.tabManager.openFile === 'function') {
@@ -668,7 +920,7 @@
 
                 if (tryOpenWithTabManager()) {
                     return;
-                }
+            }
 
                 let attempts = 0;
                 const maxAttempts = 25;
@@ -688,13 +940,16 @@
             });
 
             window.electronAPI.onApplySettingsPreview((previewSettings) => {
-                this.applySettings('editor', previewSettings);
+                this.applySettings('editor', previewSettings as SettingsPatch);
             });
 
-            window.electronAPI.onSettingsApplied((finalSettings) => {;
-                this.applySettings('editor', finalSettings);
+            window.electronAPI.onSettingsApplied((finalSettings, changedKeys) => {;
+                this.applySettings('editor', finalSettings as SettingsPatch);
                 this.forceRefreshEditor(); // 强制刷新以应用字体等
-                try { window.monacoEditorManager?.refreshUserSnippets?.(); } catch (_) {}
+                // 只有本次改动包含 codeSnippets 才重载；无 changedKeys（如云同步恢复）时保持旧行为
+                if (!Array.isArray(changedKeys) || changedKeys.includes('codeSnippets')) {
+                    try { window.monacoEditorManager?.refreshUserSnippets?.(); } catch (_) {}
+                }
             });
 
             if (typeof window.electronAPI.onUpdateDownloadStatus === 'function') {
@@ -706,7 +961,7 @@
             if (typeof window.electronAPI.getUpdateDownloadStatus === 'function') {
                 window.electronAPI.getUpdateDownloadStatus()
                     .then((payload) => this.applyUpdateDownloadStatus(payload || {}))
-                    .catch((error) => logWarn('读取更新下载状态失败:', error?.message || error));
+                    .catch((error) => logWarn('读取更新下载状态失败:', (error as Errorish)?.message || error));
             }
 
             if (typeof window.electronAPI.onAppToast === 'function') {
@@ -736,7 +991,7 @@
             logInfo('[启动] 渲染进程拉取自动恢复工作区:', folderPath);
             this.onFolderOpened(folderPath);
         } catch (error) {
-            logWarn('启动时恢复工作区失败:', error?.message || error);
+            logWarn('启动时恢复工作区失败:', (error as Errorish)?.message || error);
         }
     }
 
@@ -749,7 +1004,7 @@
                     localStorage.removeItem('oicpp-settings');
                 } else {
                     logWarn('主进程返回空设置，使用默认设置');
-                }
+            }
             } else {
                 logWarn('electronAPI不可用，使用默认设置');
             }
@@ -768,7 +1023,7 @@
         }
     }
 
-    applySettings(settingsType = null, newSettings = null) {
+    applySettings(settingsType: string | null = null, newSettings: SettingsPatch | null = null) {
         const previousCompilerPath = this.settings.compilerPath || '';
         if (newSettings) {
             this.settings = { ...this.settings, ...newSettings };
@@ -805,12 +1060,12 @@
             try {
                 const restartPromise = window.monacoEditorManager?.restartLspWithCompiler?.(currentCompilerPath);
                 if (restartPromise && typeof restartPromise.catch === 'function') {
-                    restartPromise.catch((err) => {
-                        logWarn('[LSP] 触发重启失败:', err?.message || err);
+                    restartPromise.catch((err: unknown) => {
+                        logWarn('[LSP] 触发重启失败:', (err as Errorish)?.message || err);
                     });
-                }
+            }
             } catch (err) {
-                logWarn('[LSP] 触发重启失败:', err?.message || err);
+                logWarn('[LSP] 触发重启失败:', (err as Errorish)?.message || err);
             }
         }
 
@@ -835,60 +1090,34 @@
         }
     }
 
-    getDefaultKeybindings() {
-        const compileAndRunShortcut = this.isMacPlatform() ? 'Ctrl+F11' : 'F11';
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: this.isMacPlatform() ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+    getDefaultKeybindings(): KeybindingMap {
+        // 表在 src/utils/keybindings.ts。这一份以前是第四遍抄写（0291982 修 #235 时加的），
+        // 缺它时按「没有默认键」处理：菜单提示会是空的，可见但不可致命，与旧 catch 同向。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
 
-    resolveShortcutLabel(keybindingKey) {
-        const defaults = this.getDefaultKeybindings();
-        const fromSettings = this.settings?.keybindings?.[keybindingKey];
-        if (typeof fromSettings === 'string' && fromSettings.trim()) {
-            return fromSettings.trim();
-        }
-        return defaults[keybindingKey] || '';
+    // 一个 .menu-shortcut 的文本从哪来，由 span 自己声明：
+    //   data-keybinding → 可在设置页改的动作，值走 settings.keybindings，缺省回默认表；
+    //   data-accel      → 不可改的动作，值走 MENU_ACCELERATORS（主进程菜单模板用的是同一份）。
+    // 以前这里是一份手写 7 项映射表，13 个 span 只覆盖 7 个：剩下 6 个（恰好全是主修饰键那几个）
+    // 永远是 HTML 里抄的字面量，于是 #235 那类「改了键、或换了平台，提示不动」只被修掉了一半。
+    // 屏幕上那行字 = 存的 combo 经**平台格式化**之后的结果；存的值本身不动（改键要用规范写法）。
+    // 语义要点（见 keybindings.ts 头部）：存的 `Ctrl` 是主修饰键，所以 mac 上必须显示 ⌘；
+    // 显示顺序按 Apple HIG（⌃⌥⇧⌘，Command 在最后），不是 VS Code 那条（⌃⇧⌥⌘）。
+    // 「用户改过的键优先、否则回默认表」这条规则现在只在 rawComboFor 里有一份 ——
+    // 这里以前自己写了一遍，那是同一件事的第五处表述。
+    resolveShortcutLabel(source: Element) {
+        const keybindingKey = source.getAttribute('data-keybinding') || '';
+        const accelId = source.getAttribute('data-accel') || '';
+        const spec = keybindingKey ? `keybinding:${keybindingKey}`
+            : (accelId ? `accel:${accelId}` : '');
+        if (!spec) return '';
+        return window.oicppKeybindings?.formattedComboFor(spec) ?? '';
     }
 
     updateMenuShortcutHints() {
-        const mappings = [
-            { action: 'cloud-compile', key: 'cloudCompile' },
-            { action: 'open-terminal', key: 'openTerminal' },
-            { action: 'format-code', key: 'formatCode' },
-            { action: 'compile', key: 'compileCode' },
-            { action: 'run', key: 'runCode' },
-            { action: 'compile-run', key: 'compileAndRun' },
-            { action: 'debug', key: 'toggleDebug' }
-        ];
-
-        mappings.forEach((item) => {
-            const node = document.querySelector(`.menu-dropdown-item[data-action="${item.action}"] .menu-shortcut`);
-            if (!node) {
-                return;
-            }
-            node.textContent = this.resolveShortcutLabel(item.key);
+        document.querySelectorAll('.menu-dropdown-item .menu-shortcut').forEach((node) => {
+            node.textContent = this.resolveShortcutLabel(node);
         });
     }
     
@@ -921,7 +1150,7 @@
 
     scheduleAutoSave() {
         if (!this.autoSaveController?.enabled) {
-            return;
+        return;
         }
 
         if (this.autoSaveController.timerId) {
@@ -933,12 +1162,12 @@
 
     async handleAutoSaveTick() {
         if (!this.autoSaveController?.enabled) {
-            return;
+        return;
         }
 
         if (this.autoSaveController.running) {
             this.scheduleAutoSave();
-            return;
+        return;
         }
 
         this.autoSaveController.running = true;
@@ -997,11 +1226,11 @@
         }
     }
 
-    applyTheme(theme) {
+    applyTheme(theme: unknown) {
         const resolvedTheme = typeof theme === 'string' && theme.trim().length > 0 ? theme.trim() : 'dark';
         const body = document.body;
         if (!body) {
-            return;
+        return;
         }
 
         const root = document.documentElement;
@@ -1012,7 +1241,7 @@
 
         body.setAttribute('data-theme', resolvedTheme);
         body.setAttribute('data-editor-theme', tone);
-        body.style.setProperty('color-scheme', tone);
+        (body as HTMLElement).style.setProperty('color-scheme', tone);
         root?.setAttribute('data-theme', resolvedTheme);
         root?.setAttribute('data-editor-theme', tone);
 
@@ -1044,7 +1273,7 @@
         const body = document.body;
         const root = document.documentElement;
         if (!body) {
-            return;
+        return;
         }
         body.classList.toggle('glass-effect-enabled', enabled);
         root?.classList.toggle('glass-effect-enabled', enabled);
@@ -1055,7 +1284,7 @@
     applyBackgroundImageSetting() {
         const body = document.body;
         if (!body) {
-            return;
+        return;
         }
 
         const rawBackgroundImage = typeof this.settings?.backgroundImage === 'string'
@@ -1065,13 +1294,13 @@
         const styleElementId = 'custom-bg-style';
 
         if (!rawBackgroundImage) {
-            body.style.backgroundImage = '';
+            (body as HTMLElement).style.backgroundImage = '';
             body.classList.remove('has-custom-bg');
             const styleEl = document.getElementById(styleElementId);
             if (styleEl) {
                 styleEl.remove();
             }
-            return;
+        return;
         }
 
         let bgPath = rawBackgroundImage.replace(/\\/g, '/');
@@ -1083,10 +1312,10 @@
             }
         }
 
-        body.style.backgroundImage = `url('${bgPath}')`;
-        body.style.backgroundSize = 'cover';
-        body.style.backgroundRepeat = 'no-repeat';
-        body.style.backgroundPosition = 'center';
+        (body as HTMLElement).style.backgroundImage = `url('${bgPath}')`;
+        (body as HTMLElement).style.backgroundSize = 'cover';
+        (body as HTMLElement).style.backgroundRepeat = 'no-repeat';
+        (body as HTMLElement).style.backgroundPosition = 'center';
         body.classList.add('has-custom-bg');
 
         let styleEl = document.getElementById(styleElementId);
@@ -1179,7 +1408,7 @@
         `;
     }
     
-    notifyThemeChange(theme) {
+    notifyThemeChange(theme: unknown) {
         logInfo('通知主题变更:', theme);
     }
 
@@ -1210,9 +1439,10 @@
         componentsToUpdate.forEach(selector => {
             const elements = document.querySelectorAll(selector);
             elements.forEach(element => {
-                element.style.display = 'none';
+                if (!(element instanceof HTMLElement)) return;
+                (element as HTMLElement).style.display = 'none';
                 void element.offsetHeight;
-                element.style.display = '';
+                (element as HTMLElement).style.display = '';
             });
         });
     }
@@ -1252,7 +1482,7 @@
         this.updateEditorCSSVariables(editorSettings);
     }
     
-    updateEditorCSSVariables(settings) {
+    updateEditorCSSVariables(settings: { font?: string; fontSize?: number }) {
         const root = document.documentElement;
         
         if (settings.font) {
@@ -1273,29 +1503,8 @@
         }
     }
 
-    clearPendingCtrlKFolder() {
-        if (this._pendingCtrlKFolderTimer !== null) {
-            clearTimeout(this._pendingCtrlKFolderTimer);
-            this._pendingCtrlKFolderTimer = null;
-        }
-        this._ctrlKChordPending = false;
-    }
-
-    scheduleCtrlKFolderOpen() {
-        this.clearPendingCtrlKFolder();
-        this._ctrlKChordPending = true;
-        this._pendingCtrlKFolderTimer = setTimeout(() => {
-            this._pendingCtrlKFolderTimer = null;
-            this._ctrlKChordPending = false;
-            this.openFolder();
-        }, 600);
-    }
-
-    handleKeyDown(e) {
+    handleKeyDown(e: AppKeyboardEvent) {
         const key = (e.key || '').toLowerCase();
-        if (this._ctrlKChordPending && !((e.ctrlKey || e.metaKey) && !e.altKey && key === 'k')) {
-            this.clearPendingCtrlKFolder();
-        }
         const activeElement = document.activeElement;
         const isInTerminal = !!(
             e.target?.closest?.('#integrated-terminal-panel') ||
@@ -1307,7 +1516,7 @@
                           e.target.closest('.monaco-editor-container') ||
                           e.target.classList.contains('monaco-editor') ||
                           e.target.classList.contains('monaco-editor-container');
-        const matches = (action) => {
+        const matches = (action: string) => {
             return this.editorManager && typeof this.editorManager.doesEventMatchShortcut === 'function'
                 ? this.editorManager.doesEventMatchShortcut(e, action)
                 : false;
@@ -1315,7 +1524,7 @@
         const isInputLike = this.editorManager && typeof this.editorManager.isInputLikeTarget === 'function'
             ? this.editorManager.isInputLikeTarget(e.target)
             : false;
-        const handle = (fn) => {
+        const handle = (fn: () => void) => {
             e.preventDefault();
             e.stopPropagation();
             fn();
@@ -1323,32 +1532,16 @@
 
         if (isInTerminal) {
             // Keep terminal-native key handling (history, completion, readline shortcuts).
-            return;
+        return;
         }
-
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && key === 'i') {
-            e.preventDefault();
-            this.openBuiltinBrowser();
-            return;
-        }
-
+        
         if (isInEditor) {
             if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-                if (e.shiftKey && key === 's') {
-                    e.preventDefault();
-                    this.saveFileAs();
-                    return;
-                }
                 if (e.shiftKey && key === 'n') {
                     e.preventDefault();
                     this.createNewTempFile();
                     return;
-                }
-                if (!e.shiftKey && key === 'k') {
-                    // Ctrl+K 先交给 Monaco 识别组合键；没有后续按键时再打开文件夹。
-                    this.scheduleCtrlKFolderOpen();
-                    return;
-                }
+            }
                 switch (key) {
                     case 'n':
                         e.preventDefault();
@@ -1358,7 +1551,10 @@
                         e.preventDefault();
                         this.saveCurrentFile();
                         return;
-                }
+                    // Ctrl+K 在 Monaco 里是按键序列前缀（Ctrl+K Ctrl+C 切换注释），
+                    // 编辑器内不能抢：抢了会 preventDefault，Monaco 永远收不到第二个按键。
+                    // 编辑器外的 Ctrl+K 仍由下面的全局分支处理（打开文件夹）。
+            }
             }
 
             if (matches('toggleDebug')) return handle(() => { this.isDebugging ? this.handleDebugContinue() : this.startDebug(); });
@@ -1370,8 +1566,8 @@
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
 
@@ -1380,7 +1576,7 @@
                 this.formatCode();
                 return;
             }
-            return;
+        return;
         }
         
         if (e.ctrlKey && key === 'z') {
@@ -1401,15 +1597,10 @@
             };
             logInfo(`全局Ctrl+Z事件被检测到，目标元素:`, targetInfo);
             logInfo(`当前活跃编辑器:`, currentEditorInfo);
-            logInfo(`当前标签页ID:`, this.editorManager ? this.editorManager.currentTabId : '无');
+            logInfo(`当前标签页ID:`, window.tabManager?.activeTabKey || '无');
         }
         
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
-            if (e.shiftKey && key === 's') {
-                e.preventDefault();
-                this.saveFileAs();
-                return;
-            }
             if (e.shiftKey && key === 'n') {
                 e.preventDefault();
                 this.createNewTempFile();
@@ -1441,23 +1632,23 @@
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
         }
     }
 
-    async handleFileDrop(e) {
+    async handleFileDrop(e: DragEvent | null) {
         const types = Array.from(e?.dataTransfer?.types || []);
         const isTabDrag = types.includes('application/oicpp-tab') || Boolean(window.tabManager?.tabDragInProgress);
         if (isTabDrag) {
-            return;
+        return;
         }
 
-        const files = Array.from(e?.dataTransfer?.files || []);
+        const files = Array.from(e?.dataTransfer?.files || []) as File[];
         if (!files.length) {
-            return;
+        return;
         }
 
         for (const file of files) {
@@ -1466,16 +1657,16 @@
             } catch (error) {
                 logError('打开拖拽文件失败:', error);
                 if (window.dialogManager?.showError) {
-                    const displayName = file?.name || '未知文件';
-                    window.dialogManager.showError(`无法打开 ${displayName}\n${error?.message || String(error)}`);
-                }
+                    const displayName = file?.name || window.i18n.t('panel.unknownFile');
+                    window.dialogManager.showError(window.i18n.t('message.openFileFailed', { name: displayName, error: (error as Errorish)?.message || String(error) }));
+            }
             }
         }
     }
 
-    async openDroppedFile(file, options = {}) {
+    async openDroppedFile(file: { name?: string; path?: string; text?: () => Promise<string> } | File | null, options: { filePath?: string | null; fileName?: string | null; base64Data?: string | null; groupId?: string | null } = {}) {
         if (!file && !options?.filePath) {
-            return;
+        return;
         }
 
 
@@ -1501,7 +1692,7 @@
 
         if (!isPdf && !isTextCandidate) {
             logWarn('拖入的文件类型暂不支持直接打开:', fileName);
-            return;
+        return;
         }
 
         const base64Override = typeof options?.base64Data === 'string' && options.base64Data.trim()
@@ -1516,10 +1707,10 @@
             ? options.filePath.trim()
             : null;
         const normalizedOverridePath = overrideRawPath ? this.normalizeFilePathCandidate(overrideRawPath) : null;
-        const fileRawPath = typeof file?.path === 'string' && file.path.trim() ? file.path.trim() : null;
+        const fileRawPath = file && 'path' in file && typeof file.path === 'string' && file.path.trim() ? file.path.trim() : null;
         const normalizedFilePath = fileRawPath ? this.normalizeFilePathCandidate(fileRawPath) : null;
 
-        const candidatePathSet = new Set();
+        const candidatePathSet = new Set<string>();
         if (normalizedOverridePath) {
             candidatePathSet.add(normalizedOverridePath);
         }
@@ -1546,7 +1737,7 @@
 
                 if (!pdfPath && !base64Data && base64Override) {
                     base64Data = base64Override;
-                }
+            }
 
                 if (!pdfPath && !base64Data && fallbackPaths.length > 0 && window.electronAPI?.readFileBuffer) {
                     for (const candidate of fallbackPaths) {
@@ -1555,7 +1746,7 @@
                         }
                         try {
                             const fetched = await window.electronAPI.readFileBuffer(candidate);
-                            const trimmed = typeof fetched === 'string' ? fetched.trim() : '';
+                            const trimmed = typeof fetched === 'string' ? (fetched as string).trim() : '';
                             if (trimmed) {
                                 base64Data = trimmed;
                                 const persisted = await this.tryPersistPdfToTemp(fileName, base64Data);
@@ -1570,7 +1761,7 @@
                             logWarn('通过主进程读取 PDF 数据失败:', error);
                         }
                     }
-                }
+            }
 
                 if (!pdfPath && base64Data) {
                     const persisted = await this.tryPersistPdfToTemp(fileName, base64Data);
@@ -1579,11 +1770,11 @@
                         isTempFile = Boolean(persisted.isTempFile);
                         base64Data = null;
                     }
-                }
+            }
 
                 if (!pdfPath && !base64Data) {
-                    throw new Error('无法获取 PDF 文件数据');
-                }
+                    throw new Error(window.i18n.t('pdfViewer.noData'));
+            }
 
                 await tabManager.openFile(fileName, '', false, {
                     filePath: pdfPath,
@@ -1603,7 +1794,7 @@
                 } catch (error) {
                     logWarn('通过文件路径读取拖拽内容失败，准备使用浏览器接口:', error);
                     content = null;
-                }
+            }
             }
 
             if (typeof content !== 'string' && file && typeof file.text === 'function') {
@@ -1615,7 +1806,7 @@
                 groupId: activeGroupId
             });
             logInfo('已打开拖拽的文件:', fileName);
-            return;
+        return;
         }
 
         if (file && typeof file.text === 'function') {
@@ -1634,14 +1825,14 @@
         }
     }
 
-    isSupportedTextFileExtension(ext) {
+    isSupportedTextFileExtension(ext: string) {
         if (!ext || !this.supportedDropTextExtensions) {
             return false;
         }
         return this.supportedDropTextExtensions.has(ext);
     }
 
-    async checkFileExistsSafe(filePath) {
+    async checkFileExistsSafe(filePath: string | null) {
         if (!filePath || !window.electronAPI?.checkFileExists) {
             return false;
         }
@@ -1657,7 +1848,7 @@
         }
     }
 
-    async ensurePdfFilePath(file, fileName, existingPath, base64Override = null) {
+    async ensurePdfFilePath(file: object | null, fileName: string, existingPath: string | null, base64Override: string | null = null) {
         if (existingPath) {
             const sanitized = this.normalizeFilePathCandidate(existingPath);
             return { filePath: sanitized || existingPath, isTempFile: false, base64Data: null };
@@ -1674,15 +1865,15 @@
             }
         }
 
-        if (!inlineBase64 && file) {
+        if (!inlineBase64 && file && 'arrayBuffer' in file && typeof file.arrayBuffer === 'function') {
             try {
-                inlineBase64 = await this.readFileAsBase64(file);
+                inlineBase64 = await this.readFileAsBase64(file as File | { arrayBuffer?: () => Promise<ArrayBuffer> });
                 if (inlineBase64) {
                     const persisted = await this.tryPersistPdfToTemp(fileName, inlineBase64);
                     if (persisted?.filePath) {
                         return { filePath: persisted.filePath, isTempFile: Boolean(persisted.isTempFile), base64Data: null };
                     }
-                }
+            }
             } catch (error) {
                 logWarn('获取拖拽 PDF 数据失败:', error);
             }
@@ -1695,7 +1886,7 @@
         return { filePath: existingPath || null, isTempFile: false, base64Data: null };
     }
 
-    async tryPersistPdfToTemp(fileName, base64Data) {
+    async tryPersistPdfToTemp(fileName: string, base64Data: string | null) {
         if (!window.electronAPI?.saveBinaryTempFile) {
             return null;
         }
@@ -1715,18 +1906,15 @@
         return null;
     }
 
-    arrayBufferToBase64(arrayBuffer) {
+    arrayBufferToBase64(arrayBuffer: ArrayBuffer | null | undefined) {
         try {
             if (!arrayBuffer) {
                 return '';
             }
-            if (typeof window.Buffer !== 'undefined') {
-                return window.Buffer.from(arrayBuffer).toString('base64');
-            }
             const bytes = new Uint8Array(arrayBuffer);
             let binary = '';
             for (let i = 0; i < bytes.length; i += 1) {
-                binary += String.fromCharCode(bytes[i]);
+                binary += String.fromCharCode(bytes[i] ?? 0);
             }
             return btoa(binary);
         } catch (error) {
@@ -1749,19 +1937,12 @@
     }
 
     isMacPlatform() {
-        if (this._isMacPlatform !== undefined) {
-            return this._isMacPlatform;
-        }
-        try {
-            const platform = (window.process?.platform || navigator?.platform || '').toLowerCase();
-            this._isMacPlatform = platform.includes('darwin') || platform.includes('mac');
-        } catch (_) {
-            this._isMacPlatform = false;
-        }
-        return this._isMacPlatform;
+        // 平台判定的单一来源（这一份嗅探来自 48b2065「适配 macOS」，同期还长出了另外三份）。
+        // 拿不到模块时按「不是 mac」处理，与旧实现的 catch 分支同向。
+        return window.oicppKeybindings?.isMacPlatform() ?? false;
     }
 
-    normalizeFilePathCandidate(candidate) {
+    normalizeFilePathCandidate(candidate: unknown) {
         if (candidate == null) {
             return '';
         }
@@ -1792,7 +1973,7 @@
                         pathname = pathname.slice(1);
                     }
                     normalized = pathname || '';
-                }
+            }
             } catch (error) {
                 logWarn('解析 file:// 路径失败，使用原始值', error);
             }
@@ -1802,7 +1983,7 @@
         return normalized;
     }
 
-    async readFileAsArrayBuffer(file) {
+    async readFileAsArrayBuffer(file: File | { arrayBuffer?: () => Promise<ArrayBuffer> } | null): Promise<ArrayBuffer | null> {
         if (!file) {
             return null;
         }
@@ -1818,9 +1999,9 @@
             try {
                 return await new Promise((resolve, reject) => {
                     const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
-                    reader.readAsArrayBuffer(file);
+                    reader.onload = () => resolve(reader.result as ArrayBuffer);
+                    reader.onerror = () => reject(reader.error || new Error(window.i18n.t('message.readFileFailed')));
+                    reader.readAsArrayBuffer(file as Blob);
                 });
             } catch (error) {
                 logWarn('FileReader 读取拖拽文件失败', error);
@@ -1830,14 +2011,14 @@
         return null;
     }
 
-    async readFileAsBase64(file) {
+    async readFileAsBase64(file: File | { arrayBuffer?: () => Promise<ArrayBuffer> } | null): Promise<string | null> {
         if (!file) {
             return '';
         }
         try {
-            if (typeof file.arrayBuffer === 'function' && typeof window.Buffer !== 'undefined') {
+            if (typeof file.arrayBuffer === 'function') {
                 const buffer = await file.arrayBuffer();
-                return window.Buffer.from(buffer).toString('base64');
+                return this.arrayBufferToBase64(buffer);
             }
         } catch (error) {
             logWarn('通过 arrayBuffer 转 Base64 失败，尝试使用 FileReader:', error);
@@ -1856,8 +2037,8 @@
                             resolve('');
                         }
                     };
-                    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
-                    reader.readAsDataURL(file);
+                    reader.onerror = () => reject(reader.error || new Error(window.i18n.t('message.readFileFailed')));
+                    reader.readAsDataURL(file as Blob);
                 });
             } catch (error) {
                 logWarn('通过 readAsDataURL 读取拖拽文件失败:', error);
@@ -1868,7 +2049,7 @@
         return this.arrayBufferToBase64(buffer);
     }
 
-    showContextMenu(e) {
+    showContextMenu(e: MouseEvent) {
         logInfo('显示右键菜单');
     }
 
@@ -1878,9 +2059,9 @@
         if (!fileExplorer || !fileExplorer.hasWorkspace) {
             logWarn('没有打开的工作区，无法创建新文件');
             if (window.dialogManager) {
-                window.dialogManager.showError('请先打开一个工作区文件夹');
+                window.dialogManager.showError(window.i18n.t('fileExplorer.openWorkspaceFirst'));
             }
-            return;
+        return;
         }
         
         if (fileExplorer.createNewFile) {
@@ -1888,14 +2069,14 @@
         } else {
             logError('文件管理器不可用，无法创建新文件');
             if (window.dialogManager) {
-                window.dialogManager.showError('文件管理器不可用，无法创建新文件');
+                window.dialogManager.showError(window.i18n.t('fileExplorer.fileManagerUnavailable'));
             }
         }
     }
 
     generateTempCppFileName() {
         const now = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
+        const pad = (n: number) => String(n).padStart(2, '0');
         const datePart = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
         const timePart = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
         return `temp_${datePart}_${timePart}_${Date.now().toString().slice(-4)}.cpp`;
@@ -1903,8 +2084,8 @@
 
     async createNewTempFile() {
         if (!window.electronAPI?.saveTempFile) {
-            this.showMessage(this.t('message.tempFileUnavailable', null, 'Temporary files are unavailable'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('message.tempFileUnavailable'), 'error');
+        return;
         }
 
         try {
@@ -1915,13 +2096,13 @@
                     content = allSettings.cppTemplate.endsWith('\n')
                         ? allSettings.cppTemplate
                         : `${allSettings.cppTemplate}\n`;
-                }
+            }
             }
 
             const fileName = this.generateTempCppFileName();
             const tempPath = await window.electronAPI.saveTempFile(fileName, content);
             if (!tempPath || typeof tempPath !== 'string') {
-                throw new Error('主进程未返回临时文件路径');
+                throw new Error(window.i18n.t('message.noTempFilePath'));
             }
 
             if (window.tabManager && typeof window.tabManager.openFile === 'function') {
@@ -1933,14 +2114,14 @@
                 this.editorManager.openFile(fileName, content);
             }
 
-            this.showMessage(this.t('message.tempFileCreated', null, 'Temporary file created. It will be deleted when the IDE exits.'), 'success');
+            this.showMessage(window.i18n?.t?.('message.tempFileCreated'), 'success');
         } catch (error) {
             logError('新建临时文件失败:', error);
-            this.showMessage(this.t('message.tempFileCreateFailed', { error: error?.message || error }, `Failed to create temporary file: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.tempFileCreateFailed', { error: (error as Errorish)?.message || error }), 'error');
         }
     }
 
-    openFile(filePath, content) {
+    openFile(filePath?: string, content?: string) {
         if (typeof filePath === 'string' && typeof content === 'string') {
             try { logInfo('[渲染进程] 直接打开指定文件内容（不弹窗）:', { filePath, contentBytes: content.length }); } catch (_) {}
             const fileName = (filePath.split(/[\\\/]/).pop()) || filePath;
@@ -1951,7 +2132,7 @@
             } else {
                 logWarn('没有可用的编辑器管理器，无法打开文件');
             }
-            return;
+        return;
         }
 
         if (window.electronAPI) {
@@ -1961,40 +2142,42 @@
             input.type = 'file';
             input.accept = '.cpp,.c,.h,.hpp,.cc,.cxx,.txt,.in,.out,.ans,.py';
             input.onchange = (e) => {
-                const file = e.target.files[0];
+                const file = (e.target as HTMLInputElement).files?.[0];
                 if (file) {
                     const reader = new FileReader();
                     reader.onload = (event) => {
                         if (this.editorManager) {
-                            this.editorManager.openFile(file.name, event.target.result);
+                            const content = typeof event.target?.result === 'string' ? event.target.result : '';
+                            this.editorManager.openFile(file.name, content);
                         }
                     };
                     reader.readAsText(file);
-                }
+            }
             };
             input.click();
         }
     }
 
-    openFolder() {
-    const isLinux = (window.process && window.process.platform === 'linux');
-    if (isLinux && window.folderPicker) {
-            window.folderPicker.show({ startPath: this.settings.lastOpen || '/' }).then(sel => {
-                if (sel) {
-                    if (window.electronAPI) {
-            window.electronAPI.openRecentFile ? window.electronAPI.openRecentFile(sel) : this.onFolderOpened(sel);
-                    } else {
-                        this.onFolderOpened(sel);
-                    }
-                }
-            });
+    async openFolder() {
+        const isLinux = window.process && window.process.platform === 'linux';
+        if (isLinux && window.folderPicker) {
+            function folderPickerShow(this: OICPPApp): Promise<string | null> {
+            return (window.folderPicker as { show: (opts?: { startPath?: string }) => Promise<string | null> }).show({ startPath: this.settings.lastOpen || '/' });
+        }
+        const sel = await folderPickerShow.call(this);
+            if (!sel) return;
+            if (window.electronAPI) {
+                window.electronAPI.openRecentFile ? window.electronAPI.openRecentFile(sel) : this.onFolderOpened(sel);
+            } else {
+                this.onFolderOpened(sel);
+            }
             return;
         }
         if (window.electronAPI) return window.electronAPI.openFolder();
-        alert('打开文件夹功能需要在 Electron 环境中运行');
+        this.showMessage(window.i18n.t('message.openFolderElectronRequired'), 'error');
     }
 
-    setWorkspace(path) {
+    setWorkspace(path: string) {
         logInfo('设置工作区:', path);
         if (window.sidebarManager) {
             const fileExplorer = window.sidebarManager.getPanelManager('files');
@@ -2031,24 +2214,24 @@
         }
     }
 
-    isCloudFilePath(filePath) {
+    isCloudFilePath(filePath: unknown) {
         if (typeof filePath !== 'string') return false;
         return /^cloud:/i.test(filePath);
     }
 
-    ensureLocalFileForFeature(featureLabel = '该功能') {
+    ensureLocalFileForFeature(featureLabel = window.i18n.t('message.defaultFeature')) {
         const filePath = this.getActiveFilePath();
         if (this.isCloudFilePath(filePath)) {
-            this.showMessage(this.t('message.cloudFileLocalOnly', { feature: featureLabel }, `Cloud files support only basic editing and manual saving. Download the file locally before using ${featureLabel}.`), 'warning');
+            this.showMessage(window.i18n?.t?.('message.cloudFileLocalOnly', { feature: featureLabel }), 'warning');
             return false;
         }
         return true;
     }
 
-    async openIntegratedTerminal(options = {}) {
+    async openIntegratedTerminal(options: { forceCreate?: boolean } = {}) {
         if (!this.terminalPanel) {
-            this.showMessage(this.t('message.terminalUninitialized', null, 'The integrated terminal is not initialized'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('message.terminalUninitialized'), 'error');
+        return;
         }
         return await this.terminalPanel.open({
             createIfNone: true,
@@ -2056,21 +2239,22 @@
         });
     }
 
-    async openIntegratedTerminalAndRunExecutable(executablePath, options = {}) {
+    // options 整包转给 runExecutableInNewTerminal，所以形参必须与它的 workingDirectory 对齐（原来抄的是 openIntegratedTerminal 那组，全被吞掉）
+    async openIntegratedTerminalAndRunExecutable(executablePath: string, options: { workingDirectory?: string } = {}) {
         if (!this.terminalPanel) {
-            throw new Error('内置终端组件未初始化');
+            throw new Error(window.i18n.t('message.terminalUninitialized'));
         }
         return this.terminalPanel.runExecutableInNewTerminal(executablePath, options);
     }
 
-    bindDebugTerminalBridge(terminalId) {
+    bindDebugTerminalBridge(terminalId: string | null) {
         if (!this.terminalPanel || !terminalId || typeof require === 'undefined') {
             return false;
         }
 
         try {
             const { ipcRenderer } = require('electron');
-            const ok = this.terminalPanel.setInputBridge(terminalId, (data) => {
+            const ok = this.terminalPanel.setInputBridge(terminalId, (data: string) => {
                 ipcRenderer.send('debug-send-input', data);
             });
             if (!ok) {
@@ -2088,7 +2272,7 @@
         }
     }
 
-    sanitizeDebugTerminalOutput(data) {
+    sanitizeDebugTerminalOutput(data: unknown) {
         let text = String(data ?? '');
         if (!text) {
             return '';
@@ -2135,7 +2319,7 @@
             try {
                 if (window.electronAPI && typeof window.electronAPI.writeTerminal === 'function') {
                     window.electronAPI.writeTerminal(terminalId, '\n');
-                }
+            }
             } catch (_) { }
             // 同时直接写入 xterm.js 显示层，确保用户能看到换行
             try {
@@ -2148,14 +2332,14 @@
         this._debugSessionTerminalId = null;
     }
 
-    appendDebugTerminalOutput(data) {
+    appendDebugTerminalOutput(data: unknown) {
         if (!this.terminalPanel) {
-            return;
+        return;
         }
 
         const text = this.sanitizeDebugTerminalOutput(data);
         if (!text) {
-            return;
+        return;
         }
 
         let targetTerminalId = this._debugTerminalId;
@@ -2163,7 +2347,7 @@
             targetTerminalId = this.terminalPanel.activeId;
         }
         if (!targetTerminalId) {
-            return;
+        return;
         }
 
         this.terminalPanel.writeTerminalOutput(targetTerminalId, text);
@@ -2187,7 +2371,7 @@
         return !!(typeof process !== 'undefined' && (process.platform === 'linux' || process.platform === 'darwin'));
     }
 
-    async resolveTerminalTTYForDebug(terminalId) {
+    async resolveTerminalTTYForDebug(terminalId: string | null): Promise<string | null> {
         if (!this.isUnixLikePlatform()) {
             return null;
         }
@@ -2205,7 +2389,7 @@
                 if (tty) {
                     logInfo(`[调试] 已获取内置终端TTY: ${tty} (terminalId=${terminalId})`);
                     return tty;
-                }
+            }
             } catch (_) {
             }
 
@@ -2220,7 +2404,7 @@
         return null;
     }
 
-    async resolveLinuxTerminalTTYForDebug(terminalId) {
+    async resolveLinuxTerminalTTYForDebug(terminalId: string | null): Promise<string | null> {
         return this.resolveTerminalTTYForDebug(terminalId);
     }
 
@@ -2262,7 +2446,7 @@
                             try {
                                 const ed = this.editorManager.currentEditor;
                                 ed.filePath = newPath;
-                                ed.getFilePath = () => ed.filePath;
+                                ed.getFilePath = () => ed.filePath ?? null;
                             } catch (_) {}
                             try { window.tabManager?.updateTabPathBySource(null, newPath); } catch (_) {}
                             if (window.tabManager) {
@@ -2277,7 +2461,7 @@
                     } catch (e) {
                         logError('另存为失败:', e);
                     }
-                }
+            }
             } else {
                 const blob = new Blob([content], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
@@ -2330,7 +2514,7 @@
                     }
                 } catch (e) {
                     logError('保存失败:', e);
-                }
+            }
             } else {
                 const event = new CustomEvent('saveFile', {
                     detail: { 
@@ -2351,7 +2535,7 @@
         } else if (typeof require !== 'undefined') {
             try {
                 const { ipcRenderer } = require('electron');
-                ipcRenderer.invoke('open-compiler-settings').catch(error => {
+                ipcRenderer.invoke('open-compiler-settings').catch((error: unknown) => {
                     logError('打开编译器设置失败:', error);
                 });
             } catch (error) {
@@ -2371,29 +2555,31 @@
             logInfo('使用 electronAPI.openEditorSettings');
             window.electronAPI.openEditorSettings();
         } else if (typeof require !== 'undefined') {
-            logInfo('使用 ipcRenderer.send');
+            logInfo('使用 ipcRenderer.invoke');
             const { ipcRenderer } = require('electron');
-            ipcRenderer.send('open-editor-settings');
+            ipcRenderer.invoke('open-editor-settings').catch((error: unknown) => {
+                logError('打开编辑器设置失败:', error);
+            });
         } else {
             logWarn('无法打开编辑器设置：Electron API 不可用');
         }
     }
 
-    async saveCloudFileToServer(filePath, content) {
+    async saveCloudFileToServer(filePath: string | null, content: string | null) {
         try {
             const cloudPanel = window.sidebarManager?.getPanelManager?.('cloud') || window.cloudSyncPanel;
             if (!cloudPanel || typeof cloudPanel.saveCloudFile !== 'function') {
-                this.showMessage(this.t('message.cloudSyncNotReady', null, 'Cloud sync panel is not ready'), 'error');
+                this.showMessage(window.i18n?.t?.('message.cloudSyncNotReady'), 'error');
                 return false;
             }
             const cloudPath = String(filePath).replace(/^cloud:\/\//, '/').replace(/^cloud:/i, '/');
             const ok = await cloudPanel.saveCloudFile(cloudPath, content || '');
             if (ok) {
-                this.showMessage(this.t('message.cloudSaveSuccess', null, 'Saved to cloud'), 'success');
+                this.showMessage(window.i18n?.t?.('message.cloudSaveSuccess'), 'success');
             }
             return ok;
         } catch (error) {
-            this.showMessage(this.t('message.cloudSaveFailed', { error: error?.message || error }, `Failed to save to cloud: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.cloudSaveFailed', { error: (error as Errorish)?.message || error }), 'error');
             return false;
         }
     }
@@ -2414,7 +2600,7 @@
             window.electronAPI.openBackupSettings();
         } else if (typeof require !== 'undefined') {
             const { ipcRenderer } = require('electron');
-            ipcRenderer.invoke('open-backup-settings').catch(error => {
+            ipcRenderer.invoke('open-backup-settings').catch((error: unknown) => {
                 logError('打开设置备份设置失败:', error);
             });
         } else {
@@ -2426,8 +2612,8 @@
         return '';
     }
     startDebug() {
-        if (!this.ensureLocalFileForFeature('调试')) {
-            return;
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureDebug'))) {
+        return;
         }
         logInfo('开始调试');
         if (window.sidebarManager) {
@@ -2465,7 +2651,7 @@
         
         const waitingMessages = document.querySelectorAll('.waiting-debug-message');
         waitingMessages.forEach(msg => {
-            msg.textContent = '调试器就绪，等待开始调试...';
+            msg.textContent = window.i18n.t('debug.waitingDebug');
         });
         
         this.setupDebugEventListeners();
@@ -2474,7 +2660,7 @@
     setupDebugEventListeners() {
         if (window.debugUI) {
             logInfo('DebugUI已存在，跳过简化版事件监听器设置');
-            return;
+        return;
         }
         
         logInfo('设置简化版调试事件监听器');
@@ -2507,53 +2693,53 @@
     setupDebugIPC() {
         if (typeof require === 'undefined') {
             logWarn('Electron IPC 不可用');
-            return;
+        return;
         }
 
         try {
             const { ipcRenderer } = require('electron');
             
             if (!window.debugIPCInitialized) {
-            ipcRenderer.on('debug-started', (event, data) => {
+            ipcRenderer.on('debug-started', (event: unknown, data: DebugStartedPayload) => {
                 logInfo('[前端] 收到debug-started事件:', data);
                 this.onDebugStarted(data);
             });
-            ipcRenderer.on('debug-stopped', (event, data) => {
+            ipcRenderer.on('debug-stopped', (event: unknown, data: DebugStoppedPayload) => {
                 logInfo('[前端] 收到debug-stopped事件:', data);
                 this.onDebugStopped(data);
             });
-            ipcRenderer.on('debug-running', (event) => {
+            ipcRenderer.on('debug-running', (event: unknown) => {
                 logInfo('[前端] 收到debug-running事件');
                 this.onDebugRunning();
                 try { window.monacoEditorManager?.clearAllExecHighlights?.(); } catch (_) {}
             });
 
-            ipcRenderer.on('debug-program-exited', (event, data) => {
+            ipcRenderer.on('debug-program-exited', (event: unknown, data: DebugExitedPayload) => {
                 this.onProgramExited(data);
             });
 
-            ipcRenderer.on('debug-ready-waiting', (event, data) => {
+            ipcRenderer.on('debug-ready-waiting', (event: unknown, data: DebugWaitingPayload) => {
                 this.onDebugReadyWaiting(data);
             });
 
             ipcRenderer.removeAllListeners('debug-breakpoint-hit');
-            ipcRenderer.on('debug-breakpoint-hit', (event, data) => {
+            ipcRenderer.on('debug-breakpoint-hit', (event: unknown, data: DebugBreakpointPayload) => {
                 this.onBreakpointHit(data);
             });
 
-            ipcRenderer.on('debug-error', (event, error) => {
+            ipcRenderer.on('debug-error', (event: unknown, error: ErrorPayload | string | null) => {
                 this.onDebugError(error);
             });
 
-                ipcRenderer.on('debug-variables-updated', (event, variables) => {
+                ipcRenderer.on('debug-variables-updated', (event: unknown, variables: DebugVariablesPayload) => {
                     this.onVariablesUpdated(variables);
                 });
 
-                ipcRenderer.on('debug-callstack-updated', (event, callStack) => {
+                ipcRenderer.on('debug-callstack-updated', (event: unknown, callStack: DebugStackFrame[]) => {
                     this.onCallStackUpdated(callStack);
                 });
 
-                ipcRenderer.on('debug-terminal-output', (_event, payload) => {
+                ipcRenderer.on('debug-terminal-output', (_event: unknown, payload: string | { data?: unknown } | null | undefined) => {
                     const text = typeof payload === 'string'
                         ? payload
                         : String(payload?.data ?? '');
@@ -2562,13 +2748,13 @@
                 });
 
 
-                ipcRenderer.on('goto-source-location', async (event, frame) => {
+                ipcRenderer.on('goto-source-location', async (event: unknown, frame: { file?: string; line?: number | string } | null | undefined) => {
                     try {
                         const file = frame?.file;
                         const line = Number(frame?.line) || 1;
                         if (!file) return;
-                        if (window.tabManager && typeof window.tabManager.openFileByPath === 'function') {
-                            await window.tabManager.openFileByPath(file);
+                        if (window.tabManager && typeof window.tabManager.openFile === 'function') {
+                            await window.tabManager.openFile(file.split(/[\\/]/).pop() || file, '', false, file);
                         }
                         const ed = window.monacoEditorManager?.getCurrentEditor?.();
                         if (ed && typeof ed.highlightLine === 'function') {
@@ -2589,7 +2775,7 @@
         logInfo('开始调试会话');
         
         try {
-            this.showMessage(this.t('debug.checkingEnvironment', null, 'Checking debug environment...'), 'info');
+            this.showMessage(window.i18n?.t?.('debug.checkingEnvironment'), 'info');
             const gdbStatus = await this.checkGDBAvailability();
             
             if (!gdbStatus.available) {
@@ -2601,28 +2787,28 @@
             logInfo('调试环境检查通过:', gdbStatus.message);
         } catch (error) {
             logError('调试环境检查失败:', error);
-            this.showMessage(this.t('debug.environmentCheckFailed', null, 'Unable to check the debug environment. Make sure the debugger is installed correctly.'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('debug.environmentCheckFailed'), 'error');
+        return;
         }
         
         const currentFile = this.getCurrentFilePath();
         logInfo('当前文件路径:', currentFile);
         
         if (!currentFile) {
-            this.showMessage(this.t('debug.noDebugFile', null, 'No file is open for debugging. Open a C++ source file first.'), 'warning');
-            return;
+            this.showMessage(window.i18n?.t?.('debug.noDebugFile'), 'warning');
+        return;
         }
 
         if (!currentFile.match(/\.(cpp|cc|cxx|c)$/i)) {
-            this.showMessage(this.t('debug.debugCppOnly', null, 'Open a C++ source file to debug. The current file is not a C++ source file.'), 'warning');
-            return;
+            this.showMessage(window.i18n?.t?.('debug.debugCppOnly'), 'warning');
+        return;
         }
 
-        this.showMessage(this.t('debug.compilingForDebug', null, 'Compiling code for debugging...'), 'info');
+        this.showMessage(window.i18n?.t?.('debug.compilingForDebug'), 'info');
         
         try {
             if (!this.compilerManager) {
-                this.showMessage(this.t('debug.compilerUnavailable', null, 'The compiler is not initialized and cannot be used for debugging'), 'error');
+                this.showMessage(window.i18n?.t?.('debug.compilerUnavailable'), 'error');
                 return;
             }
 
@@ -2630,7 +2816,7 @@
             await this.compileBeforeDebug();
 
             const debugRunMode = this.resolveRunModeForCurrentPlatform();
-            let inferiorTTY = '';
+            let inferiorTTY: string | null = '';
             let useInputBridge = false;
             let terminalId = '';
             if (debugRunMode === 'integrated-terminal') {
@@ -2644,8 +2830,8 @@
                 const isUnixLike = this.isUnixLikePlatform();
 
                 if (!terminalId) {
-                    throw new Error('内置终端创建失败：未获取到终端会话ID');
-                }
+                    throw new Error(window.i18n.t('debug.terminalCreateFailed'));
+            }
 
                 if (this.isLinuxPlatform()) {
                     // Linux: 使用输入桥接模式（稳定可靠，不经 inferior-tty + tcsetpgrp）
@@ -2662,11 +2848,11 @@
                 } else {
                     // Windows: 内置终端调试通过输入桥接模式将用户输入转发到 GDB
                     useInputBridge = this.bindDebugTerminalBridge(terminalId);
-                }
+            }
 
                 if (!inferiorTTY && !useInputBridge) {
-                    throw new Error('调试终端初始化失败：无法建立TTY绑定或输入桥接');
-                }
+                    throw new Error(window.i18n.t('debug.debugTerminalInitFailed'));
+            }
 
                 if (isUnixLike) {
                     logInfo('[调试] Unix 调试终端会话:', {
@@ -2676,7 +2862,7 @@
                         inferiorTTY,
                         useInputBridge
                     });
-                }
+            }
             }
             
             const isWin = navigator.platform.toLowerCase().includes('win');
@@ -2698,7 +2884,7 @@
         } catch (error) {
             this.unbindDebugTerminalBridge();
             logError('启动调试准备失败:', error);
-            this.showMessage(`${this.t('debug.startFailed', null, 'Failed to start debugging')}: ${this.stringifyError(error)}`, 'warning');
+            this.showMessage(`${window.i18n?.t?.('debug.startFailed')}: ${this.stringifyError(error)}`, 'warning');
         }
     }
 
@@ -2712,11 +2898,11 @@
                 throw error;
             }
         } else {
-            throw new Error('Electron环境不可用');
+            throw new Error(window.i18n.t('cloudCompile.electronUnavailable'));
         }
     }
 
-    showDebugStatus(message) {
+    showDebugStatus(message: string) {
         const container = document.getElementById('debug-variables');
         if (container) {
             container.innerHTML = `
@@ -2728,11 +2914,11 @@
     }
 
     async compileBeforeDebug() {
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             logInfo('开始为调试编译代码...');
             
             if (!this.compilerManager) {
-                reject(new Error('编译器未初始化'));
+                reject(new Error(window.i18n.t('debug.compilerUnavailable')));
                 return;
             }
             
@@ -2754,18 +2940,18 @@
                             logInfo('[调试编译] 自动使用 /bin/g++');
                         }
                     } catch (_) {}
-                }
+            }
                 if (!this.settings.compilerPath) {
-                    this.showMessage(this.t('message.setCompilerFirst', null, 'Please configure the compiler first'), 'warning');
-                    try { require('electron').ipcRenderer.send('menu-open-settings'); } catch(_) {}
-                    reject(new Error('请先设置编译器路径'));
+                    this.showMessage(window.i18n?.t?.('message.setCompilerFirst'), 'warning');
+                    try { require('electron').ipcRenderer.invoke('open-compiler-settings'); } catch(_) {}
+                    reject(new Error(window.i18n.t('message.setCompilerFirst')));
                     return;
-                }
+            }
             }
             
             let resolved = false;
             
-            const handleCompileResult = (success, error = null) => {
+            const handleCompileResult = (success: boolean, error: unknown = null) => {
                 if (resolved) return;
                 resolved = true;
                 
@@ -2778,18 +2964,18 @@
                 } else {
                     const msg = this.stringifyError(error);
                     logInfo('编译失败，无法启动调试:');
-                    reject(new Error(msg || '编译失败'));
-                }
+                    reject(new Error(msg || window.i18n.t('debug.compileFailed')));
+            }
             };
             
-            const handleSuccess = (event) => {
-                logInfo('收到编译成功事件:', event.detail);
+            const handleSuccess = (event: Event) => {
+                logInfo('收到编译成功事件:', (event as CustomEvent<unknown>).detail);
                 handleCompileResult(true);
             };
             
-            const handleError = (event) => {
-                logInfo('收到编译失败事件:', event.detail);
-                handleCompileResult(false, event.detail);
+            const handleError = (event: Event) => {
+                logInfo('收到编译失败事件:', (event as CustomEvent<unknown>).detail);
+                handleCompileResult(false, (event as CustomEvent<unknown>).detail);
             };
             
             window.addEventListener('compile-success', handleSuccess);
@@ -2799,19 +2985,19 @@
             try {
                 this.compilerManager.compileCurrentFile({ forDebug: true });
             } catch (error) {
-                handleCompileResult(false, error.message);
+                handleCompileResult(false, (error as Errorish).message);
                 return;
             }
             
             setTimeout(() => {
                 if (!resolved) {
-                    handleCompileResult(false, '编译超时');
-                }
+                    handleCompileResult(false, window.i18n.t('debug.compileTimedOut'));
+            }
             }, 30000); // 30秒超时
         });
     }
 
-    startDebugSession(currentFile, options = {}) {
+    startDebugSession(currentFile: string, options: { runMode?: string; inferiorTTY?: string; useInputBridge?: boolean; terminalId?: string } = {}) {
         if (typeof require !== 'undefined') {
             try {
                 const { ipcRenderer } = require('electron');
@@ -2835,16 +3021,16 @@
                 });
                 
                 this.updateDebugControlsState(true);
-                const startingMessage = this.t('debug.startingSession', null, 'Starting debug session...');
+                const startingMessage = window.i18n?.t?.('debug.startingSession');
                 this.showMessage(startingMessage, 'info');
                 this.updateDebugStatus(startingMessage);
             } catch (error) {
                 logError('启动调试失败:', error);
-                this.showMessage(`${this.t('debug.startFailed', null, 'Failed to start debugging')}: ${this.stringifyError(error)}`, 'error');
+                this.showMessage(`${window.i18n?.t?.('debug.startFailed')}: ${this.stringifyError(error)}`, 'error');
             }
         } else {
             logError('require函数不可用，无法调用IPC');
-            this.showMessage(this.t('debug.apiUnavailable', null, 'Debugging could not be initialized because the system API is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('debug.apiUnavailable'), 'error');
         }
     }
 
@@ -2869,7 +3055,7 @@
             }
         }
         
-        if (this.editor && this.currentFile) {
+        if (this.currentFile) {
             return this.currentFile;
         }
         
@@ -2877,40 +3063,31 @@
     }
 
 
-    updateDebugControlsState(_isDebugging) {
+    updateDebugControlsState(_isDebugging: boolean) {
         const ids = [
             'debug-start', 'debug-continue', 'debug-step-over', 'debug-step-into',
             'debug-step-out', 'debug-stop', 'debug-add-watch', 'debug-refresh-vars'
         ];
         ids.forEach((id) => {
-            const btn = document.getElementById(id);
+            const btn = document.getElementById(id) as HTMLButtonElement | null;
             if (btn) btn.disabled = false;
         });
     }
 
-    onDebugStarted(data) {
+    onDebugStarted(data: DebugStartedPayload) {
         logInfo('[前端] 调试已启动:', data);
         this.updateDebugControlsState(true);
     this.isDebugging = true;
     this._debugSessionId++;
     this._debugExited = false;
         
-        this.updateAllDebugPanels(this.t('debug.sessionStarted', null, 'Debug session started; program loaded'));
+        this.updateAllDebugPanels(window.i18n?.t?.('debug.sessionStarted'));
         
-        this.updateDebugStatus('调试器已启动，程序准备运行');
-    this.showDebugInfo(`调试会话已启动
-        
-程序已加载: ${data.executable || data.sourceFile}
-状态: 等待运行或断点命中
-
-提示:
-- 点击行号设置断点
-- 使用F6继续执行
-- 使用F7单步执行
-- 查看右侧变量面板`);
+        this.updateDebugStatus(window.i18n.t('debug.startedReady'));
+    this.showDebugInfo(window.i18n.t('debug.sessionStartedInfo', { exe: data.executable || data.sourceFile }));
     }
 
-    onDebugStopped(data) {
+    onDebugStopped(data: DebugStoppedPayload) {
         logInfo('[前端] 调试已停止(原始事件):', data);
         const reason = String(data?.reason || '').toLowerCase();
         const isExit = reason.includes('program-exited') || reason === 'exited' || reason.includes('exit');
@@ -2921,11 +3098,11 @@
             this._debugExited = true;
             this.unbindDebugTerminalBridge();
             this.updateDebugControlsState(false);
-            this.updateDebugStatus(`程序运行完成，退出码: ${data.exitCode ?? data.code ?? 0}`);
-            this.showDebugInfo(`程序运行完成，退出码: ${data.exitCode ?? data.code ?? 0}\n\n程序输出应该在终端窗口中显示。`);
+            this.updateDebugStatus(window.i18n.t('debug.programExitedWithCode', { code: data.exitCode ?? data.code ?? 0 }));
+            this.showDebugInfo(window.i18n.t('debug.programExitedInfo', { code: data.exitCode ?? data.code ?? 0 }));
             this.showWaitingMessages();
             try { window.monacoEditorManager?.clearAllExecHighlights?.(); } catch (_) {}
-            return;
+        return;
         }
 
         if (isManualStop) {
@@ -2933,16 +3110,16 @@
             this._debugExited = true;
             this.unbindDebugTerminalBridge();
             this.updateDebugControlsState(false);
-            this.updateDebugStatus('调试已停止');
-            this.showDebugInfo('调试已停止。');
+            this.updateDebugStatus(window.i18n.t('debug.debugStopped'));
+            this.showDebugInfo(window.i18n.t('debug.debugStoppedInfo'));
             this.showWaitingMessages();
             try { window.monacoEditorManager?.clearAllExecHighlights?.(); } catch (_) {}
-            return;
+        return;
         }
 
         if (this._debugExited || !this.isDebugging) {
             logInfo('[前端] 忽略迟到的非退出 stopped 事件');
-            return;
+        return;
         }
 
         this.isDebugging = true;
@@ -2951,15 +3128,22 @@
         const file = data?.file || data?.frame?.file || '';
         const line = Number(data?.line || data?.frame?.line || '') || '';
         const fileName = file ? String(file).split(/[\\/]/).pop() : '';
-        const where = fileName && line ? ` 在 ${fileName}:${line}` : '';
+        const where = fileName && line ? window.i18n.t('debug.pausedWhere', { file: fileName, line }) : '';
 
-        const prettyReason = reason.includes('breakpoint') ? '断点处暂停'
-                             : reason.includes('end-stepping-range') ? '单步结束已暂停'
-                             : reason.includes('signal') ? '收到信号已暂停'
-                             : '程序已暂停';
+        const prettyReason = reason.includes('breakpoint') ? window.i18n.t('debug.pausedAtBreakpoint')
+                             : reason.includes('end-stepping-range') ? window.i18n.t('debug.pausedAtStep')
+                             : reason.includes('signal') ? window.i18n.t('debug.pausedAtSignal')
+                             : window.i18n.t('debug.pausedGeneric');
 
         this.updateDebugStatus(`${prettyReason}${where}`);
-        this.showDebugInfo(`${prettyReason}${where}\n\n您可以继续执行(F6)或步过(F7)/步入(F8)/步出(Shift+F8)。`);
+        // 那四个键名以前焊在 debugContinueHint 的文案里，现在走插值：值来自 keybinding:* ，
+        // 于是它跟着用户的改键和当前平台变（mac 上 ⇧⌘F8，而不是永远印着 Shift+F8）。
+        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint', {
+            continue: this.shortcutText('keybinding:debugContinue'),
+            over: this.shortcutText('keybinding:debugStepOver'),
+            into: this.shortcutText('keybinding:debugStepInto'),
+            out: this.shortcutText('keybinding:debugStepOut')
+        })}`);
 
         if (file && line) {
             try { this.highlightCurrentLine(file, line); } catch (_) {}
@@ -2968,8 +3152,8 @@
 
     onDebugRunning() {
         logInfo('[前端] 程序正在运行');
-        this.updateDebugStatus('程序正在运行...');
-        this.showDebugInfo('程序正在运行，请等待程序执行或命中断点\n\n如果程序需要输入，请在控制台或弹出的终端窗口中输入');
+        this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
+        this.showDebugInfo(window.i18n.t('debug.programRunningInfo'));
         
         this.clearContinueButtonHighlight();
     }
@@ -2980,32 +3164,27 @@
             continueBtn.style.animation = '';
             continueBtn.style.background = '';
             continueBtn.style.transform = '';
-            continueBtn.title = '继续执行 (F6)';
+            continueBtn.title = window.i18n.t('debug.continueTitle');
         }
     }
 
-    onProgramExited(data) {
+    onProgramExited(data: DebugExitedPayload) {
         logInfo('[前端] 程序已退出:', data);
-        this.updateDebugStatus(`程序执行完成，退出码: ${data.exitCode}`);
-        this.showDebugInfo(`程序执行完成，退出码: ${data.exitCode}`);
+        const exitMsg = window.i18n.t('debug.programExitedStatus', { code: data.exitCode });
+        this.updateDebugStatus(exitMsg);
+        this.showDebugInfo(exitMsg);
     this.unbindDebugTerminalBridge();
     this.isDebugging = false;
     }
 
-    onDebugReadyWaiting(data) {
+    onDebugReadyWaiting(data: DebugWaitingPayload) {
         logInfo('[前端] 调试器就绪等待:', data);
-        this.updateDebugStatus('调试器已就绪，等待启动程序');
+        this.updateDebugStatus(window.i18n.t('debug.readyWaiting'));
         
-    const message = `调试器已成功启动并准备就绪！
-
-${data.message || '程序已加载，等待开始执行'}
-
-操作提示:
-- 点击 "继续执行" 按钮 (▶️) 或按 F6 开始运行程序
-- 如果设置了断点，程序会在断点处停止
-- 如果没有断点，程序会正常运行到结束
-
-当前状态: ${data.hasBreakpoints ? '已设置断点' : '未设置断点'}`;
+    const message = window.i18n.t('debug.readyWaitingInfo', {
+        detail: data.message || window.i18n.t('debug.programLoadedWaiting'),
+        status: data.hasBreakpoints ? window.i18n.t('debug.hasBreakpoints') : window.i18n.t('debug.noBreakpointsSet')
+    });
         
         this.showDebugInfo(message);
         
@@ -3027,13 +3206,13 @@ ${data.message || '程序已加载，等待开始执行'}
             continueBtn.style.animation = 'debug-pulse 2s infinite';
             continueBtn.style.background = '#0078d4';
             continueBtn.style.transform = 'scale(1.05)';
-            continueBtn.title = '点击开始运行程序 (F6)';
+            continueBtn.title = window.i18n.t('debug.clickToStartRun');
             
             setTimeout(() => {
                 continueBtn.style.animation = '';
                 continueBtn.style.background = '';
                 continueBtn.style.transform = '';
-                continueBtn.title = '继续执行 (F6)';
+                continueBtn.title = window.i18n.t('debug.continueTitle');
             }, 5000);
         }
     }
@@ -3056,13 +3235,13 @@ ${data.message || '程序已加载，等待开始执行'}
                         transform: scale(1); 
                         box-shadow: 0 0 0 0 rgba(0, 120, 212, 0); 
                     }
-                }
+            }
             `;
             document.head.appendChild(style);
         }
     }
 
-    updateAllDebugPanels(message) {
+    updateAllDebugPanels(message: string) {
         const containers = ['local-variables', 'global-variables', 'watch-variables', 'call-stack'];
         containers.forEach(id => {
             const container = document.getElementById(id);
@@ -3074,32 +3253,38 @@ ${data.message || '程序已加载，等待开始执行'}
         this.showDebugInfo(message);
     }
 
-    onDebugError(error) {
+    onDebugError(error: ErrorPayload | string | null) {
         const msg = this.stringifyError(error) || '';
-        const lower = msg.toLowerCase();
-    if (/running|not\s*stopped|already\s*running|already\s*started|target\s+is\s+executing|debugger\s+not\s+running|调试器未运行/.test(lower)) {
+        // 只看码。原来这里挂着一条文本正则，裸的 running / executing 分支会**吞掉真错误**：
+        //   "Error running target: signal SIGSEGV"     → 判成良性，不弹错，状态显示「运行中」
+        //   "Not running: cannot attach, process vanished" → 同样被吞
+        //   "target is executing but faulted at 0x0"       → 同样被吞
+        // 兜底之所以存在，是因为主进程那十几处 `reply('debug-error', error.message)` 把码丢在
+        // 了 IPC 边界上；现在统一走 debugErrorPayload，生产者有码就用码，没码就按真错误报出去。
+        const code = (error && typeof error === 'object') ? error.code : undefined;
+        if (code !== undefined && BENIGN_DEBUG_CODES.has(code)) {
             logInfo('收到良性调试提示:', msg);
-            this.updateDebugStatus('程序正在运行...');
+            this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
             return;
         }
         this.unbindDebugTerminalBridge();
         logError('调试错误:', error);
-        this.showMessage(this.t('debug.error', { error: msg }, `Debug error: ${msg}`), 'error');
+        this.showMessage(window.i18n?.t?.('debug.error', { error: msg }), 'error');
         this.updateDebugControlsState(false);
     }
 
-    onVariablesUpdated(variables) {
+    onVariablesUpdated(variables: DebugVariablesPayload) {
         logInfo('变量已更新');
         if (this.isModernDebugPanelMounted()) {
-            return;
+        return;
         }
         this.updateVariablesDisplay(variables);
     }
 
-    onCallStackUpdated(callStack) {
+    onCallStackUpdated(callStack: DebugStackFrame[]) {
         logInfo('调用堆栈已更新');
         if (this.isModernDebugPanelMounted()) {
-            return;
+        return;
         }
         this.updateCallStackDisplay(callStack);
     }
@@ -3113,7 +3298,7 @@ ${data.message || '程序已加载，等待开始执行'}
         }
     }
 
-    onBreakpointHit(breakpoint) {
+    onBreakpointHit(breakpoint: DebugBreakpointPayload) {
         logInfo('[前端] 断点命中');
         try {
             const overlays = Array.from(document.querySelectorAll('.settings-dialog-overlay, .about-dialog-overlay, .update-dialog-overlay'));
@@ -3123,20 +3308,14 @@ ${data.message || '程序已加载，等待开始执行'}
             });
         } catch (_) {}
 
-        const fileName = breakpoint.file ? breakpoint.file.split(/[\\/]/).pop() : '未知文件';
-        this.updateDebugStatus(`断点命中: ${fileName}:${breakpoint.line} (${breakpoint.function || '未知函数'})`);
+        const fileName = breakpoint.file ? breakpoint.file.split(/[\\/]/).pop() : window.i18n.t('panel.unknownFile');
+        this.updateDebugStatus(window.i18n.t('debug.breakpointHit', { file: fileName, line: breakpoint.line, fn: breakpoint.function || window.i18n.t('debug.unknownFunction') }));
         
-    const debugInfo = `断点命中！
-
-文件: ${fileName}
-行号: ${breakpoint.line}
-函数: ${breakpoint.function || '未知函数'}
-
-程序已暂停，您可以：
-- 查看右侧变量面板中的当前变量值
-- 使用F6继续执行
-- 使用F7单步执行
-- 使用F8步入函数`;
+    const debugInfo = window.i18n.t('debug.breakpointHitInfo', {
+        file: fileName,
+        line: breakpoint.line,
+        fn: breakpoint.function || window.i18n.t('debug.unknownFunction')
+    });
         
         this.showDebugInfo(debugInfo);
         
@@ -3144,17 +3323,19 @@ ${data.message || '程序已加载，等待开始执行'}
         
         this.highlightCurrentLine(breakpoint.file, breakpoint.line);
         try {
-            document.querySelectorAll('.message-toast').forEach(n => n.style.pointerEvents = 'none');
+            document.querySelectorAll('.message-toast').forEach(n => { if (n instanceof HTMLElement) n.style.pointerEvents = 'none'; });
         } catch (_) {}
     }
 
-    highlightCurrentLine(file, line) {
+    highlightCurrentLine(file: string | undefined, line: string | number | undefined) {
         try {
+            const lineNumber = Number(line);
+            if (!Number.isFinite(lineNumber)) return;
             if (window.editorManager && window.editorManager.currentEditor) {
                 const currentEditor = window.editorManager.currentEditor;
                 if (currentEditor.highlightLine) {
-                    currentEditor.highlightLine(line);
-                }
+                    currentEditor.highlightLine(lineNumber);
+            }
             }
         } catch (error) {
             logWarn('[前端] 高亮当前行失败:', error);
@@ -3167,9 +3348,9 @@ ${data.message || '程序已加载，等待开始执行'}
             const container = document.getElementById(id);
             if (container) {
                 const waitingMsg = container.querySelector('.waiting-debug-message');
-                if (waitingMsg) {
+                if (waitingMsg instanceof HTMLElement) {
                     waitingMsg.style.display = 'none';
-                }
+            }
             }
         });
     }
@@ -3179,12 +3360,12 @@ ${data.message || '程序已加载，等待开始执行'}
         containers.forEach(id => {
             const container = document.getElementById(id);
             if (container) {
-                container.innerHTML = '<div class="waiting-debug-message">等待开始调试...</div>';
+                container.innerHTML = `<div class="waiting-debug-message">${window.i18n?.t?.('debug.waitingDebug')}</div>`;
             }
         });
     }
 
-    updateDebugStatus(message) {
+    updateDebugStatus(message: string) {
         const statusElement = document.querySelector('.debug-status');
         if (statusElement) {
             statusElement.textContent = message;
@@ -3193,10 +3374,22 @@ ${data.message || '程序已加载，等待开始执行'}
         logInfo('[调试状态]', message);
     }
 
-    showDebugInfo(message) {
+    // 调试面板的所有文本都来自被调试进程的 gdb 输出，属攻击者可控输入，
+    // 未转义直接拼进 innerHTML 即为渲染进程 XSS。变量面板之外，
+    // 调用栈（function/file/line）与状态/错误文案走的是同一路径。
+    escapeDebugHtml(value: unknown) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    showDebugInfo(message: string) {
         const container = document.getElementById('debug-variables');
         if (container) {
-            let infoElement = container.querySelector('.debug-info-message');
+            let infoElement = container.querySelector('.debug-info-message') as HTMLElement | null;
             if (!infoElement) {
                 infoElement = document.createElement('div');
                 infoElement.className = 'debug-info-message';
@@ -3214,15 +3407,15 @@ ${data.message || '程序已加载，等待开始执行'}
             }
             
             infoElement.innerHTML = `
-                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">调试状态</h4>
-                <p style="margin: 0; white-space: pre-line;">${message}</p>
+                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${this.escapeDebugHtml(window.i18n?.t?.('debug.debugStatus'))}</h4>
+                <p style="margin: 0; white-space: pre-line;">${this.escapeDebugHtml(message)}</p>
             `;
         }
     }
 
-    updateVariablesDisplay(variables) {
+    updateVariablesDisplay(variables: DebugVariablesPayload) {
         if (this.isModernDebugPanelMounted()) {
-            return;
+        return;
         }
         if (variables.local) {
             this.renderVariables('local-variables', variables.local, 'local');
@@ -3237,9 +3430,9 @@ ${data.message || '程序已加载，等待开始执行'}
         }
     }
 
-    renderVariables(containerId, variables, scope) {
+    renderVariables(containerId: string, variables: DebugVarMap, scope: string) {
         if (this.isModernDebugPanelMounted()) {
-            return;
+        return;
         }
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -3247,8 +3440,8 @@ ${data.message || '程序已加载，等待开始执行'}
         container.innerHTML = '';
         
         if (Object.keys(variables).length === 0) {
-            container.innerHTML = '<div class="no-debug-message">没有变量</div>';
-            return;
+            container.innerHTML = `<div class="no-debug-message">${window.i18n?.t?.('debug.noVariables')}</div>`;
+        return;
         }
 
         Object.entries(variables).forEach(([name, data]) => {
@@ -3257,32 +3450,43 @@ ${data.message || '程序已加载，等待开始执行'}
         });
     }
 
-    createVariableElement(name, data, scope) {
+    createVariableElement(name: string, data: DebugVarInfo, scope: string) {
         const element = document.createElement('div');
         element.className = 'variable-item';
-        
+
         const hasChildren = data.children && data.children.length > 0;
-        
+
+        // name/type/value 全部来自被调试进程的 gdb 输出，属攻击者可控输入，
+        // 未转义直接拼进 innerHTML 即为渲染进程 XSS
+        const escapeHtml = (value: unknown) => String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
         element.innerHTML = `
             <div class="variable-header">
                 ${hasChildren ? '<span class="expand-toggle">▶</span>' : '<span class="expand-spacer"></span>'}
-                <span class="variable-name" title="${data.type || 'unknown'}">${name}</span>
-                <span class="variable-value" title="${data.value || ''}">${this.formatVariableValue(data)}</span>
-                ${scope === 'watch' ? '<button class="remove-watch-btn" title="移除监视">×</button>' : ''}
+                <span class="variable-name" title="${escapeHtml(data.type || 'unknown')}">${escapeHtml(name)}</span>
+                <span class="variable-value" title="${escapeHtml(data.value || '')}">${escapeHtml(this.formatVariableValue(data))}</span>
+                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${escapeHtml(window.i18n?.t?.('debug.removeWatch'))}">×</button>` : ''}
             </div>
         `;
-        
+
         return element;
     }
 
-    formatVariableValue(data) {
+    formatVariableValue(data: DebugVarInfo) {
         if (!data.value) return '';
         
         let displayValue = data.value.toString();
         
         if (data.isContainer || data.isArray) {
-            const count = data.elementCount !== null ? data.elementCount : '?';
-            const type = data.isArray ? '数组' : '容器';
+            // DAP 的 Variable 里常见字段是 namedVariables/indexedVariables，elementCount
+            // 经常压根没填；`!== null` 只挡得住 null，undefined 会原样拼进 "[undefined]"。
+            const count = Number.isFinite(data.elementCount) ? data.elementCount : '?';
+            const type = data.isArray ? window.i18n?.t?.('debug.typeArray') : window.i18n?.t?.('debug.typeContainer');
             displayValue = `${type}[${count}] ${displayValue}`;
         }
         
@@ -3293,16 +3497,16 @@ ${data.message || '程序已加载，等待开始执行'}
         return displayValue;
     }
 
-    updateCallStackDisplay(callStack) {
+    updateCallStackDisplay(callStack: DebugStackFrame[]) {
         if (this.isModernDebugPanelMounted()) {
-            return;
+        return;
         }
         const container = document.getElementById('call-stack');
         if (!container) return;
 
         if (!callStack || callStack.length === 0) {
-            container.innerHTML = '<div class="no-debug-message">没有调用堆栈信息</div>';
-            return;
+            container.innerHTML = `<div class="no-debug-message">${window.i18n?.t?.('debug.noCallStack')}</div>`;
+        return;
         }
 
         container.innerHTML = '';
@@ -3310,72 +3514,56 @@ ${data.message || '程序已加载，等待开始执行'}
         callStack.forEach((frame, index) => {
             const frameElement = document.createElement('div');
             frameElement.className = 'callstack-item';
-
-            const info = document.createElement('div');
-            info.className = 'frame-info';
-            const idx = document.createElement('span');
-            idx.className = 'frame-index';
-            idx.textContent = `#${index}`;
-            const fn = document.createElement('span');
-            fn.className = 'frame-function';
-            fn.textContent = frame.function || '未知函数';
-            info.appendChild(idx);
-            info.appendChild(document.createTextNode(' '));
-            info.appendChild(fn);
-
-            const loc = document.createElement('div');
-            loc.className = 'frame-location';
-            const fileEl = document.createElement('span');
-            fileEl.className = 'frame-file';
-            fileEl.textContent = frame.file || '未知文件';
-            loc.appendChild(fileEl);
-            if (frame.line) {
-                const lineEl = document.createElement('span');
-                lineEl.className = 'frame-line';
-                lineEl.textContent = `:${frame.line}`;
-                loc.appendChild(lineEl);
-            }
-
-            frameElement.appendChild(info);
-            frameElement.appendChild(loc);
+            frameElement.innerHTML = `
+                <div class="frame-info">
+                    <span class="frame-index">#${index}</span>
+                    <span class="frame-function">${this.escapeDebugHtml(frame.function || window.i18n.t('debug.unknownFunction'))}</span>
+                </div>
+                <div class="frame-location">
+                    <span class="frame-file">${this.escapeDebugHtml(frame.file || window.i18n.t('debug.unknownFile'))}</span>
+                    ${frame.line ? `<span class="frame-line">:${this.escapeDebugHtml(frame.line)}</span>` : ''}
+                </div>
+            `;
+            
             container.appendChild(frameElement);
         });
     }
 
-    showDebugError(message) {
+    showDebugError(message: string) {
         const container = document.getElementById('debug-variables');
         if (container) {
             container.innerHTML = `
                 <div class="debug-error-message" style="padding: 16px; color: #f44747;">
-                    <p><strong>调试功能错误</strong></p>
-                    <p>${message}</p>
+                    <p><strong>${this.escapeDebugHtml(window.i18n.t('debug.debugErrorTitle'))}</strong></p>
+                    <p>${this.escapeDebugHtml(message)}</p>
                     <p style="margin-top: 8px; font-size: 11px; color: #cccccc;">
-                        请检查调试器（Windows/Linux: GDB）是否可用，代码是否已编译（使用-g选项）。macOS 暂不支持调试功能。
+                        ${this.escapeDebugHtml(window.i18n.t('debug.debugErrorHint'))}
                     </p>
                 </div>
             `;
         }
     }
 
-    stringifyError(err) {
+    stringifyError(err: unknown): string {
         try {
-            if (!err) return '未知错误';
+            if (!err) return window.i18n?.t?.('message.unknownError');
             if (typeof err === 'string') return err;
             if (err instanceof Error) return err.message || err.toString();
-            if (err.detail) return this.stringifyError(err.detail);
-            if (err.result) {
-                const r = err.result;
+            const payload = err as ErrorPayload;
+            if (payload.detail) return this.stringifyError(payload.detail);
+            if (payload.result) {
+                const r = payload.result;
                 if (Array.isArray(r.errors) && r.errors.length) return r.errors.join('\n');
                 if (typeof r.stderr === 'string' && r.stderr.trim()) return r.stderr;
                 if (typeof r.stdout === 'string' && r.stdout.trim()) return r.stdout;
                 if (typeof r.message === 'string') return r.message;
             }
-            if (typeof err.error === 'string') return err.error;
-            if (err.error) return this.stringifyError(err.error);
-            if (typeof err.message === 'string') return err.message;
+            if (typeof payload.error === 'string') return payload.error;
+            if (payload.error) return this.stringifyError(payload.error);
+            if (typeof payload.message === 'string') return payload.message;
             return JSON.stringify(err);
         } catch (_) {
-            try { return String(err); } catch { return '未知错误'; }
+            try { return String(err); } catch { return window.i18n?.t?.('message.unknownError'); }
         }
     }
 
@@ -3417,12 +3605,12 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     handleAddWatch() {
-        const variableName = prompt('请输入要监视的变量名或表达式：\n例如：myVar, array[0], obj.member');
+        const variableName = prompt(window.i18n.t('debug.promptAddWatch'));
         if (variableName && variableName.trim()) {
             if (typeof require !== 'undefined') {
                 const { ipcRenderer } = require('electron');
                 ipcRenderer.send('debug-add-watch', variableName.trim());
-                this.showMessage(this.t('debug.watchAdded', { name: variableName.trim() }, `Watch added: ${variableName.trim()}`), 'info');
+                this.showMessage(window.i18n?.t?.('debug.watchAdded', { name: variableName.trim() }), 'info');
             }
         }
     }
@@ -3434,11 +3622,11 @@ ${data.message || '程序已加载，等待开始执行'}
         }
     }
 
-    toggleCategory(header) {
+    toggleCategory(header: HTMLElement) {
         const arrow = header.querySelector('.expand-arrow');
         const content = header.nextElementSibling;
         
-        if (content && arrow) {
+        if (content instanceof HTMLElement && arrow) {
             if (content.style.display === 'none') {
                 content.style.display = 'block';
                 arrow.textContent = '▼';
@@ -3450,8 +3638,8 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     compileCode() {
-        if (!this.ensureLocalFileForFeature('编译')) {
-            return;
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureCompile'))) {
+        return;
         }
         if (this.compilerManager) {
             this.compilerManager.compileCurrentFile();
@@ -3459,8 +3647,8 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     runCode() {
-        if (!this.ensureLocalFileForFeature('运行')) {
-            return;
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureRun'))) {
+        return;
         }
         if (this.compilerManager) {
             this.compilerManager.runCurrentFile();
@@ -3468,27 +3656,27 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     showFeedback() {
-        const t = this.t.bind(this);
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
         dialog.innerHTML = `
             <div class="about-dialog">
                 <div class="about-header">
                     <div class="about-logo">
-                        <img id="feedback-dialog-icon" src="" width="48" height="48" alt="OICPP IDE">
+                        <img id="feedback-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
-                    <h2>${t('feedback.title', null, 'Feedback')}</h2>
+                    <h2>${t('feedback.title')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.description', null, 'Click the button to open GitHub Issues.')}</p>
+                        <p class="feedback-description">${t('feedback.description')}</p>
                         <div class="feedback-actions">
-                            <button id="open-github-btn" class="feedback-btn primary">${t('feedback.openIssues', null, 'Open GitHub Issues')}</button>
+                            <button id="open-github-btn" class="feedback-btn primary">${t('feedback.openIssues')}</button>
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="feedback-close-btn">${t('dialog.close', null, 'Close')}</button>
+                    <button id="feedback-close-btn">${t('dialog.close')}</button>
                 </div>
             </div>
         `;
@@ -3501,55 +3689,55 @@ ${data.message || '程序已加载，等待开始执行'}
 
     async uploadClientLogFromMenu() {
         if (!window.electronAPI) {
-            this.showMessage(this.t('feedback.logUnavailable', null, 'Log upload is unavailable'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('feedback.logUnavailable'), 'error');
+        return;
         }
 
         if (typeof window.electronAPI.listClientLogs !== 'function' || typeof window.electronAPI.uploadClientLog !== 'function') {
-            this.showMessage(this.t('feedback.logUnsupported', null, 'This version does not support log upload'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('feedback.logUnsupported'), 'error');
+        return;
         }
 
         try {
             const listResult = await window.electronAPI.listClientLogs();
             if (!listResult || listResult.success !== true) {
-                this.showMessage(listResult?.message || this.t('feedback.logListFailed', null, 'Failed to read the log list'), 'error');
+                this.showMessage(listResult?.message || window.i18n?.t?.('feedback.logListFailed'), 'error');
                 return;
             }
 
             const logs = Array.isArray(listResult.logs) ? listResult.logs : [];
             if (logs.length === 0) {
-                this.showMessage(this.t('feedback.noLogs', null, 'There are no log files to upload'), 'info');
+                this.showMessage(window.i18n?.t?.('feedback.noLogs'), 'info');
                 return;
             }
 
             this.showUploadLogPickerDialog(logs);
         } catch (error) {
             logError('上传日志失败:', error);
-            this.showMessage(this.t('feedback.logUploadFailed', { error: error?.message || error }, `Log upload failed: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('feedback.logUploadFailed', { error: (error as Errorish)?.message || error }), 'error');
         }
     }
 
-    showUploadLogPickerDialog(logs) {
-        const t = this.t.bind(this);
+    showUploadLogPickerDialog(logs: ClientLogEntry[]) {
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
-        const formatBytes = (value) => {
+        const formatBytes = (value: unknown) => {
             const n = Number(value) || 0;
             if (n < 1024) return `${n} B`;
             if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
             return `${(n / (1024 * 1024)).toFixed(2)} MB`;
         };
 
-        const formatTime = (ms) => {
+        const formatTime = (ms: unknown) => {
             const date = new Date(Number(ms) || 0);
-            if (Number.isNaN(date.getTime())) return t('feedback.unknownTime', null, 'Unknown time');
-            const pad = (v) => String(v).padStart(2, '0');
+            if (Number.isNaN(date.getTime())) return t('feedback.unknownTime');
+            const pad = (v: number) => String(v).padStart(2, '0');
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
         };
 
-        const escapeHtml = (value) => String(value || '')
+        const escapeHtml = (value: unknown) => String(value || '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -3574,18 +3762,18 @@ ${data.message || '程序已加载，等待开始执行'}
         dialog.innerHTML = `
             <div class="about-dialog log-picker-dialog">
                 <div class="about-header">
-                    <h2>${t('feedback.selectLogTitle', null, 'Select a log to upload')}</h2>
+                    <h2>${t('feedback.selectLogTitle')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.selectLogDescription', null, 'Click a log to start uploading.')}</p>
+                        <p class="feedback-description">${t('feedback.selectLogDescription')}</p>
                         <div class="log-picker-list">
                             ${rows}
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="pick-log-close-btn">${t('dialog.cancel', null, 'Cancel')}</button>
+                    <button id="pick-log-close-btn">${t('dialog.cancel')}</button>
                 </div>
             </div>
         `;
@@ -3608,15 +3796,15 @@ ${data.message || '程序已加载，等待开始执行'}
             btn.addEventListener('click', async () => {
                 const logPath = btn.getAttribute('data-log-path') || '';
                 if (!logPath) {
-                    this.showMessage(t('feedback.invalidLogPath', null, 'Invalid log path'), 'error');
+                    this.showMessage(t('feedback.invalidLogPath'), 'error');
                     return;
-                }
+            }
 
                 try {
-                    this.showMessage(t('feedback.uploadingLog', null, 'Uploading log, please wait...'), 'info');
+                    this.showMessage(t('feedback.uploadingLog'), 'info');
                     const result = await window.electronAPI.uploadClientLog(logPath);
                     if (!result || result.success !== true) {
-                        this.showMessage(result?.message || t('feedback.logUploadFailed', { error: '' }, 'Log upload failed'), 'error');
+                        this.showMessage(result?.message || t('feedback.logUploadFailed', { error: '' }), 'error');
                         return;
                     }
 
@@ -3624,40 +3812,40 @@ ${data.message || '程序已加载，等待开始执行'}
                     this.showTraceCodeDialog(result.traceCode || '', result.uploadedAt || '');
                 } catch (error) {
                     logError('上传日志失败:', error);
-                    this.showMessage(t('feedback.logUploadFailed', { error: error?.message || error }, `Log upload failed: ${error?.message || error}`), 'error');
-                }
+                    this.showMessage(t('feedback.logUploadFailed', { error: (error as Errorish)?.message || error }), 'error');
+            }
             });
         });
     }
 
-    showTraceCodeDialog(traceCode, uploadedAt) {
-        const t = this.t.bind(this);
+    showTraceCodeDialog(traceCode: unknown, uploadedAt: unknown) {
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
-        const safeTraceCode = String(traceCode || '').trim() || t('feedback.traceCodeMissing', null, 'No trace code returned');
+        const safeTraceCode = String(traceCode || '').trim() || t('feedback.traceCodeMissing');
         const uploadedAtText = String(uploadedAt || '').trim();
 
         dialog.innerHTML = `
             <div class="about-dialog trace-code-dialog">
                 <div class="about-header">
-                    <h2>${t('feedback.uploadSuccessTitle', null, 'Log uploaded successfully')}</h2>
+                    <h2>${t('feedback.uploadSuccessTitle')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.traceDescription', null, 'Please include the trace code below when reporting an issue.')}</p>
+                        <p class="feedback-description">${t('feedback.traceDescription')}</p>
                         <div class="about-info">
-                            <p><strong>${t('feedback.traceCode', null, 'Trace code:')}</strong> <span id="trace-code-value" class="trace-code-value"></span></p>
-                            ${uploadedAtText ? `<p><strong>${t('feedback.uploadedAt', null, 'Uploaded at:')}</strong> ${uploadedAtText}</p>` : ''}
+                            <p><strong>${t('feedback.traceCode')}</strong> <span id="trace-code-value" class="trace-code-value"></span></p>
+                            ${uploadedAtText ? `<p><strong>${t('feedback.uploadedAt')}</strong> ${uploadedAtText}</p>` : ''}
                         </div>
                         <div class="feedback-actions">
-                            <button id="copy-trace-code-btn" class="feedback-btn primary">${t('feedback.copyTraceCode', null, 'Copy Trace Code')}</button>
-                            <button id="open-issue-from-trace-btn" class="feedback-btn">${t('feedback.openFeedback', null, 'Open Feedback')}</button>
+                            <button id="copy-trace-code-btn" class="feedback-btn primary">${t('feedback.copyTraceCode')}</button>
+                            <button id="open-issue-from-trace-btn" class="feedback-btn">${t('feedback.openFeedback')}</button>
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="trace-close-btn">${t('dialog.close', null, 'Close')}</button>
+                    <button id="trace-close-btn">${t('dialog.close')}</button>
                 </div>
             </div>
         `;
@@ -3687,29 +3875,29 @@ ${data.message || '程序已加载，等待开始执行'}
                 try {
                     if (window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
                         await window.electronAPI.clipboardWriteText(safeTraceCode);
-                        this.showMessage(t('feedback.traceCodeCopied', null, 'Trace code copied'), 'success');
-                    } else {
-                        this.showMessage(t('feedback.copyUnavailable', null, 'Copy is unavailable; please copy the trace code manually'), 'warning');
+                        this.showMessage(t('feedback.traceCodeCopied'), 'success');
+            } else {
+                        this.showMessage(t('feedback.copyUnavailable'), 'warning');
                     }
                 } catch (error) {
                     logWarn('复制追踪码失败:', error);
-                    this.showMessage(t('feedback.copyFailed', null, 'Copy failed; please copy the trace code manually'), 'error');
-                }
+                    this.showMessage(t('feedback.copyFailed'), 'error');
+            }
             });
         }
 
         const openIssueBtn = dialog.querySelector('#open-issue-from-trace-btn');
         if (openIssueBtn) {
             openIssueBtn.addEventListener('click', async () => {
-                const url = 'https://github.com/mywwzh/oicpp/issues';
+                const url = 'https://github.com/qingyingge/oicpp-plus/issues';
                 try {
                     if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
                         await window.electronAPI.openExternal(url);
                     }
                 } catch (error) {
                     logWarn('打开反馈页失败:', error);
-                }
-                this.showMessage(t('feedback.includeTraceCode', { code: safeTraceCode }, `Please include this trace code in your feedback: ${safeTraceCode}`), 'info');
+            }
+                this.showMessage(t('feedback.includeTraceCode', { code: safeTraceCode }), 'info');
                 closeDialog();
             });
         }
@@ -3719,19 +3907,19 @@ ${data.message || '程序已加载，等待开始执行'}
         try {
             if (window.electronAPI && window.electronAPI.getUserIconPath) {
                 const iconPath = await window.electronAPI.getUserIconPath();
-                const iconElement = document.querySelector('#feedback-dialog-icon');
+                const iconElement = document.querySelector('#feedback-dialog-icon') as HTMLImageElement | null;
                 if (iconElement && iconPath) {
                     iconElement.src = iconPath;
-                }
+            }
             }
         } catch (error) {
             logInfo('无法获取应用图标路径，使用默认图标');
         }
     }
 
-    setupFeedbackDialogListeners(dialog) {
-        const t = this.t.bind(this);
-        const closeBtn = dialog.querySelector('#feedback-close-btn');
+    setupFeedbackDialogListeners(dialog: HTMLElement) {
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        const closeBtn = dialog.querySelector('#feedback-close-btn') as HTMLElement;
         closeBtn.addEventListener('click', () => {
             dialog.remove();
         });
@@ -3742,9 +3930,9 @@ ${data.message || '程序已加载，等待开始执行'}
             }
         });
 
-        const openGithubBtn = dialog.querySelector('#open-github-btn');
+        const openGithubBtn = dialog.querySelector('#open-github-btn') as HTMLElement;
         openGithubBtn.addEventListener('click', async () => {
-            const url = 'https://github.com/mywwzh/oicpp/issues';
+            const url = 'https://github.com/qingyingge/oicpp-plus/issues';
             try {
                 logInfo('[主进程] 检查 window.electron:', typeof window.electron);
                 logInfo('[主进程] 检查 window.electron.shell:', typeof window.electron?.shell);
@@ -3757,11 +3945,11 @@ ${data.message || '程序已加载，等待开始执行'}
                 } else if (typeof window.open === 'function') {
                     window.open(url, '_blank');
                 } else {
-                    alert('无法自动打开外部链接。请访问：\n' + url);
-                }
+                    this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
+            }
             } catch (error) {
                 logError('[主进程] 打开GitHub Issues时出错:', error || {});
-                alert('无法打开外部链接。请访问：\n' + url);
+                this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
             }
             dialog.remove();
         });
@@ -3770,32 +3958,24 @@ ${data.message || '程序已加载，等待开始执行'}
 
 
     async showAbout() {
-        const fallbackBuildInfo = { version: '1.6.1 (v53)', buildTime: '未知', author: 'mywwzh' };
-        let buildInfo = { ...fallbackBuildInfo };
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        const unknownText = t('message.unknown');
+        const pickText = (value: unknown, fallback: string) => (typeof value === 'string' && value.trim() ? value.trim() : fallback);
+        let versionLabel = unknownText;
+        let buildTime = unknownText;
+        let author = unknownText;
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
-            if (buildInfoData) {
-                buildInfo = buildInfoData;
+            versionLabel = pickText(buildInfoData?.version, versionLabel);
+            buildTime = pickText(buildInfoData?.buildTime, buildTime);
+            author = pickText(buildInfoData?.author, author);
+            const tag = buildInfoData?.buildTag || buildInfoData?.buildVersion || buildInfoData?.buildNo;
+            if (typeof tag === 'string' && tag.trim() && !/\(v[^)]+\)/i.test(versionLabel)) {
+                const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
+                versionLabel = `${versionLabel} (${normalizedTag})`;
             }
         } catch (error) {
             logWarn('无法读取构建信息:', error);
-        }
-
-        let versionLabel = typeof buildInfo.version === 'string' && buildInfo.version.trim()
-            ? buildInfo.version.trim()
-            : fallbackBuildInfo.version;
-
-        if (!/\(v[^)]+\)/i.test(versionLabel)) {
-            const tag = buildInfo.buildTag || buildInfo.buildVersion || buildInfo.buildNo;
-            if (typeof tag === 'string' && tag.trim()) {
-                const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
-                versionLabel = `${versionLabel} (${normalizedTag})`;
-            } else {
-                const fallbackMatch = fallbackBuildInfo.version.match(/\(v[^)]+\)/i);
-                if (fallbackMatch && fallbackMatch[0]) {
-                    versionLabel = `${versionLabel} ${fallbackMatch[0]}`;
-                }
-            }
         }
 
         const dialog = document.createElement('div');
@@ -3804,22 +3984,21 @@ ${data.message || '程序已加载，等待开始执行'}
             <div class="about-dialog">
                 <div class="about-header">
                     <div class="about-logo">
-                        <img id="about-dialog-icon" src="" width="48" height="48" alt="OICPP IDE">
+                        <img id="about-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
-                    <h2>${this.t('app.about', null, 'About OICPP IDE')}</h2>
+                    <h2>${window.i18n?.t?.('app.about')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="about-info">
-                        <p><strong>${this.t('app.version', null, 'Version')}:</strong> ${versionLabel}</p>
-                        <p><strong>${this.t('app.buildTime', null, 'Build Time')}:</strong> ${buildInfo.buildTime}</p>
-                        <p><strong>${this.t('app.developer', null, 'Developer')}:</strong> ${buildInfo.author}</p>
-                        <p><strong>${this.t('app.description', null, 'Description')}:</strong> ${this.t('app.descriptionText', null, 'C++ development environment optimized for OI competitors')}</p>
-                        <p><strong>${this.t('app.qqGroup', null, 'QQ Group')}:</strong> 931577836</p>
-                        <p><strong>${this.t('app.website', null, 'Website')}:</strong> https://oicppide.com</p>
+                        <p><strong>${window.i18n?.t?.('app.version')}:</strong> ${versionLabel}</p>
+                        <p><strong>${window.i18n?.t?.('app.buildTime')}:</strong> ${buildTime}</p>
+                        <p><strong>${window.i18n?.t?.('app.developer')}:</strong> ${author}</p>
+                        <p><strong>${window.i18n?.t?.('app.description')}:</strong> ${window.i18n?.t?.('app.descriptionText')}</p>
+                        <p><strong>${window.i18n?.t?.('app.website')}:</strong> https://github.com/qingyingge/oicpp-plus</p>
                     </div>
                 </div>
                 <div  class="about-footer">
-                    <button id="about-close-btn">${this.t('dialog.close', null, 'Close')}</button>
+                    <button id="about-close-btn">${window.i18n?.t?.('dialog.close')}</button>
                 </div>
             </div>
         `;
@@ -3831,17 +4010,31 @@ ${data.message || '程序已加载，等待开始执行'}
         
     }
 
-    showOpenSourceLicenses() {
-        const t = this.t.bind(this);
+    async showOpenSourceLicenses() {
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        // 构建信息由主进程读取，渲染层没有 Node 的 require
+        const unknownText = t('message.unknown');
+        let clangdVersion = unknownText;
+        let clangFormatVersion = unknownText;
+        try {
+            const buildInfo = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
+            if (typeof buildInfo?.clangdVersion === 'string' && buildInfo.clangdVersion.trim()) {
+                clangdVersion = buildInfo.clangdVersion.trim();
+            }
+            if (typeof buildInfo?.clangFormatVersion === 'string' && buildInfo.clangFormatVersion.trim()) {
+                clangFormatVersion = buildInfo.clangFormatVersion.trim();
+            }
+        } catch (_) {}
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'clangd', license: 'Apache-2.0', url: 'https://github.com/llvm/llvm-project' },
+            { name: `LLVM clangd ${clangdVersion}`, license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
+            { name: `LLVM clang-format ${clangFormatVersion}`, license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
             { name: 'xterm.js', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
-            { name: 'xterm-addon-fit', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
+            { name: '@xterm/addon-fit', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: 'node-pty', license: 'MIT', url: 'https://github.com/nicely-bot/node-pty' },
             { name: 'markdown-it', license: 'MIT', url: 'https://github.com/markdown-it/markdown-it' },
-            { name: 'markdown-it-katex', license: 'MIT', url: 'https://github.com/iktakahiro/markdown-it-katex' },
+            { name: '@iktakahiro/markdown-it-katex', license: 'MIT', url: 'https://github.com/iktakahiro/markdown-it-katex' },
             { name: 'markdown-it-task-lists', license: 'ISC', url: 'https://github.com/revin/markdown-it-task-lists' },
             { name: 'markdown-it-image-figures', license: 'MIT', url: 'https://github.com/Antonio-Laguna/markdown-it-image-figures' },
             { name: 'highlight.js', license: 'BSD-3-Clause', url: 'https://github.com/highlightjs/highlight.js' },
@@ -3860,7 +4053,8 @@ ${data.message || '程序已加载，等待开始执行'}
             { name: '7zip-bin', license: 'MIT', url: 'https://github.com/develar/7zip-bin' },
             { name: 'winreg', license: 'BSD-2-Clause', url: 'https://github.com/fresc81/node-winreg' },
             { name: 'monaco-editor-webpack-plugin', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'icojs', license: 'MIT', url: 'https://github.com/nicely-bot/icojs' }
+            { name: 'icojs', license: 'MIT', url: 'https://github.com/nicely-bot/icojs' },
+            { name: 'i18next', license: 'MIT', url: 'https://github.com/i18next/i18next' }
         ];
 
         const libRows = openSourceLibs.map(lib => `
@@ -3868,6 +4062,9 @@ ${data.message || '程序已加载，等待开始执行'}
                 <td class="oss-lib-name">${lib.name}</td>
                 <td class="oss-lib-license">${lib.license}</td>
                 <td class="oss-lib-url">${lib.url}</td>
+                <td class="oss-lib-license-text">${lib.licenseFile
+                    ? `<button type="button" class="oss-license-link" data-license-file="${lib.licenseFile}">${t('openSource.viewLicense')}</button>`
+                    : ''}</td>
             </tr>
         `).join('');
 
@@ -3876,28 +4073,31 @@ ${data.message || '程序已加载，等待开始执行'}
         dialog.innerHTML = `
             <div class="about-dialog oss-dialog">
                 <div class="about-header">
-                    <h2>${t('openSource.title', null, 'Open Source Licenses')}</h2>
+                    <h2>${t('openSource.title')}</h2>
                 </div>
                 <div class="about-content oss-content">
-                    <p class="oss-intro">${t('openSource.intro', null, 'OICPP IDE uses the following open-source software. We thank their developers and contributors.')}</p>
+                    <p class="oss-intro">${t('openSource.intro')}</p>
                     <div class="oss-table-wrap">
                         <table class="oss-table">
                             <thead>
                                 <tr>
-                                    <th>${t('openSource.name', null, 'Name')}</th>
-                                    <th>${t('openSource.license', null, 'License')}</th>
-                                    <th>${t('openSource.projectUrl', null, 'Project URL')}</th>
-                                </tr>
+<tr>
+                                    <th>${t('openSource.name')}</th>
+                                    <th>${t('openSource.license')}</th>
+                                    <th>${t('openSource.projectUrl')}</th>
+                                    <th>${t('openSource.licenseText')}</th>
+                                </tr></tr>
                             </thead>
                             <tbody>
                                 ${libRows}
                             </tbody>
                         </table>
                     </div>
+                    <pre class="oss-license-body" id="oss-license-body" hidden></pre>
                 </div>
                 <div class="about-footer">
-                    <button id="oss-close-btn">${t('dialog.close', null, 'Close')}</button>
-                </div>
+<button id="oss-back-btn" hidden>${t('openSource.back')}</button>
+                    <button id="oss-close-btn">${t('dialog.close')}</button></div>
             </div>
         `;
         document.body.appendChild(dialog);
@@ -3909,13 +4109,48 @@ ${data.message || '程序已加载，等待开始执行'}
             });
         }
 
+        const licenseBody = dialog.querySelector('#oss-license-body') as HTMLElement | null;
+        const tableWrap = dialog.querySelector('.oss-table-wrap') as HTMLElement | null;
+        const backBtn = dialog.querySelector('#oss-back-btn') as HTMLElement | null;
+        const showLicense = async (fileName: string | undefined) => {
+            const text = await (window.electronAPI as unknown as { readThirdPartyLicense?: (name: string | undefined) => Promise<string | null> } | undefined)?.readThirdPartyLicense?.(fileName);
+            if (!licenseBody) return;
+            if (!text) {
+                licenseBody.textContent = t('openSource.licenseLoadFailed');
+                licenseBody.hidden = false;
+                if (tableWrap) tableWrap.hidden = true;
+                if (backBtn) backBtn.hidden = false;
+                return;
+            }
+            licenseBody.textContent = text;
+            licenseBody.hidden = false;
+            if (tableWrap) tableWrap.hidden = true;
+            if (backBtn) backBtn.hidden = false;
+            licenseBody.scrollTop = 0;
+        };
+        dialog.querySelectorAll('.oss-license-link').forEach((button) => {
+            button.addEventListener('click', () => {
+                showLicense((button as HTMLElement).dataset['licenseFile']).catch(() => null);
+            });
+        });
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                if (licenseBody) {
+                    licenseBody.hidden = true;
+                    licenseBody.textContent = '';
+                }
+                if (tableWrap) tableWrap.hidden = false;
+                backBtn.hidden = true;
+            });
+        }
+
         dialog.addEventListener('click', (e) => {
             if (e.target === dialog) {
                 dialog.remove();
             }
         });
 
-        const escHandler = (e) => {
+        const escHandler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 dialog.remove();
                 document.removeEventListener('keydown', escHandler);
@@ -3927,7 +4162,7 @@ ${data.message || '程序已加载，等待开始执行'}
     async setAboutDialogIcon() {
         try {
             const userIconPath = await window.electronAPI.getUserIconPath();
-            const aboutIcon = document.getElementById('about-dialog-icon');
+            const aboutIcon = document.getElementById('about-dialog-icon') as HTMLImageElement | null;
             if (aboutIcon) {
                 aboutIcon.src = userIconPath;
             }
@@ -3939,7 +4174,7 @@ ${data.message || '程序已加载，等待开始执行'}
     async setAppIcon() {
         try {
             const userIconPath = await window.electronAPI.getUserIconPath();
-            const appIcon = document.getElementById('app-icon');
+            const appIcon = document.getElementById('app-icon') as HTMLImageElement | null;
             if (appIcon) {
                 appIcon.src = userIconPath;
             }
@@ -3948,7 +4183,7 @@ ${data.message || '程序已加载，等待开始执行'}
         }
     }
 
-    setupAboutDialogListeners(dialog) {
+    setupAboutDialogListeners(dialog: HTMLElement) {
         const closeBtn = dialog.querySelector('#about-close-btn');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
@@ -3965,14 +4200,14 @@ ${data.message || '程序已加载，等待开始执行'}
 
     checkForUpdates() {
         if (this.updateDownloadState.autoChecking) {
-            this.showMessage(this.t('message.updateAutoChecking', null, 'Auto check in progress.'), 'info');
-            return;
+            this.showMessage(window.i18n?.t?.('message.updateAutoChecking'), 'info');
+        return;
         }
 
         if (this.updateDownloadState.downloading) {
             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
-            this.showMessage(this.t('message.updateDownloading', { version: versionSuffix, progress: this.updateDownloadState.progress }, `Downloading update${versionSuffix}, ${this.updateDownloadState.progress}%`), 'info');
-            return;
+            this.showMessage(window.i18n?.t?.('message.updateDownloading', { version: versionSuffix, progress: this.updateDownloadState.progress }), 'info');
+        return;
         }
 
         if (typeof require !== 'undefined') {
@@ -3985,11 +4220,13 @@ ${data.message || '程序已加载，等待开始执行'}
                 this.showUpdateCheckingDialog();
             } catch (error) {
                 logError('[渲染进程] 检查更新失败:', error);
-                alert(this.t('message.updateUnavailable', null, 'Update checking is temporarily unavailable'));
+                const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+                this.showMessage(t('message.updateUnavailable'), 'error');
             }
         } else {
             logWarn('[渲染进程] Electron环境不可用，无法检查更新');
-            alert(this.t('message.updateElectronOnly', null, 'Update checking is available only in the Electron application'));
+            const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+            this.showMessage(t('message.updateElectronOnly'), 'error');
         }
     }
 
@@ -4000,14 +4237,14 @@ ${data.message || '程序已加载，等待开始执行'}
         dialog.innerHTML = `
             <div class="update-dialog">
                 <div class="update-header">
-                    <h3>${this.t('menu.checkUpdate', null, 'Check for Updates')}</h3>
+                    <h3>${window.i18n?.t?.('menu.checkUpdate')}</h3>
                 </div>
                 <div class="update-content">
                     <div class="update-spinner"></div>
-                    <p>${this.t('message.updateChecking', null, 'Checking for updates, please wait...')}</p>
+                    <p>${window.i18n?.t?.('message.updateChecking')}</p>
                 </div>
                 <div class="update-footer">
-                    <button onclick="this.parentElement.parentElement.parentElement.remove()">${this.t('dialog.cancel', null, 'Cancel')}</button>
+                    <button onclick="this.parentElement.parentElement.parentElement.remove()">${window.i18n?.t?.('dialog.cancel')}</button>
                 </div>
             </div>
         `;
@@ -4021,7 +4258,7 @@ ${data.message || '程序已加载，等待开始执行'}
         }, 3000);
     }
 
-    showMessage(message, type = 'info', durationMs = 3000) {
+    showMessage(message: string, type = 'info', durationMs = 3000) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message-toast ${type}`;
         messageDiv.textContent = message;
@@ -4054,7 +4291,7 @@ ${data.message || '程序已加载，等待开始执行'}
         
         try {
             if (type === 'error') {
-                const errObj = message instanceof Error ? message : new Error(String(message));
+                const errObj = new Error(message);
                 logError('[UIToastError]', { message: String(message), stack: errObj.stack });
             }
         } catch (_) {}
@@ -4075,9 +4312,10 @@ ${data.message || '程序已加载，等待开始执行'}
             
             if (this.editorManager && this.editorManager.currentEditor) {
                 const editor = this.editorManager.currentEditor;
-                const pos = editor.cursorPosition || { line: 1, column: 1 };
+                const position = editor.getPosition();
+                const pos = position ? { line: position.lineNumber, column: position.column } : { line: 1, column: 1 };
                 
-                if (cursor) cursor.textContent = `行 ${pos.line}, 列 ${pos.column}`;
+                if (cursor) cursor.textContent = `${window.i18n.t('cloudCompile.line', { line: pos.line })}, ${window.i18n.t('cloudCompile.column', { col: pos.column })}`;
                 if (encoding) encoding.textContent = 'UTF-8';
                 if (language) language.textContent = 'C++';
             }
@@ -4094,7 +4332,7 @@ ${data.message || '程序已加载，等待开始执行'}
         const lspItem = document.getElementById('lsp-status-item');
         if (!lspItem) return;
 
-        const icon = lspItem.querySelector('.lsp-status-icon');
+        const icon = lspItem.querySelector('.lsp-status-icon') as HTMLElement | null;
         if (!icon) return;
         const label = lspItem.querySelector('.lsp-status-label');
 
@@ -4104,9 +4342,9 @@ ${data.message || '程序已加载，等待开始执行'}
             if (guardedInfo) {
                 icon.textContent = '⊘';
                 icon.style.color = '#111';
-                if (label) label.textContent = this.t('lsp.disabledLabel', null, 'LSP 已禁用');
+                if (label) label.textContent = window.i18n?.t?.('lsp.disabledLabel');
                 lspItem.classList.add('warning');
-                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled', null, '当前文件包含潜在超大静态数组，已禁用 clangd LSP。');
+                lspItem.title = guardedInfo.message || window.i18n?.t?.('lsp.largeArrayDisabled');
                 return;
             }
 
@@ -4116,22 +4354,22 @@ ${data.message || '程序已加载，等待开始执行'}
                 case 'ready':
                     icon.textContent = '✓';
                     icon.style.color = '#4ec9b0';
-                    lspItem.title = 'clangd 语言服务器已就绪';
+                    lspItem.title = window.i18n.t('lsp.statusReady');
                     break;
                 case 'starting':
                     icon.textContent = '⟳';
                     icon.style.color = '#dcdcaa';
-                    lspItem.title = 'clangd 语言服务器正在启动...';
+                    lspItem.title = window.i18n.t('lsp.statusStarting');
                     break;
                 case 'unavailable':
                     icon.textContent = '✗';
                     icon.style.color = '#f44747';
-                    lspItem.title = 'clangd 语言服务器不可用';
+                    lspItem.title = window.i18n.t('lsp.statusUnavailable');
                     break;
                 default:
                     icon.textContent = '◌';
                     icon.style.color = '#808080';
-                    lspItem.title = 'clangd 语言服务器空闲';
+                    lspItem.title = window.i18n.t('lsp.statusIdle');
                     break;
             }
         } catch (_) {
@@ -4172,14 +4410,15 @@ ${data.message || '程序已加载，等待开始执行'}
                 warningsEl.style.display = 'none';
             }
 
-            summaryItem.title = `${counts.errors} 个错误, ${counts.warnings} 个警告`;
+            summaryItem.title = window.i18n.t('statusbar.errorsWarningsSummary', { errors: counts.errors, warnings: counts.warnings });
         } catch (_) {
             summaryItem.style.display = 'none';
         }
     }
 
-    onFileSaved(filePath) {
-        logInfo('文件已保存:', filePath);
+    onFileSaved(filePath: string) {
+        // 不再在此打「文件已保存」：调用点 onFileSaved 回调已打「收到 file-saved」，
+        // 两行日志让「一次事件一行」的计数前提失效
         if (this.editorManager) {
             this.editorManager.markFileSaved(filePath);
         }
@@ -4197,13 +4436,21 @@ ${data.message || '程序已加载，等待开始执行'}
     startLspIfNeeded() {
         if (!this.editorManager) return;
         try {
+            // 无 C/C++ 文件时不启动 clangd，与 editorManager._initLspProactively 的
+            // 判断保持一致：启动 clangd 会派生 g++ --query-driver 子进程并做后台索引，
+            // 与首屏抢 CPU 和磁盘
+            if (!this.editorManager.hasAnyCppModel || !this.editorManager.hasAnyCppModel()) {
+                logInfo('[LSP] 当前无 C/C++ 文件，跳过启动；打开 C/C++ 文件时再启动。');
+                this.updateLspStatusBar();
+                return;
+            }
             // 仅在 LSP 客户端可用时启动
             if (this.editorManager.lspClient || window.lspClient) {
                 this.editorManager.ensureLspReady().then(() => {
                     logInfo('[LSP] 应用初始化后 LSP 已就绪');
                     this.updateLspStatusBar();
-                }).catch(err => {
-                    logWarn('[LSP] 应用初始化后 LSP 启动失败（将在打开文件时重试）:', err?.message || err);
+                }).catch((err: unknown) => {
+                    logWarn('[LSP] 应用初始化后 LSP 启动失败（将在打开文件时重试）:', (err as Errorish)?.message || err);
                     this.updateLspStatusBar();
                 });
                 // 定时更新 LSP 状态（状态可能在异步中变化）
@@ -4211,7 +4458,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 setTimeout(() => this.updateLspStatusBar(), 8000);
             }
         } catch (err) {
-            logWarn('[LSP] startLspIfNeeded 出错:', err?.message || err);
+            logWarn('[LSP] startLspIfNeeded 出错:', (err as Errorish)?.message || err);
         }
     }
 
@@ -4235,14 +4482,14 @@ ${data.message || '程序已加载，等待开始执行'}
                 if (this.initialized) {
                     this.updateMarkerStatusBar();
                     this.updateLspStatusBar();
-                }
+            }
             }, 3000);
         } catch (err) {
-            logWarn('设置标记变化监听失败:', err?.message || err);
+            logWarn('设置标记变化监听失败:', (err as Errorish)?.message || err);
         }
     }
 
-    onFolderOpened(folderPath) {
+    onFolderOpened(folderPath: string) {
         logInfo('文件夹已打开:', folderPath);
         
         // 关闭欢迎页：它同时负责恢复编辑器区域与侧边栏的显示，
@@ -4275,8 +4522,8 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     async formatCode() {
-        if (!this.ensureLocalFileForFeature('格式化')) {
-            return;
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureFormat'))) {
+        return;
         }
         if (this.editorManager && this.editorManager.formatCode) {
             try {
@@ -4285,7 +4532,7 @@ ${data.message || '程序已加载，等待开始执行'}
                     logInfo('代码格式化成功');
                 } else {
                     logInfo('代码格式化失败');
-                }
+            }
             } catch (error) {
                 logError('代码格式化出错:', error);
             }
@@ -4296,13 +4543,13 @@ ${data.message || '程序已加载，等待开始执行'}
 
     showFindReplace() {
         if (this.editorManager && this.editorManager.currentEditor) {
-            this.editorManager.currentEditor.trigger('keyboard', 'actions.find');
+            this.editorManager.currentEditor.trigger('keyboard', 'actions.find', undefined);
         }
     }
 
     compileAndRun() {
-        if (!this.ensureLocalFileForFeature('编译并运行')) {
-            return;
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureCompileAndRun'))) {
+        return;
         }
         if (this.compilerManager) {
             this.compilerManager.compileAndRun();
@@ -4349,40 +4596,40 @@ ${data.message || '程序已加载，等待开始执行'}
         if (window.tabManager && typeof window.tabManager.openFile === 'function') {
             const originalOpenFile = window.tabManager.openFile.bind(window.tabManager);
             const self = this;
-            window.tabManager.openFile = async function (fileName, content, isNew, filePath) {
-                await originalOpenFile(fileName, content, isNew, filePath);
+            window.tabManager.openFile = async function (fileName: string, content: string, isNew: boolean, filePath?: unknown) {
+                await originalOpenFile(fileName, content, isNew, filePath as string);
 
                 // 记录文件历史
-                let actualPath = null;
+                let actualPath: string | null = null;
                 if (filePath && typeof filePath === 'object' && !Array.isArray(filePath)) {
-                    actualPath = filePath.filePath || null;
+                    actualPath = (filePath as { filePath?: string }).filePath || null;
                 } else if (typeof filePath === 'string') {
                     actualPath = filePath;
-                }
+            }
                 if (actualPath && !isNew && window.electronAPI && typeof window.electronAPI.addToFileHistory === 'function') {
                     try {
                         await window.electronAPI.addToFileHistory(actualPath);
                     } catch (_) {}
-                }
+            }
                 debouncedSave();
             };
         }
     }
 
-    debounce(fn, delay) {
-        let timer = null;
-        const debounced = function (...args) {
+    debounce(fn: (...args: unknown[]) => void, delay: number): DebouncedFn {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const debounced = function (...args: unknown[]): void {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
                 fn(...args);
                 timer = null;
             }, delay);
         };
-        debounced.cancel = function () {
+        (debounced as DebouncedFn).cancel = function (): void {
             if (timer) clearTimeout(timer);
             timer = null;
         };
-        return debounced;
+        return debounced as DebouncedFn;
     }
 
     async openBuiltinBrowser() {
@@ -4390,25 +4637,25 @@ ${data.message || '程序已加载，等待开始执行'}
             window.tabManager.openBrowserTab({});
         } else {
             logError('TabManager 未就绪，无法打开浏览器');
-            this.showMessage?.(window.i18n?.t?.('browser.title') || '浏览器功能不可用', 'error');
+            this.showMessage?.(window.i18n?.t?.('message.browserUnavailable'), 'error');
         }
     }
 
     async openFileHistory() {
         if (!window.electronAPI || typeof window.electronAPI.getFileHistory !== 'function') {
-            this.showMessage(this.t('message.fileHistoryUnavailable', null, 'File history is unavailable'), 'error');
-            return;
+            this.showMessage(window.i18n?.t?.('message.fileHistoryUnavailable'), 'error');
+        return;
         }
         try {
             const history = await window.electronAPI.getFileHistory();
             this.showFileHistoryDialog(Array.isArray(history) ? history : []);
         } catch (error) {
             logError('获取文件历史失败:', error);
-            this.showMessage(this.t('message.fileHistoryLoadFailed', null, 'Failed to load file history'), 'error');
+            this.showMessage(window.i18n?.t?.('message.fileHistoryLoadFailed'), 'error');
         }
     }
 
-    showFileHistoryDialog(history) {
+    showFileHistoryDialog(history: FileHistoryEntry[]) {
         // 移除已存在的对话框
         const existing = document.getElementById('file-history-overlay');
         if (existing) existing.remove();
@@ -4423,14 +4670,12 @@ ${data.message || '程序已加载，等待开始执行'}
         // 标题栏
         const titleBar = document.createElement('div');
         titleBar.className = 'file-history-titlebar';
-
-        const titleEl = document.createElement('span');
-        titleEl.className = 'file-history-title';
-        titleBar.appendChild(titleEl);
+        titleBar.innerHTML = `<span class="file-history-title">${window.i18n?.t?.('fileHistory.title')}</span>`;
 
         const closeBtn = document.createElement('button');
         closeBtn.className = 'file-history-close-btn';
         closeBtn.innerHTML = '&times;';
+        closeBtn.setAttribute('aria-label', window.i18n?.t?.('dialog.cancel'));
         closeBtn.addEventListener('click', () => overlay.remove());
         titleBar.appendChild(closeBtn);
         dialog.appendChild(titleBar);
@@ -4439,6 +4684,7 @@ ${data.message || '程序已加载，等待开始执行'}
         if (history.length > 0) {
             const stats = document.createElement('div');
             stats.className = 'file-history-stats';
+            stats.textContent = window.i18n?.t?.('fileHistory.totalFiles', { count: history.length });
             dialog.appendChild(stats);
         }
 
@@ -4449,6 +4695,7 @@ ${data.message || '程序已加载，等待开始执行'}
         if (history.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'file-history-empty';
+            empty.textContent = window.i18n?.t?.('fileHistory.noHistory');
             listContainer.appendChild(empty);
         } else {
             for (const item of history) {
@@ -4465,6 +4712,7 @@ ${data.message || '程序已加载，等待开始执行'}
 
                 const name = document.createElement('div');
                 name.className = 'file-history-name';
+                name.textContent = item.name || window.i18n?.t?.('fileHistory.unknownFile');
                 name.title = item.name || '';
 
                 const pathEl = document.createElement('div');
@@ -4477,6 +4725,12 @@ ${data.message || '程序已加载，等待开始执行'}
 
                 const time = document.createElement('div');
                 time.className = 'file-history-time';
+                try {
+                    const date = new Date(item.lastOpened as number);
+                    time.textContent = this.formatHistoryTime(date);
+                } catch (_) {
+                    time.textContent = '';
+            }
 
                 row.appendChild(icon);
                 row.appendChild(info);
@@ -4500,17 +4754,17 @@ ${data.message || '程序已加载，等待开始执行'}
 
             const clearBtn = document.createElement('button');
             clearBtn.className = 'file-history-clear-btn';
+            clearBtn.textContent = window.i18n?.t?.('fileHistory.clearHistory');
             clearBtn.addEventListener('click', async () => {
-                const confirmText = this.t('fileHistory.confirmClear', null, 'Are you sure you want to clear all file history?');
-                if (!window.dialogManager || typeof window.dialogManager.showConfirm !== 'function') {
-                    if (!confirm(confirmText)) return;
+                if (!window.dialogManager || typeof window.dialogManager.showConfirmDialog !== 'function') {
+                    if (!confirm(window.i18n?.t?.('fileHistory.clearConfirm'))) return;
                 } else {
-                    const confirmed = await window.dialogManager.showConfirm(confirmText);
+                    const confirmed = await window.dialogManager.showConfirmDialog(window.i18n?.t?.('fileHistory.clearHistory'), window.i18n?.t?.('fileHistory.clearConfirm'));
                     if (!confirmed) return;
-                }
+            }
                 await window.electronAPI.clearFileHistory();
                 overlay.remove();
-                this.showMessage(this.t('message.fileHistoryCleared', null, 'File history cleared'), 'success');
+                this.showMessage(window.i18n?.t?.('message.fileHistoryCleared'), 'success');
             });
 
             footer.appendChild(clearBtn);
@@ -4520,79 +4774,26 @@ ${data.message || '程序已加载，等待开始执行'}
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
-        // 应用文案（含动态参数的文本无法由 data-i18n 自动更新，统一在此处理）
-        this.applyFileHistoryDialogTexts(overlay, history);
-
-        // 语言切换时刷新对话框文案
-        if (window.i18n && typeof window.i18n.onChange === 'function') {
-            const unsubscribe = window.i18n.onChange(() => {
-                if (!document.body.contains(overlay)) {
-                    unsubscribe();
-                    return;
-                }
-                this.applyFileHistoryDialogTexts(overlay, history);
-            });
-        }
-
         // 点击外部关闭
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) overlay.remove();
         });
     }
 
-    applyFileHistoryDialogTexts(root, history) {
-        const setText = (selector, text) => {
-            const el = root.querySelector(selector);
-            if (el) el.textContent = text;
-        };
-
-        setText('.file-history-title', this.t('fileHistory.title', null, 'File History'));
-
-        const closeBtn = root.querySelector('.file-history-close-btn');
-        if (closeBtn) {
-            closeBtn.setAttribute('aria-label', this.t('fileHistory.close', null, 'Close'));
-        }
-
-        if (history.length > 0) {
-            setText('.file-history-stats', this.t('fileHistory.stats', { count: history.length }, `${history.length} files`));
-        } else {
-            setText('.file-history-empty', this.t('fileHistory.empty', null, 'No file history yet'));
-        }
-
-        setText('.file-history-clear-btn', this.t('fileHistory.clear', null, 'Clear History'));
-
-        root.querySelectorAll('.file-history-item').forEach((row, index) => {
-            const item = history[index];
-            if (!item) return;
-
-            const nameEl = row.querySelector('.file-history-name');
-            if (nameEl) {
-                nameEl.textContent = item.name || this.t('fileHistory.unknownFile', null, 'Unknown file');
-            }
-
-            const timeEl = row.querySelector('.file-history-time');
-            if (timeEl) {
-                try {
-                    timeEl.textContent = this.formatHistoryTime(new Date(item.lastOpened));
-                } catch (_) {
-                    timeEl.textContent = '';
-                }
-            }
-        });
-    }
-
-    formatHistoryTime(date) {
+    formatHistoryTime(date: Date) {
         try {
             const now = new Date();
-            const diffMs = now - date;
+            const diffMs = now.getTime() - date.getTime();
             const diffMin = Math.floor(diffMs / 60000);
             const diffHour = Math.floor(diffMs / 3600000);
             const diffDay = Math.floor(diffMs / 86400000);
 
-            if (diffMin < 1) return this.t('fileHistory.justNow', null, 'Just now');
-            if (diffMin < 60) return this.t('fileHistory.minutesAgo', { count: diffMin }, `${diffMin} min ago`);
-            if (diffHour < 24) return this.t('fileHistory.hoursAgo', { count: diffHour }, `${diffHour} h ago`);
-            if (diffDay < 7) return this.t('fileHistory.daysAgo', { count: diffDay }, `${diffDay} d ago`);
+            if (diffMin < 1) return window.i18n.t('app.justNow');
+            // count 是 i18next 选复数后缀的唯一依据（{n} 只是文案里的占位），
+            // 少了它 app.*Ago 的 _one 永远取不到，界面会直接显示裸键名 —— CI 的 I9 钉这条。
+            if (diffMin < 60) return window.i18n.t('app.minutesAgo', { n: diffMin, count: diffMin });
+            if (diffHour < 24) return window.i18n.t('app.hoursAgo', { n: diffHour, count: diffHour });
+            if (diffDay < 7) return window.i18n.t('app.daysAgo', { n: diffDay, count: diffDay });
 
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -4658,7 +4859,7 @@ ${data.message || '程序已加载，等待开始执行'}
                     }
                 } catch (err) {
                     logWarn(`[自动恢复] 无法恢复文件: ${tab.filePath}`, err);
-                }
+            }
             }
         } catch (err) {
             logWarn('[自动恢复] 恢复标签页失败:', err);
@@ -4666,4 +4867,8 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 }
 
-window.OICPPApp = OICPPApp;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = OICPPApp;
+} else {
+    window.OICPPApp = OICPPApp;
+}

@@ -1,34 +1,92 @@
-// 终端渲染 oh-my-posh 等主题时需要 Nerd Font 图标字体。
-// 这些字体不一定安装，浏览器会自动跳过不可用的字体，因此可以安全地作为回退链使用。
-// 仅使用单宽（Mono）变体，避免图标按双宽渲染导致提示符错位。
-const TERMINAL_NERD_FONT_FALLBACKS = [
-    'Symbols Nerd Font Mono',
-    'CaskaydiaCove NFM',
-    'CaskaydiaCove Nerd Font Mono',
-    'Cascadia Mono NF',
-    'JetBrainsMono NFM',
-    'JetBrainsMono Nerd Font Mono',
-    'MesloLGS NF',
-    'MesloLGM Nerd Font Mono',
-    'Hack NFM',
-    'Hack Nerd Font Mono',
-    'FiraCode NFM',
-    'FiraCode Nerd Font Mono',
-    'SauceCodePro NFM',
-    'SauceCodePro Nerd Font Mono',
-    'UbuntuMono NFM',
-    'UbuntuMono Nerd Font Mono',
-    'NotoMono NFM',
-    'NotoMono Nerd Font Mono',
-    'DejaVuSansMono NFM',
-    'DejaVuSansMono Nerd Font Mono',
-    'VictorMono NFM',
-    'SpaceMono NFM',
-    'RobotoMono NFM'
-];
+interface TerminalStatus {
+    available: boolean;
+    reason: string;
+    detail: string;
+}
+
+interface AppLike {
+    settings?: { font?: string; terminalFontSize?: number; theme?: string; terminalStartupCommand?: string };
+    getActiveFilePath?: () => string | null;
+    isCloudFilePath?: (path: string) => boolean;
+}
+
+interface TerminalSession {
+    terminalId: string;
+    tab: HTMLButtonElement;
+    pane: HTMLDivElement;
+    mount: HTMLDivElement;
+    terminal: XtermTerminal;
+    fitAddon: XtermFitAddon;
+    remoteId: string | null;
+    cwd: string | null;
+    shell: string | null;
+    inputBridge: ((data: string) => void) | null;
+    muteRemoteOutput: boolean;
+}
+
+type XtermTerminal = import('xterm').Terminal;
+type XtermBufferLine = import('xterm').IBufferLine;
+type XtermBufferRange = import('xterm').IBufferRange;
+type XtermLink = import('xterm').ILink;
+
+// @xterm/addon-fit declares FitAddon inside a module augmentation, so its
+// instance type is not reachable through an import type reference. Mirror the
+// members this panel relies on.
+interface XtermFitAddon {
+    activate(terminal: XtermTerminal): void;
+    dispose(): void;
+    fit(): void;
+    proposeDimensions(): { rows: number; cols: number } | undefined;
+}
+
+interface TerminalCreateResult {
+    ok?: boolean;
+    terminalId?: string;
+    cwd?: string;
+    shell?: string;
+    error?: string;
+}
+
+interface TerminalEventData {
+    terminalId?: unknown;
+    data?: unknown;
+    exitCode?: unknown;
+    signal?: unknown;
+}
+
+interface TerminalShieldHandlers {
+    keydown: (event: KeyboardEvent) => void;
+    wheel: (event: WheelEvent) => void;
+}
+
+interface HTMLElement {
+    _terminalKeyShielded?: boolean;
+    _terminalShieldHandlers?: TerminalShieldHandlers | null;
+}
 
 class IntegratedTerminalPanel {
-    constructor(options = {}) {
+    getApp: () => unknown;
+    sessions: Map<string, TerminalSession>;
+    activeId: string | null;
+    visible: boolean;
+    initialized: boolean;
+    status: TerminalStatus;
+    panel: HTMLElement | null;
+    resizer: HTMLElement | null;
+    tabs: HTMLElement | null;
+    body: HTMLElement | null;
+    empty: HTMLElement | null;
+    statusNode: HTMLElement | null;
+    newBtn: HTMLElement | null;
+    hideBtn: HTMLElement | null;
+    counter: number;
+    panelHeight: number;
+    _dragState: { startY: number; startHeight: number } | null;
+    fixedTerminalFontSize: number;
+    _resizeObserver: ResizeObserver | null;
+    _windowResizeHandler: (() => void) | undefined;
+
+    constructor(options: { getApp?: () => unknown } = {}) {
         this.getApp = typeof options.getApp === 'function' ? options.getApp : () => null;
         this.sessions = new Map();
         this.activeId = null;
@@ -72,7 +130,36 @@ class IntegratedTerminalPanel {
 
         this.bindEvents();
         await this.refreshFeatureStatus();
+        // 标签文案与空状态是 JS 直接写的，data-i18n 覆盖不到。延后一拍执行，
+        // 避开 i18n 的 _applyToDOM()（它在 _notifyListeners() 之后同步跑）。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshTranslations(), 0);
+        });
         this.initialized = true;
+    }
+
+    /**
+     * 语言切换后重建 JS 写入的译文：终端标签页与空状态提示。
+     * 终端回滚缓冲里的历史文本无法改写，属预期行为。
+     */
+    refreshTranslations(): void {
+        try {
+            if (this.tabs) {
+                this.tabs.querySelectorAll('.integrated-terminal-tab').forEach((tab) => {
+                    const counter = Number((tab as HTMLElement).dataset['terminalCounter']);
+                    const label = tab.querySelector('.terminal-tab-label');
+                    // t() 取不到键时返回键名本身，不需要再写 || 兜底（I5 会拦）
+                    if (label && Number.isFinite(counter)) {
+                        label.textContent = window.i18n.t('terminal.tabLabel', { counter });
+                    }
+                    const close = tab.querySelector('.terminal-tab-close');
+                    if (close) {
+                        close.setAttribute('aria-label', window.i18n.t('terminal.closeTerminal'));
+                    }
+                });
+            }
+            this.renderEmptyState();
+        } catch (_) { }
     }
 
     bindEvents() {
@@ -103,15 +190,17 @@ class IntegratedTerminalPanel {
         this._resizeObserver = new ResizeObserver(() => {
             this.fitActiveTerminal();
         });
-        this._resizeObserver.observe(this.panel);
+        if (this.panel) {
+            this._resizeObserver.observe(this.panel);
+        }
 
-        window.addEventListener('resize', () => {
-            this.fitActiveTerminal();
-        });
+        this._windowResizeHandler = () => this.fitActiveTerminal();
+        window.addEventListener('resize', this._windowResizeHandler);
     }
 
-    startResizeDrag(event) {
-        if (!this.panel || !this.visible) {
+    startResizeDrag(event: PointerEvent) {
+        const resizer = this.resizer;
+        if (!this.panel || !this.visible || !resizer) {
             return;
         }
 
@@ -120,10 +209,10 @@ class IntegratedTerminalPanel {
             startHeight: this.panel.getBoundingClientRect().height
         };
 
-        this.resizer.classList.add('dragging');
-        this.resizer.setPointerCapture(event.pointerId);
+        resizer.classList.add('dragging');
+        resizer.setPointerCapture(event.pointerId);
 
-        const onMove = (moveEvent) => {
+        const onMove = (moveEvent: PointerEvent) => {
             if (!this._dragState) {
                 return;
             }
@@ -135,18 +224,18 @@ class IntegratedTerminalPanel {
 
         const stop = () => {
             this._dragState = null;
-            this.resizer.classList.remove('dragging');
-            this.resizer.removeEventListener('pointermove', onMove);
-            this.resizer.removeEventListener('pointerup', stop);
-            this.resizer.removeEventListener('pointercancel', stop);
+            resizer.classList.remove('dragging');
+            resizer.removeEventListener('pointermove', onMove);
+            resizer.removeEventListener('pointerup', stop);
+            resizer.removeEventListener('pointercancel', stop);
         };
 
-        this.resizer.addEventListener('pointermove', onMove);
-        this.resizer.addEventListener('pointerup', stop);
-        this.resizer.addEventListener('pointercancel', stop);
+        resizer.addEventListener('pointermove', onMove);
+        resizer.addEventListener('pointerup', stop);
+        resizer.addEventListener('pointercancel', stop);
     }
 
-    setPanelHeight(height) {
+    setPanelHeight(height: number) {
         if (!this.panel) {
             return;
         }
@@ -162,8 +251,8 @@ class IntegratedTerminalPanel {
         if (!window.electronAPI?.getTerminalFeatureStatus) {
             this.status = {
                 available: false,
-                reason: '终端接口不可用',
-                detail: '预加载层未暴露终端接口'
+                reason: window.i18n.t('panel.terminalUnavailable'),
+                detail: window.i18n.t('panel.terminalPreloadNotExposed')
             };
             this.renderStatus();
             return this.status;
@@ -171,12 +260,12 @@ class IntegratedTerminalPanel {
 
         try {
             const status = await window.electronAPI.getTerminalFeatureStatus();
-            this.status = status || { available: false, reason: window.i18n ? window.i18n.t('panel.unknownError') : '未知错误', detail: '' };
+            this.status = status || { available: false, reason: window.i18n.t('panel.unknownError'), detail: '' };
         } catch (error) {
             this.status = {
                 available: false,
-                reason: window.i18n ? window.i18n.t('panel.terminalStatusFailed') : '获取终端状态失败',
-                detail: error?.message || String(error)
+                reason: window.i18n.t('panel.terminalStatusFailed'),
+                detail: String((error as { message?: unknown })?.message || error)
             };
         }
 
@@ -188,7 +277,7 @@ class IntegratedTerminalPanel {
         // Status line intentionally removed from UI.
     }
 
-    async open(options = {}) {
+    async open(options: { createIfNone?: boolean; forceCreate?: boolean } = {}) {
         await this.init();
         await this.refreshFeatureStatus();
 
@@ -211,7 +300,7 @@ class IntegratedTerminalPanel {
         return this.activeId || null;
     }
 
-    setVisible(visible) {
+    setVisible(visible: boolean) {
         this.visible = !!visible;
         if (!this.panel) {
             return;
@@ -225,54 +314,20 @@ class IntegratedTerminalPanel {
     }
 
     resolveTerminalFontOptions() {
-        const app = this.getApp ? this.getApp() : null;
+        const app = this.getApp ? (this.getApp() as AppLike | null) : null;
         const settings = app?.settings || {};
-        const editorFont = (typeof settings.font === 'string' && settings.font.trim())
+        const fontFamily = (typeof settings.font === 'string' && settings.font.trim())
             ? settings.font.trim()
             : 'Consolas';
         const configuredFontSize = Number(settings.terminalFontSize);
         const fontSize = Number.isFinite(configuredFontSize) && configuredFontSize > 0
             ? Math.round(configuredFontSize)
             : this.fixedTerminalFontSize;
-        return { fontFamily: this.buildTerminalFontFamily(editorFont), fontSize };
-    }
-
-    normalizeFontFamilyList(value) {
-        if (typeof value !== 'string') {
-            return [];
-        }
-        return value
-            .split(',')
-            .map((item) => item.trim().replace(/^["']|["']$/g, '').trim())
-            .filter(Boolean);
-    }
-
-    buildTerminalFontFamily(baseFont) {
-        const families = [];
-        const pushFamily = (name) => {
-            const normalized = String(name || '').replace(/^["']|["']$/g, '').trim();
-            if (!normalized) {
-                return;
-            }
-            if (families.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
-                return;
-            }
-            families.push(normalized);
-        };
-
-        // 用户/编辑器字体优先，保证文字部分与编辑器观感一致。
-        this.normalizeFontFamilyList(baseFont).forEach(pushFamily);
-        // 追加 Nerd Font 回退，避免 oh-my-posh 的 Powerline 图标显示为方块。
-        TERMINAL_NERD_FONT_FALLBACKS.forEach(pushFamily);
-        pushFamily('monospace');
-
-        return families
-            .map((name) => (name.includes(' ') ? `"${name}"` : name))
-            .join(', ');
+        return { fontFamily, fontSize };
     }
 
     getCurrentThemeName() {
-        const app = this.getApp ? this.getApp() : null;
+        const app = this.getApp ? (this.getApp() as AppLike | null) : null;
         const theme = app?.settings?.theme;
         return typeof theme === 'string' && theme.trim() ? theme.trim() : 'dark';
     }
@@ -337,7 +392,7 @@ class IntegratedTerminalPanel {
         this.applyTerminalFontSettings();
     }
 
-    async createTerminal(options = {}) {
+    async createTerminal(options: { cwd?: string } = {}) {
         if (!this.status.available) {
             this.renderEmptyState();
             return;
@@ -346,8 +401,8 @@ class IntegratedTerminalPanel {
         if (typeof window.Terminal !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm 未加载',
-                detail: '请确认已安装 xterm 依赖'
+                reason: window.i18n.t('terminal.xtermNotLoaded'),
+                detail: window.i18n.t('terminal.xtermNotLoadedDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -358,8 +413,8 @@ class IntegratedTerminalPanel {
         if (typeof fitAddonCtor !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm Fit 插件未加载',
-                detail: '请确认已安装 xterm-addon-fit'
+                reason: window.i18n.t('terminal.fitAddonMissing'),
+                detail: window.i18n.t('terminal.fitAddonMissingDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -370,8 +425,8 @@ class IntegratedTerminalPanel {
         if (typeof unicode11AddonCtor !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm Unicode11 插件未加载',
-                detail: '请确认已安装 @xterm/addon-unicode11'
+                reason: window.i18n.t('terminal.unicodeAddonMissing'),
+                detail: window.i18n.t('terminal.unicodeAddonDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -384,19 +439,23 @@ class IntegratedTerminalPanel {
         const tab = document.createElement('button');
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
-        tab.dataset.terminalId = tabId;
-        tab.innerHTML = `<span class="terminal-tab-label">终端 ${this.counter}</span><span class="terminal-tab-close" aria-label="关闭终端">×</span>`;
+        tab.dataset['terminalId'] = tabId;
+        // 记录序号，供语言切换后重建标签（标签文案里带 counter）
+        tab.dataset['terminalCounter'] = String(this.counter);
+        const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter });
+        const closeLabel = window.i18n?.t?.('terminal.closeTerminal');
+        tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
 
         const pane = document.createElement('div');
         pane.className = 'integrated-terminal-pane';
-        pane.dataset.terminalId = tabId;
+        pane.dataset['terminalId'] = tabId;
 
         const mount = document.createElement('div');
         mount.className = 'integrated-terminal-mount';
         pane.appendChild(mount);
 
-        this.tabs.appendChild(tab);
-        this.body.appendChild(pane);
+        this.tabs?.appendChild(tab);
+        this.body?.appendChild(pane);
 
         const fontOptions = this.resolveTerminalFontOptions();
 
@@ -404,10 +463,6 @@ class IntegratedTerminalPanel {
             cursorBlink: true,
             fontSize: fontOptions.fontSize,
             fontFamily: fontOptions.fontFamily,
-            fontWeight: 'normal',
-            fontWeightBold: 'bold',
-            letterSpacing: 0,
-            lineHeight: 1,
             convertEol: true,
             scrollback: 8000,
             allowTransparency: true,
@@ -424,7 +479,7 @@ class IntegratedTerminalPanel {
         } catch (_) { }
         fitAddon.fit();
 
-        const provisionalSession = {
+        const provisionalSession: TerminalSession = {
             terminalId: tabId,
             tab,
             pane,
@@ -451,18 +506,14 @@ class IntegratedTerminalPanel {
 
         let created;
         try {
-            created = await window.electronAPI.createTerminal(createPayload);
+            created = await window.electronAPI.createTerminal(createPayload) as TerminalCreateResult | null;
         } catch (error) {
-            terminal.writeln('\r\n[Error] 创建终端失败: ' + (error?.message || String(error)));
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, window.i18n.t('terminal.createFailed', { error: String((error as { message?: unknown })?.message || error) }));
             return;
         }
 
         if (!created?.ok || !created?.terminalId) {
-            terminal.writeln(`\r\n[Error] ${created?.error || (window.i18n ? window.i18n.t('panel.terminalCreateFailed') : '终端创建失败')}`);
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, `\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
             return;
         }
 
@@ -471,14 +522,9 @@ class IntegratedTerminalPanel {
         provisionalSession.cwd = created.cwd || null;
         provisionalSession.shell = created.shell || null;
 
-        const labelNode = tab.querySelector('.terminal-tab-label');
-        if (labelNode) {
-            labelNode.textContent = `终端 ${this.sessions.size}`;
-        }
-
         tab.classList.remove('pending');
-        tab.dataset.terminalId = remoteId;
-        pane.dataset.terminalId = remoteId;
+        tab.dataset['terminalId'] = remoteId;
+        pane.dataset['terminalId'] = remoteId;
 
         this.sessions.delete(tabId);
         this.sessions.set(remoteId, provisionalSession);
@@ -514,34 +560,35 @@ class IntegratedTerminalPanel {
         return remoteId;
     }
 
-    shieldTerminalKeyEvents(mountNode, sessionRef = null) {
+    shieldTerminalKeyEvents(mountNode: HTMLElement | null, sessionRef: TerminalSession | null = null) {
         if (!mountNode || mountNode._terminalKeyShielded) {
             return;
         }
 
-        const sendInput = async (text) => {
+        const sendInput = async (text: string) => {
             const session = sessionRef;
             const remoteId = session?.remoteId;
             if (!remoteId || !text) {
                 return;
             }
 
-            if (typeof session.inputBridge === 'function') {
+            const bridge = session?.inputBridge;
+            if (typeof bridge === 'function') {
                 this.echoBridgedInput(session, String(text));
                 try {
-                    session.inputBridge(String(text));
+                    bridge(String(text));
                 } catch (_) {
                 }
                 return;
             }
 
             try {
-                await window.electronAPI?.writeTerminal?.(remoteId, String(text));
+                window.electronAPI?.writeTerminal?.(remoteId, String(text));
             } catch (_) {
             }
         };
 
-        mountNode.addEventListener('keydown', (event) => {
+        const onKeyShield = (event: KeyboardEvent) => {
             const key = String(event?.key || '').toLowerCase();
             const ctrl = !!event.ctrlKey;
             const meta = !!event.metaKey;
@@ -589,7 +636,7 @@ class IntegratedTerminalPanel {
             if (!ctrl && !meta && !alt && (key === 'arrowup' || key === 'arrowdown' || key === 'arrowleft' || key === 'arrowright')) {
                 event.preventDefault();
                 event.stopPropagation();
-                const map = {
+                const map: Record<string, string> = {
                     arrowup: '\u001b[A',
                     arrowdown: '\u001b[B',
                     arrowright: '\u001b[C',
@@ -599,9 +646,10 @@ class IntegratedTerminalPanel {
                 return;
             }
             // Let xterm handle all other keys (e.g. Backspace/Delete/Ctrl combinations).
-        }, true);
+        };
+        mountNode.addEventListener('keydown', onKeyShield, true);
 
-        mountNode.addEventListener('wheel', (event) => {
+        const onWheelShield = (event: WheelEvent) => {
             event.preventDefault();
             event.stopPropagation();
 
@@ -617,12 +665,25 @@ class IntegratedTerminalPanel {
 
             const lines = Math.max(1, Math.min(6, Math.round(Math.abs(deltaY) / 36)));
             session.terminal.scrollLines(deltaY > 0 ? lines : -lines);
-        }, true);
+        };
+        mountNode.addEventListener('wheel', onWheelShield, true);
 
         mountNode._terminalKeyShielded = true;
+        mountNode._terminalShieldHandlers = { keydown: onKeyShield, wheel: onWheelShield };
     }
 
-    async initializeSessionEncodingIfNeeded(session) {
+    unshieldTerminalKeyEvents(mountNode: HTMLElement | null) {
+        if (!mountNode || !mountNode._terminalShieldHandlers) {
+            return;
+        }
+        const handlers = mountNode._terminalShieldHandlers;
+        mountNode.removeEventListener('keydown', handlers.keydown, true);
+        mountNode.removeEventListener('wheel', handlers.wheel, true);
+        mountNode._terminalShieldHandlers = null;
+        mountNode._terminalKeyShielded = false;
+    }
+
+    async initializeSessionEncodingIfNeeded(session: TerminalSession | null) {
         const terminalId = session?.remoteId;
         if (!terminalId || !window.electronAPI?.getPlatform || !window.electronAPI?.writeTerminal) {
             return;
@@ -639,15 +700,10 @@ class IntegratedTerminalPanel {
             const shell = String(session?.shell || '').toLowerCase();
             let initCmd = 'chcp 65001 > nul\r';
             if (shell.includes('powershell') || shell.includes('pwsh')) {
-                // oh-my-posh 等主题会输出大量 UTF-8 图标与中文，需要同时修正控制台代码页、
-                // 控制台输入输出编码以及管道输出编码，否则会显示为乱码。
-                initCmd = 'chcp 65001 > $null;'
-                    + '[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);'
-                    + '[Console]::InputEncoding=[Console]::OutputEncoding;'
-                    + '$OutputEncoding=[Console]::OutputEncoding\r';
+                initCmd = '[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);chcp 65001 > $null\r';
             }
             try {
-                await window.electronAPI.writeTerminal(terminalId, initCmd);
+                window.electronAPI.writeTerminal(terminalId, initCmd);
             } catch (_) {
             }
         }
@@ -656,14 +712,14 @@ class IntegratedTerminalPanel {
         const startupCommand = this.resolveTerminalStartupCommand();
         if (startupCommand) {
             try {
-                await window.electronAPI.writeTerminal(terminalId, startupCommand + '\r');
+                window.electronAPI.writeTerminal(terminalId, startupCommand + '\r');
             } catch (_) {
             }
         }
     }
 
     resolveTerminalStartupCommand() {
-        const app = this.getApp ? this.getApp() : null;
+        const app = this.getApp ? (this.getApp() as AppLike | null) : null;
         const settings = app?.settings || {};
         const cmd = typeof settings.terminalStartupCommand === 'string'
             ? settings.terminalStartupCommand.trim()
@@ -671,7 +727,7 @@ class IntegratedTerminalPanel {
         return cmd || '';
     }
 
-    setupTerminalLinkProvider(terminal) {
+    setupTerminalLinkProvider(terminal: XtermTerminal) {
         if (!terminal || typeof terminal.registerLinkProvider !== 'function') {
             return;
         }
@@ -692,7 +748,7 @@ class IntegratedTerminalPanel {
                     return;
                 }
 
-                const links = [];
+                const links: XtermLink[] = [];
                 for (const match of lineText.matchAll(urlPattern)) {
                     const rawText = String(match[0] || '').replace(/[).,!?;:]+$/, '');
                     if (!rawText) {
@@ -726,15 +782,15 @@ class IntegratedTerminalPanel {
         });
     }
 
-    resolveTerminalLinkRange(line, startIndex, endIndex, bufferLineNumber) {
+    resolveTerminalLinkRange(line: XtermBufferLine | null | undefined, startIndex: number, endIndex: number, bufferLineNumber: number): XtermBufferRange | null {
         if (!line || typeof line.getCell !== 'function' || startIndex < 0 || endIndex <= startIndex) {
             return null;
         }
 
         let textOffset = 0;
         let columnOffset = 0;
-        let startColumn = null;
-        let endColumn = null;
+        let startColumn: number | null = null;
+        let endColumn: number | null = null;
         const lineLength = Number(line.length) || 0;
 
         for (let cellIndex = 0; cellIndex < lineLength; cellIndex++) {
@@ -778,7 +834,7 @@ class IntegratedTerminalPanel {
         };
     }
 
-    normalizeTerminalUrl(text) {
+    normalizeTerminalUrl(text: unknown) {
         const value = String(text || '').trim();
         if (!value) {
             return '';
@@ -810,7 +866,7 @@ class IntegratedTerminalPanel {
         }
     }
 
-    async openExternalUrl(url) {
+    async openExternalUrl(url: unknown) {
         const targetUrl = String(url || '').trim();
         if (!targetUrl) {
             return;
@@ -828,7 +884,7 @@ class IntegratedTerminalPanel {
         }
     }
 
-    setupTerminalClipboardShortcuts(terminal, sessionRef) {
+    setupTerminalClipboardShortcuts(terminal: XtermTerminal, sessionRef: TerminalSession | null) {
         if (!terminal || typeof terminal.attachCustomKeyEventHandler !== 'function') {
             return;
         }
@@ -870,7 +926,7 @@ class IntegratedTerminalPanel {
         });
     }
 
-    async copyTextToClipboard(text) {
+    async copyTextToClipboard(text: unknown) {
         const value = String(text || '');
         if (!value) {
             return;
@@ -888,7 +944,7 @@ class IntegratedTerminalPanel {
         } catch (_) { }
     }
 
-    async pasteClipboardToTerminal(terminalId) {
+    async pasteClipboardToTerminal(terminalId: string) {
         let text = '';
         try {
             text = await navigator.clipboard.readText();
@@ -897,7 +953,7 @@ class IntegratedTerminalPanel {
         if (!text) {
             try {
                 const result = await window.electronAPI?.clipboardReadText?.();
-                text = result?.success ? String(result.text || '') : '';
+                text = typeof result === 'string' ? result : '';
             } catch (_) { }
         }
 
@@ -916,11 +972,11 @@ class IntegratedTerminalPanel {
         }
 
         try {
-            await window.electronAPI.writeTerminal(terminalId, text);
+            window.electronAPI.writeTerminal(terminalId, text);
         } catch (_) { }
     }
 
-    quoteExecutableForShell(executablePath, platform) {
+    quoteExecutableForShell(executablePath: unknown, platform: string) {
         const text = String(executablePath || '');
         if (platform === 'windows') {
             return `"${text.replace(/"/g, '""')}"`;
@@ -928,7 +984,7 @@ class IntegratedTerminalPanel {
         return `'${text.replace(/'/g, `'\\''`)}'`;
     }
 
-    buildRunCommandForShell(executablePath, shellPath, platform) {
+    buildRunCommandForShell(executablePath: unknown, shellPath: unknown, platform: string) {
         const shell = String(shellPath || '').toLowerCase();
         const quoted = this.quoteExecutableForShell(executablePath, platform);
         if (platform === 'windows' && shell.includes('powershell')) {
@@ -940,22 +996,22 @@ class IntegratedTerminalPanel {
         return `${quoted}\r`;
     }
 
-    async runExecutableInNewTerminal(executablePath, options = {}) {
+    async runExecutableInNewTerminal(executablePath: string, options: { workingDirectory?: string } = {}) {
         if (!executablePath) {
-            throw new Error(window.i18n ? window.i18n.t('panel.terminalExePathEmpty') : '可执行文件路径为空');
+            throw new Error(window.i18n.t('panel.terminalExePathEmpty'));
         }
 
         await this.init();
         await this.refreshFeatureStatus();
         this.setVisible(true);
         if (!this.status.available) {
-            throw new Error(this.status.reason || '终端功能不可用');
+            throw new Error(this.status.reason || window.i18n.t('panel.terminalFeatureUnavailable'));
         }
 
         const cwd = options.workingDirectory || await this.getPreferredCwd();
         const terminalId = await this.createTerminal({ cwd });
         if (!terminalId) {
-            throw new Error(window.i18n ? window.i18n.t('panel.terminalCreateFailed2') : '创建内置终端失败');
+            throw new Error(window.i18n.t('panel.terminalCreateFailed2'));
         }
 
         this.activateTerminal(terminalId);
@@ -969,18 +1025,18 @@ class IntegratedTerminalPanel {
 
         const session = this.sessions.get(terminalId);
         const command = this.buildRunCommandForShell(executablePath, session?.shell || '', platform);
-        await window.electronAPI.writeTerminal(terminalId, command);
+        window.electronAPI.writeTerminal(terminalId, command);
         return terminalId;
     }
 
-    bindTabEvents(terminalId) {
+    bindTabEvents(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return;
         }
 
         session.tab.addEventListener('click', (event) => {
-            const closeBtn = event.target.closest('.terminal-tab-close');
+            const closeBtn = (event.target as HTMLElement).closest('.terminal-tab-close');
             if (closeBtn) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -991,7 +1047,7 @@ class IntegratedTerminalPanel {
         });
     }
 
-    activateTerminal(terminalId) {
+    activateTerminal(terminalId: string) {
         this.activeId = terminalId;
 
         for (const [id, session] of this.sessions.entries()) {
@@ -1004,7 +1060,7 @@ class IntegratedTerminalPanel {
         this.focusTerminal(terminalId);
     }
 
-    focusTerminal(terminalId) {
+    focusTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session || !session.terminal) {
             return false;
@@ -1017,7 +1073,7 @@ class IntegratedTerminalPanel {
         }
     }
 
-    echoBridgedInput(session, data) {
+    echoBridgedInput(session: TerminalSession | null, data: unknown) {
         if (!session || !session.terminal || typeof data !== 'string' || !data) {
             return;
         }
@@ -1048,9 +1104,10 @@ class IntegratedTerminalPanel {
         }
     }
 
-    handleTerminalData(payload) {
-        const terminalId = payload?.terminalId;
-        const data = payload?.data;
+    handleTerminalData(payload: unknown) {
+        const info = payload as TerminalEventData | null;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
+        const data = info?.data;
         if (!terminalId || typeof data !== 'string') {
             return;
         }
@@ -1067,7 +1124,7 @@ class IntegratedTerminalPanel {
         session.terminal.write(data);
     }
 
-    setInputBridge(terminalId, bridgeHandler) {
+    setInputBridge(terminalId: string, bridgeHandler: ((data: string) => void) | null) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1076,11 +1133,11 @@ class IntegratedTerminalPanel {
         return true;
     }
 
-    clearInputBridge(terminalId) {
+    clearInputBridge(terminalId: string) {
         return this.setInputBridge(terminalId, null);
     }
 
-    setRemoteOutputMuted(terminalId, muted) {
+    setRemoteOutputMuted(terminalId: string, muted: boolean) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1089,7 +1146,7 @@ class IntegratedTerminalPanel {
         return true;
     }
 
-    writeTerminalOutput(terminalId, data) {
+    writeTerminalOutput(terminalId: string, data: unknown) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1102,8 +1159,9 @@ class IntegratedTerminalPanel {
         }
     }
 
-    handleTerminalExit(payload) {
-        const terminalId = payload?.terminalId;
+    handleTerminalExit(payload: unknown) {
+        const info = payload as TerminalEventData | null;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
         if (!terminalId) {
             return;
         }
@@ -1113,16 +1171,31 @@ class IntegratedTerminalPanel {
             return;
         }
 
-        const code = payload?.exitCode;
-        const signal = payload?.signal;
-        const suffix = Number.isFinite(code)
-            ? `退出码 ${code}`
-            : (signal ? `信号 ${signal}` : '已退出');
-        session.terminal.writeln(`\r\n[终端已退出] ${suffix}`);
+        const code = info?.exitCode;
+        const signal = info?.signal;
+        const suffix = Number.isFinite(code as number)
+            ? window.i18n.t('terminal.exitCode', { code })
+            : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
+        session.terminal.writeln(window.i18n.t('terminal.exited', { info: suffix }));
         session.tab.classList.add('exited');
     }
 
-    async closeTerminal(terminalId) {
+    // 创建失败时必须把占位会话、标签页和面板一起清掉：只保留它们会让 sessions.size
+    // 一直大于 0（影响 renderEmptyState 与 createIfNone 判断），并让后续终端编号错乱。
+    handleTerminalCreateFailure(tabId: string, message: string): void {
+        const session = this.sessions.get(tabId);
+        if (session?.terminal) {
+            try {
+                session.terminal.writeln(message);
+            } catch (_) { }
+        }
+        try {
+            logError('[Terminal] 创建失败:', message);
+        } catch (_) { }
+        this.closeTerminal(tabId);
+    }
+
+    async closeTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return;
@@ -1137,6 +1210,8 @@ class IntegratedTerminalPanel {
         try {
             session.terminal.dispose();
         } catch (_) {}
+
+        this.unshieldTerminalKeyEvents(session.mount);
 
         session.tab.remove();
         session.pane.remove();
@@ -1171,7 +1246,7 @@ class IntegratedTerminalPanel {
 
         if (this.sessions.size === 0) {
             this.empty.style.display = 'flex';
-            this.empty.textContent = '点击“新建终端”开始使用内置终端';
+            this.empty.textContent = window.i18n.t('terminal.emptyHint');
             return;
         }
 
@@ -1179,7 +1254,7 @@ class IntegratedTerminalPanel {
     }
 
     formatUnavailableStatusText() {
-        const reason = String(this.status?.reason || '终端功能不可用').trim();
+        const reason = String(this.status?.reason || window.i18n.t('panel.terminalFeatureUnavailable')).trim();
         const detailRaw = this.status?.detail == null ? '' : String(this.status.detail).trim();
 
         if (!detailRaw) {
@@ -1188,8 +1263,7 @@ class IntegratedTerminalPanel {
 
         let detail = detailRaw
             .replace(/\s*Require stack:\s*/i, '\nRequire stack:\n')
-            .replace(/\s+-\s+/g, '\n- ')
-            .replace(/\s+尝试位置:\s*/g, '\n尝试位置: ');
+            .replace(/\s+-\s+/g, '\n- ');
 
         return `${reason}\n${detail}`;
     }
@@ -1201,7 +1275,7 @@ class IntegratedTerminalPanel {
         this.fitTerminal(this.activeId);
     }
 
-    fitTerminal(terminalId) {
+    fitTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session || !this.visible) {
             return;
@@ -1216,7 +1290,7 @@ class IntegratedTerminalPanel {
     }
 
     async getPreferredCwd() {
-        const app = this.getApp();
+        const app = this.getApp() as AppLike | null;
         const active = typeof app?.getActiveFilePath === 'function' ? app.getActiveFilePath() : null;
         if (active && !app?.isCloudFilePath?.(active) && typeof window.electronAPI?.pathDirname === 'function') {
             try {
@@ -1231,4 +1305,8 @@ class IntegratedTerminalPanel {
     }
 }
 
-window.IntegratedTerminalPanel = IntegratedTerminalPanel;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = IntegratedTerminalPanel;
+} else {
+    window.IntegratedTerminalPanel = IntegratedTerminalPanel;
+}

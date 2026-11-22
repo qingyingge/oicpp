@@ -1,7 +1,270 @@
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
+
+interface TabRecord {
+    element: HTMLElement;
+    groupId?: string | null;
+    fileName?: string | null;
+    filePath?: string | null;
+    tabId?: string | null;
+    uniqueKey?: string | null;
+    content?: string | null;
+    modified?: boolean | null;
+    active?: boolean | null;
+    isTempFile?: boolean | null;
+    isDirty?: boolean | null;
+    isLoading?: boolean | null;
+    isWelcome?: boolean | null;
+    isPreviewTab?: boolean | null;
+    viewType?: string | null;
+    viewerContainer?: HTMLElement | null;
+    viewerFrame?: HTMLIFrameElement | null;
+    previewContainer?: HTMLElement | null;
+    browserUrl?: string | null;
+    pdfBase64?: string | null;
+    diffMeta?: Record<string, unknown> | null;
+    sourceTabKey?: string | null;
+    pdfViewerReady?: boolean | null;
+    pdfViewerError?: boolean | null;
+    pdfViewerScale?: number | null;
+    externalModified?: boolean | null;
+    externalChangeType?: string | null;
+    externalChangeTimestamp?: number | null;
+    externalPromptDismissed?: boolean | null;
+    externalPromptInProgress?: boolean | null;
+    pendingExternalPrompt?: boolean | null;
+    file?: string | null;
+    [key: string]: unknown;
+}
+
+interface EditorGroup {
+    id: string;
+    element: HTMLElement;
+    tabBar: HTMLElement | null;
+    editorArea: HTMLElement | null;
+    tabs: Map<string, TabRecord>;
+    tabOrder: string[];
+    activeTabKey?: string | null;
+    size?: number | null;
+    [key: string]: unknown;
+}
+
+interface TabDragInfo {
+    tabKey?: string | null;
+    sourceGroupId?: string | null;
+    tabElement?: HTMLElement | null;
+    startX?: number;
+    startY?: number;
+    uniqueKey?: string | null;
+    groupId?: string | null;
+}
+
+interface TabDropInfo {
+    tabBar?: HTMLElement | null;
+    targetGroupId?: string | null;
+    targetIndex?: number | null;
+    beforeElement?: HTMLElement | null;
+    groupId?: string | null;
+    tabKey?: string | null;
+    index?: number | null;
+}
+
+interface DropTargetArgs {
+    tabBar?: HTMLElement | null;
+    targetGroupId?: string | null;
+    targetIndex?: number | null;
+    beforeElement?: HTMLElement | null;
+}
+
+interface DropEntry {
+    fileName?: string | null;
+    filePath?: string | null;
+    fileObject?: File | Blob | null;
+    base64?: string | null;
+}
+
+interface PathLikeFile {
+    name?: string;
+    path?: string;
+}
+
+interface DroppedFileJson {
+    type?: string;
+    name?: string;
+    path?: string;
+    base64?: string;
+    [key: string]: unknown;
+}
+
+interface FileLikeObject extends Blob {
+    name?: string;
+    path?: string;
+}
+
+interface PdfDropDescriptor {
+    name?: string | null;
+    path?: string | null;
+    type?: string | null;
+    base64?: string | null;
+    lastModified?: number | null;
+    file?: unknown;
+    fileObject?: unknown;
+    [key: string]: unknown;
+}
+
+interface PdfContainerOptions {
+    groupId?: string | null;
+    tabId?: string | null;
+    filePath?: string | null;
+    fileName?: string | null;
+    inline?: boolean;
+}
+
+interface PdfViewerSrcOptions {
+    filePath?: string | null;
+    tabId?: string | null;
+    zoom?: string | null;
+    inline?: boolean;
+}
+
+interface PdfTabOptions {
+    fileName?: string | null;
+    filePath?: string | null;
+    uniqueKey?: string | null;
+    targetGroupId?: string | null;
+    targetGroup: EditorGroup;
+    isTempFile?: boolean;
+    pdfBase64?: string | null;
+}
+
+interface PdfEventBusLike {
+    dispatch: (...args: unknown[]) => void;
+    [key: string]: unknown;
+}
+
+interface PdfViewerApplicationLike {
+    eventBus: PdfEventBusLike;
+    [key: string]: unknown;
+}
+
+interface BrowserTabOptions {
+    url?: string | null;
+    groupId?: string | null;
+    title?: string | null;
+}
+
+interface MarkdownPreviewOptions {
+    groupId?: string | null;
+    tabId?: string | null;
+    content?: string | null;
+    filePath?: string | null;
+}
+
+interface PdfRequestDetail {
+    requestId?: string | null;
+    filePath?: string | null;
+    [key: string]: unknown;
+}
+
+interface DiffFileCandidate {
+    type?: string | null;
+    path?: string | null;
+    name?: string | null;
+    [key: string]: unknown;
+}
+
+interface FileWatchEntry {
+    filePath: string;
+    path: string;
+    watcher: { close: () => void };
+    tabs: Set<string>;
+    changeType?: string | null;
+    timestamp?: number | null;
+    lastChangeType?: string | null;
+}
+
+interface ExternalChangePayload {
+    filePath?: string | null;
+    content?: string | null;
+    changeType?: string | null;
+    timestamp?: number | null;
+}
+
+interface OpenFileOptions {
+    filePath?: string | null;
+    pdfBase64?: string | null;
+    groupId?: string | null;
+    targetGroupId?: string | null;
+    viewType?: string | null;
+    isTempFile?: boolean | null;
+    [key: string]: unknown;
+}
+
+interface CloseTabOptions {
+    uniqueKeyOverride?: string | null;
+    force?: boolean;
+    skipCloseConfirm?: boolean;
+    skipAutoSave?: boolean;
+}
+
+interface EnsureActiveOptions {
+    preferredUniqueKey?: string | null;
+    triggerEditor?: boolean;
+}
+
+interface ReloadOptions {
+    force?: boolean;
+}
+
+interface HTMLElement {
+    _editorDnDBound?: boolean;
+    _tabBarEventsBound?: boolean;
+    _horizontalWheelHandlerBound?: boolean;
+    _dragHandlersBound?: boolean;
+    _tabEventsBound?: boolean;
+    _pdfDnDBound?: boolean;
+    _dragListenersBound?: boolean;
+    _bound?: boolean;
+}
+interface Window {
+    PDFViewerApplication?: PdfViewerApplicationLike;
+}
+
 class TabManager {
+    tabs: Map<string, TabRecord>;
+    groups: Map<string, EditorGroup>;
+    groupOrder: string[];
+    activeGroupId: string | null;
+    activeTab: TabRecord | string | null;
+    activeTabKey: string | null;
+    tabOrder: string[];
+    monacoEditorManager: MonacoEditorManager | null;
+    editorGroupsElement: HTMLElement | null;
+    welcomeContainer: HTMLElement | null;
+    splitOverlay: HTMLElement | null;
+    groupCounter: number;
+    draggedTabInfo: TabDragInfo | null;
+    draggedTab: HTMLElement | null;
+    placeholder: HTMLElement | null;
+    tabDragInProgress: boolean;
+    lastTabDropInfo: TabDropInfo | null;
+    dropHandled: boolean;
+    _openingKeys: Set<string>;
+    _watchedFiles: Map<string, FileWatchEntry>;
+    _fileWatchListenerBound: boolean;
+    _externalFileChangeUnsubscribe: (() => void) | null;
+    _fileWatchCleanupBound: boolean;
+    _tabContextMenu: HTMLElement | null;
+    _altWheelListenerBound: boolean;
+    _lastAltWheelSwitchTs: number;
+    _beforeUnloadHandler: (() => void) | null;
+    _isWindowsPlatform: boolean | undefined;
+    _welcomeVersionLabel: string | null | undefined;
+
     constructor() {
-        this.tabs = new Map();
-        this.groups = new Map();
+        this.tabs = new Map<string, TabRecord>();
+        this.groups = new Map<string, EditorGroup>();
         this.groupOrder = [];
         this.activeGroupId = null;
         this.activeTab = null;
@@ -19,17 +282,20 @@ class TabManager {
         this.lastTabDropInfo = null;
         this.dropHandled = false;
         this._openingKeys = new Set();
-        this._watchedFiles = new Map(); 
+        this._watchedFiles = new Map<string, FileWatchEntry>();
         this._fileWatchListenerBound = false;
         this._externalFileChangeUnsubscribe = null;
         this._fileWatchCleanupBound = false;
         this._tabContextMenu = null;
         this._altWheelListenerBound = false;
         this._lastAltWheelSwitchTs = 0;
+        this._beforeUnloadHandler = null;
 
         if (typeof window !== 'undefined') {
             this.handlePdfViewerMessage = this.handlePdfViewerMessage.bind(this);
             window.addEventListener('message', this.handlePdfViewerMessage, false);
+            this._beforeUnloadHandler = () => this.dispose();
+            window.addEventListener('beforeunload', this._beforeUnloadHandler, { once: true });
         }
 
         this.init();
@@ -48,19 +314,19 @@ class TabManager {
             this.cacheDOM();
         }
 
-        const groupElements = Array.from(document.querySelectorAll('.editor-group'));
+        const groupElements = Array.from(document.querySelectorAll('.editor-group') as NodeListOf<HTMLElement>);
         if (groupElements.length === 0 && this.editorGroupsElement) {
-            const defaultGroup = document.createElement('div');
+            const defaultGroup = document.createElement('div') as HTMLElement;
             defaultGroup.className = 'editor-group';
-            defaultGroup.dataset.groupId = 'group-1';
+            defaultGroup.dataset['groupId'] = 'group-1';
 
-            const tabBar = document.createElement('div');
+            const tabBar = document.createElement('div') as HTMLElement;
             tabBar.className = 'tab-bar';
-            tabBar.dataset.groupId = 'group-1';
+            tabBar.dataset['groupId'] = 'group-1';
 
-            const editorArea = document.createElement('div');
+            const editorArea = document.createElement('div') as HTMLElement;
             editorArea.className = 'editor-area';
-            editorArea.dataset.groupId = 'group-1';
+            editorArea.dataset['groupId'] = 'group-1';
 
             defaultGroup.appendChild(tabBar);
             defaultGroup.appendChild(editorArea);
@@ -69,27 +335,27 @@ class TabManager {
         }
 
         groupElements.forEach((groupEl, index) => {
-            let groupId = groupEl.dataset.groupId;
+            let groupId = groupEl.dataset['groupId'];
             if (!groupId) {
                 groupId = `group-${index + 1}`;
-                groupEl.dataset.groupId = groupId;
+                groupEl.dataset['groupId'] = groupId;
             }
             const numericId = parseInt(groupId.replace(/[^0-9]/g, ''), 10);
             if (!Number.isNaN(numericId)) {
                 this.groupCounter = Math.max(this.groupCounter, numericId);
             }
 
-            const tabBar = groupEl.querySelector('.tab-bar');
-            const editorArea = groupEl.querySelector('.editor-area');
-            if (tabBar) {
-                tabBar.dataset.groupId = groupId;
+            const tabBar = groupEl.querySelector('.tab-bar') as HTMLElement | null;
+            const editorArea = groupEl.querySelector('.editor-area') as HTMLElement | null;
+            if (tabBar instanceof HTMLElement) {
+                tabBar.dataset['groupId'] = groupId;
             }
-            if (editorArea) {
-                editorArea.dataset.groupId = groupId;
+            if (editorArea instanceof HTMLElement) {
+                editorArea.dataset['groupId'] = groupId;
                 this.bindEditorAreaDnD(editorArea);
             }
 
-            const groupData = {
+            const groupData: EditorGroup = {
                 id: groupId,
                 element: groupEl,
                 tabBar,
@@ -111,16 +377,16 @@ class TabManager {
         });
 
         if (!this.activeGroupId && this.groupOrder.length > 0) {
-            this.activeGroupId = this.groupOrder[0];
+            this.activeGroupId = this.groupOrder[0] as string | null;
         }
 
         this.ensureSplitOverlay();
         this.refreshGroupResizers();
     }
 
-    bindEditorAreaDnD(editorArea) {
+    bindEditorAreaDnD(editorArea: HTMLElement) {
         if (!editorArea || editorArea._editorDnDBound) return;
-        const onDragOver = (e) => {
+        const onDragOver = (e: DragEvent) => {
             try {
                 e.preventDefault();
                 e.stopPropagation();
@@ -129,11 +395,11 @@ class TabManager {
                 }
             } catch (_) { }
         };
-        const onDrop = async (e) => {
+        const onDrop = async (e: DragEvent) => {
             try {
                 e.preventDefault();
                 e.stopPropagation();
-                const groupId = editorArea.dataset.groupId || this.activeGroupId || 'group-1';
+                const groupId = editorArea.dataset['groupId'] || this.activeGroupId || 'group-1';
                 await this.processExternalDrop(e.dataTransfer, groupId);
             } catch (err) {
                 logWarn('编辑区 drop 处理失败:', err);
@@ -144,7 +410,7 @@ class TabManager {
         editorArea._editorDnDBound = true;
     }
 
-    async processExternalDrop(dataTransfer, groupId) {
+    async processExternalDrop(dataTransfer: DataTransfer | null, groupId: string) {
         if (!dataTransfer) {
             return false;
         }
@@ -157,13 +423,13 @@ class TabManager {
             return false;
         }
 
-        const entries = [];
+        const entries: DropEntry[] = [];
         const text = typeof dataTransfer.getData === 'function' ? dataTransfer.getData('text/plain') || '' : '';
         if (text && text.trim().startsWith('{') && text.includes('files')) {
             try {
                 const parsed = JSON.parse(text);
                 if (parsed && Array.isArray(parsed.files)) {
-                    parsed.files.forEach((f) => {
+                    parsed.files.forEach((f: DroppedFileJson) => {
                         if (!f || f.type !== 'file') {
                             return;
                         }
@@ -189,11 +455,11 @@ class TabManager {
 
         if (entries.length === 0) {
             const fileList = Array.from(dataTransfer.files || []);
-            fileList.forEach((file) => {
+            fileList.forEach((file: File) => {
                 if (!file) {
                     return;
                 }
-                const fpRaw = typeof file.path === 'string' ? file.path : null;
+                const fpRaw = typeof (file as PathLikeFile).path === 'string' ? (file as PathLikeFile).path : null;
                 const fp = this.normalizeDroppedPath(fpRaw);
                 const name = file.name || (fp && fp.split(/[\\\/]/).pop()) || 'untitled';
                 entries.push({
@@ -208,7 +474,7 @@ class TabManager {
         if (entries.length === 0) {
             const uriList = typeof dataTransfer.getData === 'function' ? dataTransfer.getData('text/uri-list') || '' : '';
             if (uriList && uriList.trim()) {
-                uriList.split(/\r?\n/).forEach((line) => {
+                uriList.split(/\r?\n/).forEach((line: string) => {
                     const uri = line.trim();
                     if (!uri || uri.startsWith('#')) {
                         return;
@@ -237,7 +503,7 @@ class TabManager {
         return this.openDropEntries(entries, groupId);
     }
 
-    isInternalTabDrag(dataTransfer) {
+    isInternalTabDrag(dataTransfer: DataTransfer) {
         try {
             const types = Array.isArray(dataTransfer.types)
                 ? dataTransfer.types
@@ -248,7 +514,7 @@ class TabManager {
         }
     }
 
-    async openDropEntries(entries, groupId) {
+    async openDropEntries(entries: DropEntry[] | null | undefined, groupId: string | null | undefined) {
         if (!Array.isArray(entries) || entries.length === 0) {
             return false;
         }
@@ -258,7 +524,7 @@ class TabManager {
             if (!entry || !entry.fileName) {
                 continue;
             }
-            const displayName = entry.fileName || (window.i18n ? window.i18n.t('panel.unknownFile') : '未知文件');
+            const displayName = entry.fileName || window.i18n.t('panel.unknownFile');
             try {
                 if (entry.fileObject && window.oicppApp?.openDroppedFile) {
                     await window.oicppApp.openDroppedFile(entry.fileObject, {
@@ -307,7 +573,7 @@ class TabManager {
                     continue;
                 }
 
-                throw new Error(window.i18n ? window.i18n.t('panel.cannotReadFile') : '无法读取文件内容');
+                throw new Error(window.i18n.t('panel.cannotReadFile'));
             } catch (error) {
                 this.showDropError(displayName, error);
             }
@@ -316,13 +582,13 @@ class TabManager {
         return opened;
     }
 
-    showDropError(displayName, error) {
+    showDropError(displayName: string | null | undefined, error: unknown) {
         if (!window.dialogManager?.showError) {
             return;
         }
-        const name = displayName || (window.i18n ? window.i18n.t('panel.unknownFile') : '未知文件');
-        const message = error?.message || String(error || (window.i18n ? window.i18n.t('panel.unknownError') : '未知错误'));
-        window.dialogManager.showError((window.i18n ? window.i18n.t('panel.cannotOpenFile', {name, message}) : `无法打开 ${name}\n${message}`));
+        const name = displayName || window.i18n.t('panel.unknownFile');
+        const message = (error as { message?: string })?.message || String(error || window.i18n.t('panel.unknownError'));
+        window.dialogManager.showError(window.i18n.t('panel.cannotOpenFile', {name, message}));
     }
 
     ensureSplitOverlay() {
@@ -333,9 +599,9 @@ class TabManager {
         if (!container) {
             return;
         }
-        const overlay = document.createElement('div');
+        const overlay = document.createElement('div') as HTMLElement;
         overlay.className = 'split-drop-overlay';
-        const onDragOver = (event) => {
+        const onDragOver = (event: DragEvent) => {
             if (!this.draggedTabInfo) {
                 return;
             }
@@ -344,12 +610,12 @@ class TabManager {
                 event.dataTransfer.dropEffect = 'move';
             }
         };
-        const onDragLeave = (event) => {
-            if (event.relatedTarget && overlay.contains(event.relatedTarget)) {
+        const onDragLeave = (event: DragEvent) => {
+            if (event.relatedTarget && overlay.contains(event.relatedTarget as Node | null)) {
                 return;
             }
         };
-        const onDrop = (event) => {
+        const onDrop = (event: DragEvent) => {
             if (!this.draggedTabInfo) {
                 return;
             }
@@ -370,24 +636,24 @@ class TabManager {
         this.splitOverlay = overlay;
     }
 
-    showSplitOverlay(sourceGroupId) {
+    showSplitOverlay(sourceGroupId: string | null | undefined) {
         if (!this.splitOverlay) return;
         const groupId = sourceGroupId || this.activeGroupId || '';
         if (!this.canSplitGroup(groupId)) {
             this.hideSplitOverlay();
             return;
         }
-        this.splitOverlay.dataset.sourceGroupId = groupId;
+        this.splitOverlay.dataset['sourceGroupId'] = groupId;
         this.splitOverlay.classList.add('visible');
     }
 
     hideSplitOverlay() {
         if (!this.splitOverlay) return;
         this.splitOverlay.classList.remove('visible');
-        delete this.splitOverlay.dataset.sourceGroupId;
+        delete this.splitOverlay.dataset['sourceGroupId'];
     }
 
-    getGroupTabCount(groupId) {
+    getGroupTabCount(groupId: string | null | undefined) {
         if (!groupId) {
             return 0;
         }
@@ -404,16 +670,16 @@ class TabManager {
         return 0;
     }
 
-    canSplitGroup(groupId) {
+    canSplitGroup(groupId: string | null | undefined) {
         return this.getGroupTabCount(groupId) > 1;
     }
 
-    bindTabBarEvents(tabBar) {
+    bindTabBarEvents(tabBar: HTMLElement | null | undefined) {
         if (!tabBar || tabBar._tabBarEventsBound) {
             return;
         }
-        const groupId = tabBar.dataset.groupId || tabBar.closest('.editor-group')?.dataset.groupId || this.activeGroupId || 'group-1';
-        tabBar.dataset.groupId = groupId;
+        const groupId = tabBar.dataset['groupId'] || (tabBar.closest('.editor-group') as HTMLElement | null)?.dataset['groupId'] || this.activeGroupId || 'group-1';
+        tabBar.dataset['groupId'] = groupId;
         this.ensureTabBarDragHandlers(tabBar);
         if (!tabBar._horizontalWheelHandlerBound) {
             tabBar.addEventListener('wheel', (event) => {
@@ -437,7 +703,7 @@ class TabManager {
         tabBar._tabBarEventsBound = true;
     }
 
-    ensureTabBarDragHandlers(tabBar) {
+    ensureTabBarDragHandlers(tabBar: HTMLElement | null | undefined) {
         if (!tabBar || tabBar._dragHandlersBound) {
             return;
         }
@@ -461,7 +727,7 @@ class TabManager {
                 const y = e.clientY;
 
                 if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-                    if (!tabBar.contains(e.relatedTarget)) {
+                    if (!tabBar.contains(e.relatedTarget as Node | null)) {
                     }
                 }
             }
@@ -470,13 +736,13 @@ class TabManager {
         tabBar._dragHandlersBound = true;
     }
 
-    handleTabBarDragOver(e, tabBar) {
+    handleTabBarDragOver(e: DragEvent, tabBar: HTMLElement) {
         if (!this.draggedTab || !this.draggedTabInfo) {
             return;
         }
         e.preventDefault();
         e.stopPropagation();
-        e.dataTransfer.dropEffect = 'move';
+        (e.dataTransfer as DataTransfer).dropEffect = 'move';
 
         const afterElement = this.getDragAfterElement(tabBar, e.clientX);
 
@@ -513,7 +779,7 @@ class TabManager {
         }
 
         const dropInfo = this.getDropTargetInfo(tabBar, e);
-        const targetGroupId = tabBar.dataset.groupId || this.activeGroupId || 'group-1';
+        const targetGroupId = tabBar.dataset['groupId'] || this.activeGroupId || 'group-1';
         this.lastTabDropInfo = {
             tabBar,
             targetGroupId,
@@ -522,14 +788,14 @@ class TabManager {
         };
     }
 
-    handleTabBarDrop(e, tabBar) {
+    handleTabBarDrop(e: DragEvent, tabBar: HTMLElement) {
         if (!this.draggedTabInfo) {
             return;
         }
         e.preventDefault();
         e.stopPropagation();
 
-        const targetGroupId = tabBar.dataset.groupId || this.activeGroupId || 'group-1';
+        const targetGroupId = tabBar.dataset['groupId'] || this.activeGroupId || 'group-1';
         const { targetIndex, beforeElement } = this.getDropTargetInfo(tabBar, e);
         const applied = this.applyTabDrop({
             tabBar,
@@ -545,7 +811,7 @@ class TabManager {
         this.cleanupTabDrag();
     }
 
-    applyTabDrop({ tabBar, targetGroupId, targetIndex, beforeElement }) {
+    applyTabDrop({ tabBar, targetGroupId, targetIndex, beforeElement }: DropTargetArgs) {
         if (!this.draggedTabInfo || !tabBar) {
             return false;
         }
@@ -560,7 +826,7 @@ class TabManager {
         if (sameGroup) {
             this.reorderTabWithinGroup(tabBar, finalIndex, finalBefore);
         } else if (uniqueKey) {
-            this.moveTabToGroup(uniqueKey, targetGroupId, finalIndex, finalBefore);
+            this.moveTabToGroup(uniqueKey, targetGroupId as string, finalIndex, finalBefore);
         } else {
             return false;
         }
@@ -569,7 +835,7 @@ class TabManager {
         return true;
     }
 
-    cleanupTabDrag(tabElement = null) {
+    cleanupTabDrag(tabElement: HTMLElement | null = null) {
         const tab = tabElement || this.draggedTab;
         if (tab) {
             tab.classList.remove('dragging');
@@ -588,7 +854,7 @@ class TabManager {
         this.lastTabDropInfo = null;
     }
 
-    getPlaceholderIndex(tabBar) {
+    getPlaceholderIndex(tabBar: HTMLElement | null | undefined) {
         if (!tabBar || !this.placeholder) {
             return null;
         }
@@ -604,8 +870,8 @@ class TabManager {
         return null;
     }
 
-    getDropTargetInfo(tabBar, event = null) {
-        const allTabs = Array.from(tabBar.querySelectorAll('.tab'));
+    getDropTargetInfo(tabBar: HTMLElement, event: MouseEvent | null = null) {
+        const allTabs = Array.from(tabBar.querySelectorAll('.tab') as NodeListOf<HTMLElement>);
         const draggedTab = this.draggedTab;
         const otherTabs = draggedTab ? allTabs.filter((tab) => tab !== draggedTab) : allTabs.slice();
 
@@ -614,7 +880,7 @@ class TabManager {
         if (targetIndex == null && event && typeof event.clientX === 'number') {
             const afterElement = this.getDragAfterElement(tabBar, event.clientX);
             if (afterElement) {
-                const idx = otherTabs.indexOf(afterElement);
+                const idx = otherTabs.indexOf(afterElement as HTMLElement);
                 targetIndex = idx >= 0 ? idx : otherTabs.length;
             } else {
                 targetIndex = otherTabs.length;
@@ -632,7 +898,7 @@ class TabManager {
         return { targetIndex, beforeElement };
     }
 
-    reorderTabWithinGroup(tabBar, targetIndex, beforeElement = null) {
+    reorderTabWithinGroup(tabBar: HTMLElement, targetIndex: number | null, beforeElement: HTMLElement | null = null) {
         if (!this.draggedTab) {
             return;
         }
@@ -657,19 +923,19 @@ class TabManager {
             tabBar.appendChild(this.draggedTab);
         }
 
-        const groupId = tabBar.dataset.groupId;
-        const uniqueKey = this.draggedTab.dataset.uniqueKey;
+        const groupId = tabBar.dataset['groupId'];
+        const uniqueKey = this.draggedTab.dataset['uniqueKey'];
         if (uniqueKey) {
             const tabData = this.tabs.get(uniqueKey);
             if (tabData) {
                 tabData.groupId = groupId;
             }
         }
-        this.draggedTab.dataset.groupId = groupId;
+        this.draggedTab.dataset['groupId'] = groupId;
         this.syncGroupTabs(groupId);
     }
 
-    moveTabToGroup(uniqueKey, targetGroupId, dropIndex = null, beforeElement = null) {
+    moveTabToGroup(uniqueKey: string, targetGroupId: string, dropIndex: number | null = null, beforeElement: HTMLElement | null = null) {
         if (!uniqueKey) {
             return;
         }
@@ -697,10 +963,10 @@ class TabManager {
             return;
         }
 
-        let targetGroup = this.groups.get(targetGroupId);
+        let targetGroup: EditorGroup | null | undefined = this.groups.get(targetGroupId);
         if (!targetGroup) {
             targetGroup = this.createGroup({ afterGroupId: sourceGroupId });
-            targetGroupId = targetGroup?.id;
+            targetGroupId = targetGroup?.id as string;
         }
         if (!targetGroup || !targetGroup.tabBar) {
             return;
@@ -708,7 +974,7 @@ class TabManager {
 
         const tabElement = tabData.element;
         if (tabElement) {
-            tabElement.dataset.groupId = targetGroupId;
+            tabElement.dataset['groupId'] = targetGroupId;
             let referenceNode = null;
             if (beforeElement && beforeElement.parentNode === targetGroup.tabBar) {
                 referenceNode = beforeElement;
@@ -746,7 +1012,7 @@ class TabManager {
             const targetArea = newGroup?.editorArea;
             if (targetArea) {
                 targetArea.appendChild(tabData.viewerContainer);
-                tabData.viewerContainer.dataset.groupId = targetGroupId;
+                tabData.viewerContainer.dataset['groupId'] = targetGroupId;
                 tabData.viewerContainer.style.display = 'none';
             }
         } else if (tabData.viewType === 'markdown-preview' && tabData.previewContainer) {
@@ -754,7 +1020,7 @@ class TabManager {
             const targetArea = newGroup?.editorArea;
             if (targetArea) {
                 targetArea.appendChild(tabData.previewContainer);
-                tabData.previewContainer.dataset.groupId = targetGroupId;
+                tabData.previewContainer.dataset['groupId'] = targetGroupId;
                 tabData.previewContainer.style.display = 'none';
             }
         } else if (tabData.viewType === 'browser') {
@@ -775,22 +1041,22 @@ class TabManager {
         this.activeGroupId = targetGroupId;
         targetGroup.activeTabKey = uniqueKey;
         this.activeTabKey = uniqueKey;
-        this.activeTab = tabData.fileName;
+        this.activeTab = tabData;
 
         this.syncGroupTabs(targetGroupId);
 
         this.activateTabByUniqueKey(uniqueKey).catch(logError);
     }
 
-    syncGroupTabs(groupId) {
-        const group = this.groups.get(groupId);
+    syncGroupTabs(groupId: string | null | undefined) {
+        const group = this.groups.get(groupId as string);
         if (!group || !group.tabBar) {
             return;
         }
-        const newMap = new Map();
-        const tabElements = group.tabBar.querySelectorAll('.tab');
-        tabElements.forEach((tabElement) => {
-            const key = tabElement.dataset.uniqueKey;
+        const newMap = new Map<string, TabRecord>();
+        const tabElements = Array.from(group.tabBar.querySelectorAll('.tab') as NodeListOf<HTMLElement>);
+        tabElements.forEach((tabElement: HTMLElement) => {
+            const key = tabElement.dataset['uniqueKey'];
             if (!key) return;
             const tabData = this.tabs.get(key);
             if (tabData) {
@@ -805,7 +1071,7 @@ class TabManager {
     }
 
     updateGlobalTabOrder() {
-        const orderedNames = [];
+        const orderedNames: string[] = [];
         if (Array.isArray(this.groupOrder)) {
             this.groupOrder.forEach((groupId) => {
                 const group = this.groups.get(groupId);
@@ -815,7 +1081,7 @@ class TabManager {
                 group.tabOrder.forEach((key) => {
                     const tabData = this.tabs.get(key);
                     if (tabData) {
-                        orderedNames.push(tabData.fileName);
+                        orderedNames.push(tabData.fileName as string);
                     }
                 });
             });
@@ -823,39 +1089,39 @@ class TabManager {
         this.tabOrder = orderedNames;
     }
 
-    getFallbackTabKeyWithinGroup(groupId, removedKey = null) {
-        const group = this.groups.get(groupId);
+    getFallbackTabKeyWithinGroup(groupId: string | null | undefined, removedKey: string | null = null) {
+        const group = this.groups.get(groupId as string);
         if (!group?.tabBar) {
             return null;
         }
-        const tabs = Array.from(group.tabBar.querySelectorAll('.tab'));
+        const tabs = Array.from(group.tabBar.querySelectorAll('.tab') as NodeListOf<HTMLElement>);
         if (tabs.length === 0) {
             return null;
         }
         if (removedKey) {
-            const removedIndex = tabs.findIndex((tab) => tab.dataset.uniqueKey === removedKey);
+            const removedIndex = tabs.findIndex((tab: HTMLElement) => tab.dataset['uniqueKey'] === removedKey);
             if (removedIndex !== -1) {
                 const right = tabs[removedIndex + 1];
-                if (right?.dataset.uniqueKey && right.dataset.uniqueKey !== removedKey) {
-                    return right.dataset.uniqueKey;
+                if (right?.dataset['uniqueKey'] && right.dataset['uniqueKey'] !== removedKey) {
+                    return right.dataset['uniqueKey'];
                 }
                 const left = tabs[removedIndex - 1];
-                if (left?.dataset.uniqueKey && left.dataset.uniqueKey !== removedKey) {
-                    return left.dataset.uniqueKey;
+                if (left?.dataset['uniqueKey'] && left.dataset['uniqueKey'] !== removedKey) {
+                    return left.dataset['uniqueKey'];
                 }
             }
         }
         const first = tabs[0];
-        if (first?.dataset.uniqueKey && first.dataset.uniqueKey !== removedKey) {
-            return first.dataset.uniqueKey;
+        if (first?.dataset['uniqueKey'] && first.dataset['uniqueKey'] !== removedKey) {
+            return first.dataset['uniqueKey'];
         }
-        if (tabs[1]?.dataset.uniqueKey && tabs[1].dataset.uniqueKey !== removedKey) {
-            return tabs[1].dataset.uniqueKey;
+        if (tabs[1]?.dataset['uniqueKey'] && tabs[1]?.dataset['uniqueKey'] !== removedKey) {
+            return tabs[1]?.dataset['uniqueKey'];
         }
         return null;
     }
 
-    ensureGroupHasActiveTab(groupId, options = {}) {
+    ensureGroupHasActiveTab(groupId: string, options: EnsureActiveOptions = {}) {
         const group = this.groups.get(groupId);
         if (!group?.tabBar) {
             return;
@@ -865,7 +1131,7 @@ class TabManager {
 
         if (!group.tabs || group.tabs.size === 0) {
             group.activeTabKey = null;
-            group.tabBar.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
+            group.tabBar.querySelectorAll('.tab').forEach((tab: Element) => tab.classList.remove('active'));
             return;
         }
 
@@ -875,19 +1141,19 @@ class TabManager {
         } else if (group.activeTabKey && group.tabs.has(group.activeTabKey)) {
             candidateKey = group.activeTabKey;
         } else {
-            const firstTab = group.tabBar.querySelector('.tab');
-            candidateKey = firstTab?.dataset.uniqueKey || Array.from(group.tabs.keys())[0];
+            const firstTab = group.tabBar.querySelector('.tab') as HTMLElement | null;
+            candidateKey = firstTab?.dataset['uniqueKey'] || Array.from(group.tabs.keys())[0];
         }
 
         if (!candidateKey) {
             group.activeTabKey = null;
-            group.tabBar.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
+            group.tabBar.querySelectorAll('.tab').forEach((tab: Element) => tab.classList.remove('active'));
             return;
         }
 
         group.activeTabKey = candidateKey;
-        group.tabBar.querySelectorAll('.tab').forEach((tab) => {
-            tab.classList.toggle('active', tab.dataset.uniqueKey === candidateKey);
+        group.tabBar.querySelectorAll('.tab').forEach((tab: Element) => {
+            tab.classList.toggle('active', (tab as HTMLElement).dataset['uniqueKey'] === candidateKey);
         });
 
         if (!triggerEditor) {
@@ -913,10 +1179,10 @@ class TabManager {
         }
     }
 
-    handleSplitDrop(uniqueKey, sourceGroupId) {
+    handleSplitDrop(uniqueKey: string, sourceGroupId: string) {
         const tabKey = uniqueKey || this.draggedTabInfo?.uniqueKey;
         if (!tabKey) return;
-        const sourceGroup = this.groups.get(sourceGroupId) || this.groups.get(this.activeGroupId);
+        const sourceGroup = this.groups.get(sourceGroupId) || this.groups.get(this.activeGroupId as string);
         if (!sourceGroup) return;
         if (!this.canSplitGroup(sourceGroup.id)) {
             return;
@@ -946,22 +1212,22 @@ class TabManager {
         return true;
     }
 
-    createGroup({ afterGroupId = null, size = 1 } = {}) {
+    createGroup({ afterGroupId = null, size = 1 }: { afterGroupId?: string | null; size?: number | null } = {}) {
         if (!this.editorGroupsElement) {
             return null;
         }
         const groupId = `group-${++this.groupCounter}`;
         const groupElement = document.createElement('div');
         groupElement.className = 'editor-group';
-        groupElement.dataset.groupId = groupId;
+        groupElement.dataset['groupId'] = groupId;
 
         const tabBar = document.createElement('div');
         tabBar.className = 'tab-bar';
-        tabBar.dataset.groupId = groupId;
+        tabBar.dataset['groupId'] = groupId;
 
         const editorArea = document.createElement('div');
         editorArea.className = 'editor-area';
-        editorArea.dataset.groupId = groupId;
+        editorArea.dataset['groupId'] = groupId;
 
         groupElement.appendChild(tabBar);
         groupElement.appendChild(editorArea);
@@ -982,7 +1248,7 @@ class TabManager {
             this.groupOrder.push(groupId);
         }
 
-        const groupData = {
+        const groupData: EditorGroup = {
             id: groupId,
             element: groupElement,
             tabBar,
@@ -1022,12 +1288,12 @@ class TabManager {
         });
     }
 
-    handleGroupBecameEmpty(groupId) {
+    handleGroupBecameEmpty(groupId: string) {
         const group = this.groups.get(groupId);
         if (!group) {
             return;
         }
-        const hasTabs = group.tabBar && group.tabBar.querySelector('.tab');
+        const hasTabs = group.tabBar && group.tabBar.querySelector('.tab') as HTMLElement | null;
         if (hasTabs) {
             return;
         }
@@ -1038,7 +1304,7 @@ class TabManager {
         const wasActiveGroup = this.activeGroupId === groupId;
 
         if (group.element && group.element.parentNode === this.editorGroupsElement) {
-            this.editorGroupsElement.removeChild(group.element);
+            (this.editorGroupsElement as HTMLElement).removeChild(group.element);
         }
         this.groups.delete(groupId);
         this.groupOrder = this.groupOrder.filter((id) => id !== groupId);
@@ -1049,16 +1315,16 @@ class TabManager {
 
         if (wasActiveGroup) {
             this.activeGroupId = this.groupOrder[0] || null;
-            const firstGroup = this.groups.get(this.activeGroupId);
+            const firstGroup = this.groups.get(this.activeGroupId as string);
             if (firstGroup && firstGroup.activeTabKey) {
                 this.activeTabKey = firstGroup.activeTabKey;
-                this.activeTab = this.tabs.get(firstGroup.activeTabKey)?.fileName || null;
+                this.activeTab = this.tabs.get(firstGroup.activeTabKey) || null;
             }
         }
 
         if (this.groups.size === 1) {
             const remainingId = this.groupOrder[0];
-            const remainingGroup = this.groups.get(remainingId);
+            const remainingGroup = this.groups.get(remainingId as string);
             if (remainingGroup) {
                 remainingGroup.size = 1;
             }
@@ -1083,29 +1349,29 @@ class TabManager {
         for (let i = 0; i < this.groupOrder.length - 1; i++) {
             const leftId = this.groupOrder[i];
             const rightId = this.groupOrder[i + 1];
-            const leftGroup = this.groups.get(leftId);
-            const rightGroup = this.groups.get(rightId);
+            const leftGroup = this.groups.get(leftId as string);
+            const rightGroup = this.groups.get(rightId as string);
             if (!leftGroup?.element || !rightGroup?.element) continue;
 
             const resizer = document.createElement('div');
             resizer.className = 'editor-group-resizer';
-            resizer.dataset.leftGroupId = leftId;
-            resizer.dataset.rightGroupId = rightId;
+            resizer.dataset['leftGroupId'] = leftId;
+            resizer.dataset['rightGroupId'] = rightId;
             this.bindResizerEvents(resizer);
             this.editorGroupsElement.insertBefore(resizer, rightGroup.element);
         }
     }
 
-    bindResizerEvents(resizer) {
+    bindResizerEvents(resizer: HTMLElement) {
         if (!resizer || resizer._bound) return;
-        const onMouseDown = (e) => {
+        const onMouseDown = (e: MouseEvent) => {
             try {
                 e.preventDefault();
                 e.stopPropagation();
-                const leftId = resizer.dataset.leftGroupId;
-                const rightId = resizer.dataset.rightGroupId;
-                const leftGroup = this.groups.get(leftId);
-                const rightGroup = this.groups.get(rightId);
+                const leftId = resizer.dataset['leftGroupId'];
+                const rightId = resizer.dataset['rightGroupId'];
+                const leftGroup = this.groups.get(leftId as string);
+                const rightGroup = this.groups.get(rightId as string);
                 if (!leftGroup?.element || !rightGroup?.element) return;
 
                 const leftEl = leftGroup.element;
@@ -1119,7 +1385,7 @@ class TabManager {
                 const rightSize0 = rightGroup.size || 1;
                 const sumSize0 = leftSize0 + rightSize0;
 
-                const onMouseMove = (ev) => {
+                const onMouseMove = (ev: MouseEvent) => {
                     let delta = ev.clientX - startX;
                     let newLeft = leftStart + delta;
                     let newRight = rightStart - delta;
@@ -1159,7 +1425,7 @@ class TabManager {
         resizer._bound = true;
     }
 
-    findUniqueKeyByFileName(fileName) {
+    findUniqueKeyByFileName(fileName: string | null | undefined) {
         for (const [uniqueKey, tabData] of this.tabs.entries()) {
             if (tabData.fileName === fileName) {
                 return uniqueKey;
@@ -1168,8 +1434,8 @@ class TabManager {
         return null;
     }
 
-    getTabByFileName(fileName) {
-        const matchingTabs = [];
+    getTabByFileName(fileName: string | null | undefined) {
+        const matchingTabs: Array<{ uniqueKey: string; tabData: TabRecord }> = [];
         for (const [uniqueKey, tabData] of this.tabs) {
             if (tabData.fileName === fileName) {
                 matchingTabs.push({ uniqueKey, tabData });
@@ -1181,7 +1447,7 @@ class TabManager {
         }
 
         if (matchingTabs.length === 1) {
-            return matchingTabs[0].tabData;
+            return (matchingTabs[0] as (typeof matchingTabs)[number]).tabData;
         }
 
 
@@ -1210,28 +1476,28 @@ class TabManager {
             return activeMatch.tabData;
         }
 
-        return matchingTabs[0].tabData;
+        return (matchingTabs[0] as (typeof matchingTabs)[number]).tabData;
     }
 
-    async activateTabByUniqueKey(uniqueKey) {
-        const tabData = this.tabs.get(uniqueKey);
+    async activateTabByUniqueKey(uniqueKey: string | null | undefined): Promise<boolean> {
+        const tabData = this.tabs.get(uniqueKey as string);
         if (!tabData) {
             logError('未找到uniqueKey对应的标签页:', uniqueKey);
-            return;
+            return false;
         }
         this.saveCurrentEditorContent();
 
-        this.activeTab = tabData.fileName;
-        this.activeTabKey = uniqueKey;
-        this.activeGroupId = tabData.groupId;
+        this.activeTab = tabData;
+        this.activeTabKey = uniqueKey as string | null;
+        this.activeGroupId = tabData.groupId as string | null;
 
-        const group = this.groups.get(tabData.groupId);
+        const group = this.groups.get(tabData.groupId as string);
         if (group?.tabBar) {
-            group.tabBar.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            group.tabBar.querySelectorAll('.tab').forEach((tab: Element) => tab.classList.remove('active'));
             if (tabData.element && tabData.element.parentNode === group.tabBar) {
                 tabData.element.classList.add('active');
             } else {
-                const targetTab = group.tabBar.querySelector(`[data-unique-key="${uniqueKey}"]`);
+                const targetTab = group.tabBar.querySelector(`[data-unique-key="${uniqueKey}"]`) as HTMLElement | null;
                 if (targetTab) {
                     targetTab.classList.add('active');
                     tabData.element = targetTab;
@@ -1258,7 +1524,7 @@ class TabManager {
         if (tabData.viewType === 'wysiwyg') {
             tabData.viewType = 'code';
             if (tabData.element) {
-                tabData.element.dataset.viewType = 'code';
+                tabData.element.dataset['viewType'] = 'code';
             }
         }
 
@@ -1271,12 +1537,12 @@ class TabManager {
                     filePath: tabData.filePath,
                     fileName: tabData.fileName
                 });
-                tabData.viewerFrame = tabData.viewerContainer?.querySelector('.pdf-viewer-frame') || null;
-            } else if (tabData.viewerContainer.dataset.groupId !== tabData.groupId) {
-                const targetGroup = this.groups.get(tabData.groupId);
+                tabData.viewerFrame = (tabData.viewerContainer?.querySelector('.pdf-viewer-frame') as HTMLIFrameElement | null) || null;
+            } else if (tabData.viewerContainer.dataset['groupId'] !== tabData.groupId) {
+                const targetGroup = this.groups.get(tabData.groupId as string);
                 if (targetGroup?.editorArea) {
                     targetGroup.editorArea.appendChild(tabData.viewerContainer);
-                    tabData.viewerContainer.dataset.groupId = tabData.groupId;
+                    tabData.viewerContainer.dataset['groupId'] = tabData.groupId as string;
                 }
             }
             if (tabData.viewerContainer) {
@@ -1284,7 +1550,7 @@ class TabManager {
                 tabData.viewerContainer.classList.add('active');
                 this.focusPdfViewer(tabData);
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 try {
                     this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
                 } catch (err) {
@@ -1300,11 +1566,11 @@ class TabManager {
                     content: tabData.content,
                     filePath: tabData.filePath
                 });
-            } else if (tabData.previewContainer.dataset.groupId !== tabData.groupId) {
-                const targetGroup = this.groups.get(tabData.groupId);
+            } else if (tabData.previewContainer.dataset['groupId'] !== tabData.groupId) {
+                const targetGroup = this.groups.get(tabData.groupId as string);
                 if (targetGroup?.editorArea) {
                     targetGroup.editorArea.appendChild(tabData.previewContainer);
-                    tabData.previewContainer.dataset.groupId = tabData.groupId;
+                    tabData.previewContainer.dataset['groupId'] = tabData.groupId as string;
                 }
             }
             if (tabData.previewContainer) {
@@ -1313,46 +1579,48 @@ class TabManager {
                 tabData.previewContainer.style.left = '0';
                 tabData.previewContainer.style.position = 'relative';
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         } else if (tabData.viewType === 'browser') {
             this.hideGroupViewContainers(tabData.groupId);
             if (!window.browserManager) {
                 logError('BrowserManager 未初始化');
-                return;
+                return false;
             }
-            const targetGroup = this.groups.get(tabData.groupId);
-            const state = window.browserManager.getBrowserState(uniqueKey);
+            const targetGroup = this.groups.get(tabData.groupId as string);
+            const state = window.browserManager.getBrowserState(uniqueKey as string);
             let container = state?.container;
             if (!container) {
                 // 创建新的浏览器容器
                 container = window.browserManager.getOrCreateContainer({
-                    groupId: tabData.groupId,
-                    uniqueKey,
+                    groupId: tabData.groupId as string,
+                    uniqueKey: uniqueKey as string,
                     url: tabData.browserUrl || 'about:blank'
                 });
                 if (targetGroup?.editorArea) {
                     targetGroup.editorArea.appendChild(container);
                 }
-            } else if (container.dataset.groupId !== tabData.groupId) {
-                container.dataset.groupId = tabData.groupId;
+            } else if (container.dataset['groupId'] !== tabData.groupId) {
+                container.dataset['groupId'] = tabData.groupId as string;
                 if (targetGroup?.editorArea && container.parentNode !== targetGroup.editorArea) {
                     targetGroup.editorArea.appendChild(container);
                 }
             }
-            window.browserManager.showBrowserContainer(uniqueKey);
-            window.browserManager.focusBrowserTab(uniqueKey);
-            if (this.monacoEditorManager) {
+            window.browserManager.showBrowserContainer(uniqueKey as string);
+            window.browserManager.focusBrowserTab(uniqueKey as string);
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         } else if (tabData.viewType === 'diff' && this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
-            await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
-                groupId: tabData.groupId,
-                ...(tabData.diffMeta || {}),
-                label: tabData.fileName
-            });
+            if (tabData.tabId) {
+                await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
+                    groupId: tabData.groupId,
+                    ...(tabData.diffMeta as Record<string, unknown> || {}),
+                    label: tabData.fileName
+                });
+            }
         } else if (this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
             const expectedTabId = this.monacoEditorManager.generateTabId(tabData.fileName, tabData.filePath || tabData.uniqueKey || null);
@@ -1397,9 +1665,11 @@ class TabManager {
             const forcePrompt = !!tabData.pendingExternalPrompt || !tabData.externalPromptDismissed;
             this.maybePromptExternalReload(tabData, { force: forcePrompt }).catch(logWarn);
         }
+
+        return true;
     }
 
-    closeTabByUniqueKey(uniqueKey, options = {}) {
+    closeTabByUniqueKey(uniqueKey: string, options: CloseTabOptions = {}) {
         const tabData = this.tabs.get(uniqueKey);
         if (!tabData) {
             logError('标签页不存在 (uniqueKey):', uniqueKey);
@@ -1411,21 +1681,21 @@ class TabManager {
         });
     }
 
-    setTabElementUniqueKey(tabElement, uniqueKey) {
+    setTabElementUniqueKey(tabElement: HTMLElement | null | undefined, uniqueKey: string | null | undefined) {
         if (tabElement) {
-            tabElement.dataset.uniqueKey = uniqueKey;
+            tabElement.dataset['uniqueKey'] = uniqueKey as string;
         }
     }
 
-    attachTabEventHandlers(tabElement) {
+    attachTabEventHandlers(tabElement: HTMLElement | null | undefined) {
         if (!tabElement || tabElement._tabEventsBound) {
             return;
         }
 
-        const getUniqueKey = () => tabElement.dataset.uniqueKey;
+        const getUniqueKey = () => tabElement.dataset['uniqueKey'];
 
         tabElement.addEventListener('click', (e) => {
-            if (e.target.classList.contains('tab-close')) {
+            if ((e.target as Element).classList.contains('tab-close')) {
                 return;
             }
             const uniqueKey = getUniqueKey();
@@ -1434,7 +1704,7 @@ class TabManager {
             }
         });
 
-        const closeBtn = tabElement.querySelector('.tab-close');
+        const closeBtn = tabElement.querySelector('.tab-close') as HTMLElement | null;
         if (closeBtn) {
             closeBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1466,6 +1736,30 @@ class TabManager {
 
         this.initializeEditorManagerReference();
         this.bindExternalFileWatcher();
+
+        // 欢迎页文案全部由 t() 写入 innerHTML（无 data-i18n），语言切换需整体重建
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshWelcomeTranslations(), 0);
+        });
+    }
+
+    /**
+     * 语言切换后重渲染欢迎页。整页文案都来自 t()，所以重建 innerHTML 是完整做法；
+     * 随后必须重跑最近文件列表，否则刚异步填入的内容会被清空。
+     */
+    refreshWelcomeTranslations(): void {
+        const container = document.getElementById('welcome-container');
+        if (!container || container.style.display === 'none') {
+            return;
+        }
+        try {
+            container.innerHTML = this.getWelcomePageContent();
+            if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
+                window.uiIcons.hydrate(container);
+            }
+            this.setupWelcomeEventListeners(container);
+            this.loadRecentFiles(container);
+        } catch (_) { }
     }
 
     initializeEditorManagerReference() {
@@ -1507,13 +1801,6 @@ class TabManager {
             return true;
         }
 
-        if (window.app && window.app.editorManager) {
-            this.monacoEditorManager = window.app.editorManager;
-            logInfo('TabManager: 从app获取到编辑器管理器引用');
-            this.registerGroupsWithEditorManager();
-            return true;
-        }
-
         return false;
     }
 
@@ -1534,7 +1821,7 @@ class TabManager {
         if (window.electronAPI?.onExternalFileChange) {
             try {
                 const unsubscribe = window.electronAPI.onExternalFileChange((payload) => {
-                    this.handleExternalFileChange(payload);
+                    this.handleExternalFileChange(payload as ExternalChangePayload);
                 });
                 if (typeof unsubscribe === 'function') {
                     this._externalFileChangeUnsubscribe = unsubscribe;
@@ -1558,7 +1845,7 @@ class TabManager {
         }
     }
 
-    normalizeWatchKey(filePath) {
+    normalizeWatchKey(filePath: string | null | undefined) {
         if (!filePath || typeof filePath !== 'string') {
             return '';
         }
@@ -1569,14 +1856,14 @@ class TabManager {
         return normalized;
     }
 
-    async registerFileWatchForTab(tabData) {
+    async registerFileWatchForTab(tabData: TabRecord | null | undefined) {
         try {
             if (!tabData || tabData.viewType === 'pdf') {
                 return;
             }
             const filePath = tabData.filePath;
             const tabId = tabData.tabId;
-            const isCloudPath = (p) => {
+            const isCloudPath = (p: string | null | undefined) => {
                 if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
                     return window.oicppApp.isCloudFilePath(p);
                 }
@@ -1595,7 +1882,7 @@ class TabManager {
 
             let entry = this._watchedFiles.get(key);
             if (!entry) {
-                entry = { path: filePath, tabs: new Set(), lastChangeType: null };
+                entry = { filePath, path: filePath, tabs: new Set(), watcher: { close: () => {} }, lastChangeType: null };
                 this._watchedFiles.set(key, entry);
                 try {
                     const result = await window.electronAPI.watchFile(filePath);
@@ -1618,7 +1905,7 @@ class TabManager {
         }
     }
 
-    async unregisterFileWatchForTab(tabData) {
+    async unregisterFileWatchForTab(tabData: TabRecord | null | undefined) {
         try {
             if (!tabData) {
                 return;
@@ -1666,7 +1953,7 @@ class TabManager {
         }
     }
 
-    getTabDataByTabId(tabId) {
+    getTabDataByTabId(tabId: string | null | undefined) {
         if (!tabId) {
             return null;
         }
@@ -1678,7 +1965,7 @@ class TabManager {
         return null;
     }
 
-    handleTabFileWatchRebind(oldPath, newPath, tabData) {
+    handleTabFileWatchRebind(oldPath: string | null | undefined, newPath: string | null | undefined, tabData: TabRecord | null | undefined) {
         if (!tabData || tabData.viewType === 'pdf') {
             return;
         }
@@ -1688,7 +1975,7 @@ class TabManager {
                 if (oldKey) {
                     const oldEntry = this._watchedFiles.get(oldKey);
                     if (oldEntry) {
-                        oldEntry.tabs.delete(tabData.tabId);
+                        oldEntry.tabs.delete(tabData.tabId as string);
                         if (oldEntry.tabs.size === 0) {
                             this._watchedFiles.delete(oldKey);
                             if (window.electronAPI?.unwatchFile) {
@@ -1708,7 +1995,7 @@ class TabManager {
         }
     }
 
-    handleExternalFileChange(payload = {}) {
+    handleExternalFileChange(payload: ExternalChangePayload = {}) {
         try {
             const key = this.normalizeWatchKey(payload.filePath);
             if (!key) {
@@ -1720,7 +2007,7 @@ class TabManager {
             }
 
             const tabIds = Array.from(entry.tabs);
-            const affectedTabs = [];
+            const affectedTabs: TabRecord[] = [];
             for (const tabId of tabIds) {
                 const tabData = this.getTabDataByTabId(tabId);
                 if (tabData) {
@@ -1766,7 +2053,7 @@ class TabManager {
     triggerFileExplorerRefresh() {
         try {
             const sidebar = window.sidebarManager || null;
-            let fileExplorer = null;
+            let fileExplorer: FileExplorer | null = null;
             if (sidebar?.getPanelManager) {
                 try {
                     fileExplorer = sidebar.getPanelManager('files') || null;
@@ -1775,11 +2062,8 @@ class TabManager {
             if (!fileExplorer && sidebar?.panels?.files) {
                 fileExplorer = sidebar.panels.files;
             }
-            if (!fileExplorer && window.app?.fileExplorer) {
-                fileExplorer = window.app.fileExplorer;
-            }
             if (!fileExplorer && window.fileExplorer) {
-                fileExplorer = window.fileExplorer;
+                fileExplorer = window.fileExplorer as FileExplorer;
             }
             if (fileExplorer?.refresh) {
                 fileExplorer.refresh();
@@ -1789,7 +2073,7 @@ class TabManager {
         }
     }
 
-    async maybePromptExternalReload(tabData, options = {}) {
+    async maybePromptExternalReload(tabData: TabRecord | null | undefined, options: ReloadOptions = {}) {
         if (!tabData || tabData.viewType === 'pdf') {
             return;
         }
@@ -1809,33 +2093,33 @@ class TabManager {
         tabData.externalPromptInProgress = true;
 
         const changeType = tabData.externalChangeType || 'modified';
-        const fileDisplay = tabData.fileName || tabData.filePath || '当前文件';
+        const fileDisplay = tabData.fileName || tabData.filePath || window.i18n.t('panel.unknownFile');
         const hasLocalChanges = !!tabData.modified;
         const shouldSuggestClose = changeType === 'deleted' || changeType === 'renamed';
         let message = '';
 
         if (changeType === 'deleted') {
-            message = `文件 “${fileDisplay}” 已在外部被删除或移动。`;
+            message = window.i18n.t('tabs.externalChangeDeleted', { file: fileDisplay });
         } else if (changeType === 'renamed') {
-            message = `文件 “${fileDisplay}” 在外部可能被重命名或替换。`;
+            message = window.i18n.t('tabs.externalChangeRenamed', { file: fileDisplay });
         } else {
-            message = `文件 “${fileDisplay}” 已在外部被修改。`;
+            message = window.i18n.t('tabs.externalChangeModified', { file: fileDisplay });
         }
 
         if (shouldSuggestClose) {
-            message += '\n文件已不再可用，建议关闭该标签页并刷新文件管理器。';
-            message += '\n关闭时不会保存当前编辑内容。';
+            message += window.i18n.t('tabs.externalChangeCloseHint');
+            message += window.i18n.t('tabs.externalChangeCloseNoSave');
         } else if (hasLocalChanges) {
-            message += '\n重新加载将覆盖未保存的修改，是否继续？';
+            message += window.i18n.t('tabs.externalChangeReloadOverwrite');
         } else {
-            message += '\n是否重新加载以获取最新内容？';
+            message += window.i18n.t('tabs.externalChangeReloadPrompt');
         }
 
         let shouldReload = false;
         let shouldCloseTab = false;
         try {
             if (window.dialogManager?.showConfirmDialog) {
-                const result = await window.dialogManager.showConfirmDialog('外部修改检测', message);
+                const result = await window.dialogManager.showConfirmDialog(window.i18n.t('tabs.externalChangeTitle'), message);
                 if (shouldSuggestClose) {
                     shouldCloseTab = !!result;
                 } else {
@@ -1890,17 +2174,17 @@ class TabManager {
         this.refreshTabLabels();
     }
 
-    async reloadTabFromDisk(tabData) {
+    async reloadTabFromDisk(tabData: TabRecord | null | undefined) {
         if (!tabData || tabData.viewType === 'pdf' || !tabData.filePath) {
             return false;
         }
         try {
             if (!window.electronAPI?.readFileContent) {
-                throw new Error('读文件接口不可用');
+                throw new Error(window.i18n.t('tabs.readFileUnavailable'));
             }
             const content = await window.electronAPI.readFileContent(tabData.filePath);
             const editorManager = this.monacoEditorManager || window.monacoEditorManager || window.editorManager;
-            let editor = null;
+            let editor: monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor | null = null;
             if (editorManager?.editors instanceof Map && tabData.tabId) {
                 editor = editorManager.editors.get(tabData.tabId) || null;
             }
@@ -1911,15 +2195,16 @@ class TabManager {
                 }
             }
 
-            if (editor && editor.getModel) {
+            if (editor && 'onDidChangeModelContent' in editor) {
                 const model = editor.getModel();
-                const viewState = editor.saveViewState ? editor.saveViewState() : null;
-                model.setValue(content);
-                if (viewState && editor.restoreViewState) {
+                const viewState = editor.saveViewState();
+                if (model) {
+                    model.setValue(content);
+                }
+                if (viewState) {
                     editor.restoreViewState(viewState);
                 }
-                editor.pushUndoStop?.();
-                editor.layout?.();
+                editor.layout();
             }
 
             tabData.content = content;
@@ -1936,36 +2221,41 @@ class TabManager {
         } catch (error) {
             logError('重新加载文件失败:', error);
             if (window.dialogManager?.showError) {
-                window.dialogManager.showError(`重新加载文件失败：\n${error?.message || String(error)}`);
+                window.dialogManager.showError(window.i18n.t('tabs.reloadFailed', { error: (error as { message?: string })?.message || String(error) }));
             }
             return false;
         }
     }
 
     setupEventListeners() {
-        const tabs = document.querySelectorAll('.tab');
-        tabs.forEach(tab => {
+        const tabs = document.querySelectorAll('.tab') as NodeListOf<HTMLElement>;
+        tabs.forEach((tab: HTMLElement) => {
             tab.addEventListener('click', (e) => {
-                if (!e.target.classList.contains('tab-close')) {
-                    this.activateTab(tab.dataset.file).catch(logError);
+                if (e.target instanceof Element && e.target.classList.contains('tab-close')) {
+                    return;
+                }
+                if (tab instanceof HTMLElement) {
+                    this.activateTab(tab.dataset['file']).catch(logError);
                 }
             });
         });
 
-        const closeBtns = document.querySelectorAll('.tab-close');
-        closeBtns.forEach(btn => {
+        const closeBtns = document.querySelectorAll('.tab-close') as NodeListOf<HTMLElement>;
+        closeBtns.forEach((btn: HTMLElement) => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const tab = e.target.closest('.tab');
-                this.closeTab(tab.dataset.file);
+                const tab = e.target instanceof Element ? e.target.closest('.tab') : null;
+                if (tab instanceof HTMLElement) {
+                    this.closeTab(tab.dataset['file']);
+                }
             });
         });
 
 
         document.addEventListener('mouseup', (e) => {
-            if (e.button === 1 && e.target.closest('.tab')) {
-                const tab = e.target.closest('.tab');
-                this.closeTab(tab.dataset.file);
+            const tab = e.target instanceof Element ? e.target.closest('.tab') : null;
+            if (e.button === 1 && tab instanceof HTMLElement) {
+                this.closeTab(tab.dataset['file']);
             }
         });
 
@@ -1986,7 +2276,7 @@ class TabManager {
                     case 'w':
                         e.preventDefault();
                         try {
-                            const active = this.getTabByFileName(this.activeTab);
+                            const active = this.getActiveTabData();
                             const mgr = window.monacoEditorManager || window.editorManager;
                             const ed = mgr?.currentEditor;
                             const content = ed?.getValue?.();
@@ -2052,22 +2342,24 @@ class TabManager {
         this.tabOrder = [];
         this.groups.forEach((group) => {
             group.tabs = group.tabs || new Map();
-            const tabElements = group.tabBar ? Array.from(group.tabBar.querySelectorAll('.tab')) : [];
-            tabElements.forEach((tabEl) => {
-                const labelEl = tabEl.querySelector('.tab-label');
+            const tabElements = group.tabBar ? Array.from(group.tabBar.querySelectorAll('.tab') as NodeListOf<HTMLElement>) : [];
+            tabElements.forEach((tabEl: HTMLElement) => {
+                const labelEl = tabEl.querySelector('.tab-label') as HTMLElement | null;
                 const labelText = labelEl?.querySelector?.('.tab-label-text')?.textContent || labelEl?.textContent || '';
-                const fileName = tabEl.dataset.file || labelText.trim() || 'untitled';
-                const uniqueKey = tabEl.dataset.uniqueKey || tabEl.dataset.filePath || fileName;
+                const fileName = tabEl.dataset['file'] || labelText.trim() || 'untitled';
+                const uniqueKey = tabEl.dataset['uniqueKey'] || tabEl.dataset['filePath'] || fileName;
                 const tabData = {
                     element: tabEl,
                     fileName,
                     modified: tabEl.classList.contains('modified') || false,
                     content: '',
                     active: tabEl.classList.contains('active'),
-                    filePath: tabEl.dataset.filePath || null,
-                    tabId: tabEl.dataset.tabId || null,
+                    filePath: tabEl.dataset['filePath'] || null,
+                    tabId: tabEl.dataset['tabId'] || null,
                     uniqueKey,
                     groupId: group.id,
+                    isTempFile: false,
+                    isDirty: false,
                     externalModified: false,
                     externalChangeType: null,
                     externalPromptDismissed: false,
@@ -2078,7 +2370,7 @@ class TabManager {
                 this.tabs.set(uniqueKey, tabData);
                 group.tabs.set(uniqueKey, tabData);
                 this.setTabElementUniqueKey(tabEl, uniqueKey);
-                tabEl.dataset.groupId = group.id;
+                tabEl.dataset['groupId'] = group.id;
 
                 if (!tabEl.draggable) {
                     tabEl.draggable = true;
@@ -2090,7 +2382,7 @@ class TabManager {
                     Promise.resolve(this.registerFileWatchForTab(tabData)).catch(() => { });
                 }
                 if (tabData.active) {
-                    this.activeTab = fileName;
+                    this.activeTab = tabData;
                     this.activeTabKey = uniqueKey;
                     group.activeTabKey = uniqueKey;
                     this.activeGroupId = group.id;
@@ -2102,7 +2394,7 @@ class TabManager {
         this.updateGlobalTabOrder();
     }
 
-    async activateTab(fileName) {
+    async activateTab(fileName: string | null | undefined) {
         const uniqueKey = this.findUniqueKeyByFileName(fileName);
         if (uniqueKey) {
             await this.activateTabByUniqueKey(uniqueKey);
@@ -2123,9 +2415,11 @@ class TabManager {
         if (this.isDiscardCloseInProgress()) return;
         if (!this.activeTab) return;
 
-        const currentTabKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab);
-        const currentTab = currentTabKey ? this.tabs.get(currentTabKey) : this.getTabByFileName(this.activeTab);
+        const currentTabKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab as string);
+        const currentTab = currentTabKey ? this.tabs.get(currentTabKey) : this.getTabByFileName(this.activeTab as string);
         if (!currentTab) return;
+        // 磁盘上的版本比编辑器新（外部改过）。这时自动保存会不经确认覆盖掉外部改动，
+        // 而该跳过的保存后面还会在「外部已修改」提示里让用户选一次（#442）。
         if (currentTab.externalModified) {
             logInfo('文件已被外部修改，跳过切标签前的自动保存:', currentTab.filePath);
             return;
@@ -2133,7 +2427,11 @@ class TabManager {
 
         const content = this.getTabContentForSave(currentTab);
         if (typeof content === 'string') {
-            const isCloudPath = (p) => {
+            // 内容与上次记录一致时跳过保存链：避免无改动切标签触发 saveFile IPC、
+            // 主进程写盘比对、file-saved 广播与样例测试器刷新
+            if (content === currentTab.content) return;
+
+            const isCloudPath = (p: string | null | undefined) => {
                 if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
                     return window.oicppApp.isCloudFilePath(p);
                 }
@@ -2150,14 +2448,14 @@ class TabManager {
     }
 
     getCurrentEditorContent() {
-        const activeKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab);
-        const tabData = activeKey ? this.tabs.get(activeKey) : this.getTabByFileName(this.activeTab);
+        const activeKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab as string);
+        const tabData = activeKey ? this.tabs.get(activeKey) : this.getTabByFileName(this.activeTab as string);
         if (!tabData) return null;
         const content = this.getTabContentForSave(tabData);
         return typeof content === 'string' ? content : null;
     }
 
-    getTabContentForSave(tabData) {
+    getTabContentForSave(tabData: TabRecord | null | undefined) {
         if (!tabData) return null;
         if (tabData.viewType === 'pdf' || tabData.viewType === 'markdown-preview') {
             return null;
@@ -2181,7 +2479,7 @@ class TabManager {
 
 
 
-    loadFileContentToEditor(fileName, tab) {
+    loadFileContentToEditor(fileName: string | null | undefined, tab: TabRecord) {
         logInfo('加载文件内容到编辑器:', fileName);
 
         if (tab.isLoading) {
@@ -2189,55 +2487,66 @@ class TabManager {
             return;
         }
 
-        if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            const editor = this.monacoEditorManager.currentEditor;
-            if (editor.updateFileName) {
-                editor.updateFileName(fileName, tab.modified || false);
-            }
-        }
-
-        if (tab.filePath && window.electronAPI?.readFileContent) {
+        if (tab.filePath && window.electronAPI) {
             logInfo('从文件系统重新读取文件:', tab.filePath);
             tab.isLoading = true; // 设置加载标志
-            window.electronAPI.readFileContent(tab.filePath).then((content) => {
-                tab.isLoading = false; // 清除加载标志
-                logInfo('文件内容读取成功，直接设置到当前编辑器');
-                this.setEditorContent(content, true); // 标记为已保存
-                tab.content = content;
-                tab.modified = false; // 从文件系统加载的内容标记为未修改
+            const requestedPath = tab.filePath;
+            const requestedKey = tab.uniqueKey || null;
+            // await 期间可能已切换 tab / 关闭 tab：写入目标是 await 之后重新读取的 currentEditor，
+            // 守卫必须同时锚定「tab 身份」和「目标编辑器身份」，否则 A 的内容会写进 B 的编辑器，
+            // 并用 tab.modified = false 吞掉 B 的未保存改动
+            const targetEditor = this.monacoEditorManager?.currentEditor || null;
+            const isSameTab = () => (requestedKey
+                ? this.tabs.get(requestedKey) === tab
+                : tab.filePath === requestedPath);
+            const isStillTarget = () => isSameTab() && this.monacoEditorManager?.currentEditor === targetEditor;
 
-                if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-                    const editor = this.monacoEditorManager.currentEditor;
-                    if (editor.updateFileName) {
-                        editor.updateFileName(fileName, false);
+            window.electronAPI.readFileContent(requestedPath)
+                .then((content) => {
+                    if (!isSameTab()) {
+                        logWarn('文件读取返回时标签页已失效，丢弃结果:', requestedPath);
+                        return;
                     }
-                }
-            }).catch((error) => {
-                tab.isLoading = false;
-                logError('读取文件失败:', error);
-                logWarn('[TabReadFileErrorSuppressed]', '无法读取文件: ' + (error?.message || error));
-                if (tab.content !== undefined) {
-                    this.setEditorContent(tab.content);
-                }
-            });
+                    if (!isStillTarget()) {
+                        // 目标编辑器已切走：只回填 tab 缓存，等切回该 tab 时再由 switchTab 载入
+                        tab.content = content;
+                        logWarn('文件读取返回时已切换编辑器，仅更新缓存:', requestedPath);
+                        return;
+                    }
+                    logInfo('文件内容读取成功，直接设置到当前编辑器');
+                    this.setEditorContent(content, true); // 标记为已保存
+                    tab.content = content;
+                    tab.modified = false; // 从文件系统加载的内容标记为未修改
+
+                })
+                .catch((error) => {
+                    logError('读取文件失败:', error);
+                    logWarn('[TabReadFileErrorSuppressed]', '无法读取文件: ' + error);
+                    if (isStillTarget() && tab.content !== undefined) {
+                        this.setEditorContent(tab.content);
+                    }
+                })
+                .finally(() => {
+                    tab.isLoading = false; // 清除加载标志
+                });
         } else {
-            const content = tab.content || this.getDefaultContentForFile(fileName);
+            const content = tab.content || this.getDefaultContentForFile(fileName as string);
             this.setEditorContent(content, !tab.modified); // 根据修改状态决定是否标记为已保存
             logInfo('使用缓存或默认内容');
         }
     }
 
-    setEditorContent(content, markAsSaved = false) {
+    setEditorContent(content: string | null | undefined, markAsSaved = false) {
         if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            this.monacoEditorManager.currentEditor.setValue(content, markAsSaved);
+            this.monacoEditorManager.currentEditor.setValue(content ?? '');
             logInfo('编辑器内容已更新，保存状态:', markAsSaved);
         } else {
             logWarn('编辑器管理器或当前编辑器不可用');
         }
     }
 
-    getDefaultContentForFile(fileName) {
-        const ext = fileName.split('.').pop().toLowerCase();
+    getDefaultContentForFile(fileName: string) {
+        const ext = (fileName.split('.').pop() as string).toLowerCase();
 
         if (ext === 'cpp' || ext === 'cc' || ext === 'cxx') {
             return '';
@@ -2252,10 +2561,10 @@ class TabManager {
 #endif // ${guard}`;
         }
 
-        return '// 新文件\n';
+        return `// ${window.i18n.t('message.newFile')}\n`;
     }
 
-    closeTab(fileName, options = {}) {
+    closeTab(fileName: string | null | undefined, options: CloseTabOptions = {}) {
         logInfo('关闭标签页:', fileName);
         const explicitKey = options.uniqueKeyOverride;
         let tabData = null;
@@ -2271,67 +2580,60 @@ class TabManager {
         }
 
         if (!options.force && !options.skipCloseConfirm && tabData.viewType !== 'pdf' && (tabData.modified || tabData.isTempFile)) {
-            const escapeHtml = (text) => {
-                try {
-                    const div = document.createElement('div');
-                    div.textContent = String(text ?? '');
-                    return div.innerHTML;
-                } catch (_) {
-                    return String(text ?? '');
-                }
-            };
-
-            const safeName = tabData.fileName || fileName || '当前文件';
+            // 不在这里转义：DialogManager.formatMessage 会对整条正文转义，
+            // 两边都做就会把 a&b 显示成 a&amp;b。
+            const displayName = tabData.fileName || fileName || window.i18n.t('panel.unknownFile');
             const message = tabData.isTempFile
-                ? `临时文件 “${safeName}” 未保存。\n\n请选择如何处理临时文件。`
-                : `标签页 “${safeName}” 有未保存修改。\n\n请选择如何处理这些修改。`;
+                ? window.i18n.t('tabs.tempFileUnsaved', { name: displayName })
+                : window.i18n.t('tabs.tabUnsaved', { name: displayName });
 
             const proceedSave = async () => {
-                try {
-                    const path = tabData.filePath || (explicitKey && typeof explicitKey === 'string' ? explicitKey : null);
-                    const content = this.getTabContentForSave(tabData);
-                    const isCloudPath = (p) => {
-                        if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
-                            return window.oicppApp.isCloudFilePath(p);
-                        }
-                        return typeof p === 'string' && /^cloud:/i.test(p);
-                    };
+                const path = tabData.filePath || (explicitKey && typeof explicitKey === 'string' ? explicitKey : null);
+                const content = this.getTabContentForSave(tabData);
+                const isCloudPath = (p: string | null | undefined) => {
+                    if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
+                        return window.oicppApp.isCloudFilePath(p);
+                    }
+                    return typeof p === 'string' && /^cloud:/i.test(p);
+                };
 
+                try {
                     if (tabData.isTempFile) {
                         if (!window.electronAPI?.saveAsFile) {
-                            throw new Error('临时文件保存接口不可用');
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                         }
-                        const savedPath = await window.electronAPI.saveAsFile(content);
-                        if (!savedPath) return;
+                        const savedPath = await window.electronAPI.saveAsFile(content as string);
+                        if (!savedPath) return;   // 用户自己取消另存，不算失败
                     } else if (path && typeof content === 'string') {
                         if (isCloudPath(path)) {
                             if (window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function') {
                                 const ok = await window.oicppApp.saveCloudFileToServer(path, content);
-                                if (!ok) throw new Error('云文件保存失败');
+                                if (!ok) throw new Error(window.i18n.t('dialog.cloudSaveFailed'));
                             } else {
-                                throw new Error('云文件保存接口不可用');
+                                throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                             }
                         } else if (window.electronAPI?.saveFile) {
                             const result = await window.electronAPI.saveFile(path, content);
-                            if (result?.success === false) {
-                                throw new Error(result?.error || '写入失败');
+                            if (result && (result as Record<string, unknown>)['success'] === false) {
+                                throw new Error(String((result as Record<string, unknown>)['error'] || window.i18n.t('dialog.saveWriteFailed')));
                             }
                         } else {
-                            throw new Error('文件保存接口不可用');
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                         }
                     } else {
-                        throw new Error(path ? '无法获取文件内容' : '文件路径不可用');
+                        throw new Error(path
+                            ? window.i18n.t('dialog.saveNoContent')
+                            : window.i18n.t('error.invalidFilePath'));
                     }
                 } catch (e) {
-                    const errorText = e?.message || String(e);
+                    // 原先这里只 logWarn + return：标签没关掉、也没有任何提示，
+                    // 用户以为点了「保存」就完事了，改动其实还在内存里。
+                    const errorText = (e as Error)?.message || String(e);
                     logWarn('关闭前保存失败:', e);
-                    const title = window.i18n ? window.i18n.t('message.saveFailed') : '保存失败';
-                    const errorMessage = `${title}: ${errorText}`;
+                    const title = window.i18n.t('message.saveFailed');
                     try {
                         if (window.dialogManager?.showConfirmDialog) {
-                            await window.dialogManager.showConfirmDialog(title, errorMessage);
-                        } else if (typeof window.alert === 'function') {
-                            window.alert(errorMessage);
+                            await window.dialogManager.showConfirmDialog(title, `${title}: ${errorText}`);
                         }
                     } catch (_) { }
                     return;
@@ -2342,27 +2644,27 @@ class TabManager {
 
             try {
                 if (window.dialogManager?.showActionDialog) {
-                    window.dialogManager.showActionDialog(tabData.isTempFile ? '确认丢弃临时文件' : '确认关闭标签页', message, [
-                        { id: 'save', label: '保存', className: 'dialog-btn-confirm' },
-                        { id: 'discard', label: '丢弃', className: 'dialog-btn-cancel' },
-                        { id: 'cancel', label: '取消' }
+                    window.dialogManager.showActionDialog(tabData.isTempFile ? window.i18n.t('tabs.confirmDiscardTemp') : window.i18n.t('tabs.confirmCloseTab'), message, [
+                        { id: 'save', label: window.i18n.t('dialog.save'), className: 'dialog-btn-confirm' },
+                        { id: 'discard', label: window.i18n.t('dialog.discard'), className: 'dialog-btn-cancel' },
+                        { id: 'cancel', label: window.i18n.t('dialog.cancel') }
                     ])
-                        .then((result) => {
+                        .then((result: unknown) => {
                             if (result === 'save') {
                                 proceedSave();
                                 return;
                             }
                             else if (result === 'discard') proceedDiscard();
                         })
-                        .catch((e) => logWarn('关闭标签页确认弹窗失败:', e));
+                        .catch((e: unknown) => logWarn('关闭标签页确认弹窗失败:', e));
                 } else if (window.dialogManager?.showConfirmDialog) {
-                    window.dialogManager.showConfirmDialog('确认关闭标签页', message)
-                        .then((result) => {
+                    window.dialogManager.showConfirmDialog(window.i18n.t('tabs.confirmCloseTab'), message)
+                        .then((result: unknown) => {
                             if (result) proceedSave();
                         })
-                        .catch((e) => logWarn('关闭标签页确认弹窗失败:', e));
+                        .catch((e: unknown) => logWarn('关闭标签页确认弹窗失败:', e));
                 } else {
-                    const result = window.confirm(`文件 “${tabData.fileName || fileName}” 有未保存修改。\n关闭将自动保存这些修改并关闭标签页，是否继续？`);
+                    const result = window.confirm(window.i18n.t('tabs.fileUnsavedConfirm', { name: tabData.fileName || fileName }));
                     if (result) proceedSave();
                 }
             } catch (e) {
@@ -2398,7 +2700,7 @@ class TabManager {
             try {
                 const path = tabData.filePath || (uniqueKey && uniqueKey.includes('/') ? uniqueKey : null);
                 const content = this.getTabContentForSave(tabData);
-                const isCloudPath = (p) => {
+                const isCloudPath = (p: string | null | undefined) => {
                     if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
                         return window.oicppApp.isCloudFilePath(p);
                     }
@@ -2445,7 +2747,7 @@ class TabManager {
         } else if (tabData.viewType === 'browser') {
             // 清理浏览器标签页
             if (window.browserManager && typeof window.browserManager.destroyBrowserTab === 'function') {
-                window.browserManager.destroyBrowserTab(uniqueKey);
+                window.browserManager.destroyBrowserTab(uniqueKey as string);
             }
         } else if (tabId && window.monacoEditorManager) {
             window.monacoEditorManager.cleanupEditor(tabId);
@@ -2473,12 +2775,13 @@ class TabManager {
             this.handleGroupBecameEmpty(groupId);
         }
 
-        if (this.activeTab === fileName) {
+        if (this.activeTab === fileName || this.activeTabKey === uniqueKey) {
             this.activeTab = null;
+            this.activeTabKey = null;
 
             const remainingTabs = Array.from(this.tabs.keys());
             if (remainingTabs.length > 0) {
-                const nextUniqueKey = remainingTabs[0];
+                const nextUniqueKey = remainingTabs[0] as string;
                 const firstTabData = this.tabs.get(nextUniqueKey);
                 if (firstTabData) {
                     this.activateTabByUniqueKey(nextUniqueKey).catch(logError);
@@ -2491,10 +2794,28 @@ class TabManager {
         this.refreshTabLabels();
     }
 
-    closeActiveTab() {
-        if (this.activeTab) {
-            this.closeTab(this.activeTab);
+    // activeTab 在多数激活路径（activateTab / activateTabByUniqueKey / 分组切换等）里
+    // 被赋成整个 TabRecord，少数路径赋 fileName 字符串。直接把它传给
+    // getTabByFileName 会因 `tabData.fileName === fileName` 永远失配而查不到 tab，
+    // 这里统一归一化，避免每个调用点各自判断。
+    getActiveTabData() {
+        if (this.activeTab && typeof this.activeTab === 'object') {
+            return this.activeTab;
         }
+        if (typeof this.activeTab === 'string') {
+            const byName = this.getTabByFileName(this.activeTab);
+            if (byName) return byName;
+        }
+        if (this.activeTabKey) {
+            return this.tabs.get(this.activeTabKey) || null;
+        }
+        return null;
+    }
+
+    closeActiveTab() {
+        const tabData = this.getActiveTabData();
+        if (!tabData) return;
+        this.closeTab(tabData.fileName, { uniqueKeyOverride: tabData.uniqueKey });
     }
 
     createNewTab() {
@@ -2505,12 +2826,28 @@ class TabManager {
         let counter = 1;
         let fileName = `untitled-${counter}.cpp`;
 
-        while (this.tabs.has(fileName)) {
+        // this.tabs 的 key 是 uniqueKey（磁盘文件为完整路径），只比 key 会漏掉
+        // 已打开的同名磁盘文件，导致新建 tab 与其并存
+        const nameTaken = (name: string) => [...this.tabs.values()]
+            .some((tabData) => tabData?.fileName === name || tabData?.uniqueKey === name);
+
+        while (this.tabs.has(fileName) || nameTaken(fileName)) {
             counter++;
             fileName = `untitled-${counter}.cpp`;
         }
 
         return fileName;
+    }
+
+    dispose() {
+        if (typeof window === 'undefined') return;
+        if (this.handlePdfViewerMessage) {
+            window.removeEventListener('message', this.handlePdfViewerMessage, false);
+        }
+        if (this._beforeUnloadHandler) {
+            window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+            this._beforeUnloadHandler = null;
+        }
     }
 
     isPdfFile(fileName = '') {
@@ -2521,10 +2858,10 @@ class TabManager {
         if (parts.length < 2) {
             return false;
         }
-        return parts.pop().toLowerCase() === 'pdf';
+        return (parts.pop() as string).toLowerCase() === 'pdf';
     }
 
-    isLikelyFileObject(candidate) {
+    isLikelyFileObject(candidate: FileLikeObject | null | undefined) {
         if (!candidate || typeof candidate !== 'object') {
             return false;
         }
@@ -2556,7 +2893,7 @@ class TabManager {
         return false;
     }
 
-    base64ToUint8Array(base64) {
+    base64ToUint8Array(base64: string | null | undefined) {
         if (!base64 || typeof base64 !== 'string') {
             return null;
         }
@@ -2595,14 +2932,14 @@ class TabManager {
         }
     }
 
-    normalizePathSlashes(pathCandidate) {
+    normalizePathSlashes(pathCandidate: string | null | undefined) {
         if (!pathCandidate || typeof pathCandidate !== 'string') {
             return '';
         }
         return pathCandidate.replace(/\\/g, '/');
     }
 
-    isPathInsideWorkspace(filePath, workspacePath) {
+    isPathInsideWorkspace(filePath: string | null | undefined, workspacePath: string | null | undefined) {
         if (!filePath || !workspacePath) {
             return false;
         }
@@ -2620,7 +2957,7 @@ class TabManager {
         return normalizedFile === normalizedWorkspace || normalizedFile.startsWith(`${normalizedWorkspace}/`);
     }
 
-    computeDisplayDirectory(filePath, workspacePath) {
+    computeDisplayDirectory(filePath: string | null | undefined, workspacePath: string | null | undefined) {
         try {
             const normalizedFile = this.normalizePathSlashes(filePath);
             const workspaceNormalized = workspacePath ? this.normalizePathSlashes(workspacePath).replace(/\/+$/g, '') : '';
@@ -2660,7 +2997,7 @@ class TabManager {
 
             const workspacePath = this.getWorkspaceRootPath();
             const normalizedWorkspace = workspacePath ? this.normalizePathSlashes(workspacePath).replace(/\/+$/g, '') : '';
-            const groupedByName = new Map();
+            const groupedByName: Map<string, TabRecord[]> = new Map();
 
             for (const [, tabData] of this.tabs.entries()) {
                 if (!tabData || !tabData.element) {
@@ -2670,7 +3007,7 @@ class TabManager {
                 if (!groupedByName.has(baseName)) {
                     groupedByName.set(baseName, []);
                 }
-                groupedByName.get(baseName).push(tabData);
+                (groupedByName.get(baseName) as TabRecord[]).push(tabData);
             }
 
             for (const tabsWithSameName of groupedByName.values()) {
@@ -2721,7 +3058,7 @@ class TabManager {
         }
     }
 
-    normalizeDroppedPath(candidate) {
+    normalizeDroppedPath(candidate: string | null | undefined) {
         if (!candidate) {
             return '';
         }
@@ -2762,7 +3099,7 @@ class TabManager {
         return normalized;
     }
 
-    buildFileObjectFromDescriptor(descriptor, fallbackName = 'untitled') {
+    buildFileObjectFromDescriptor(descriptor: PdfDropDescriptor | null | undefined, fallbackName = 'untitled') {
         if (!descriptor || typeof descriptor.base64 !== 'string' || !descriptor.base64.trim()) {
             return null;
         }
@@ -2797,7 +3134,7 @@ class TabManager {
         }
     }
 
-    buildFileUrl(filePath) {
+    buildFileUrl(filePath: string | null | undefined) {
         if (!filePath || typeof filePath !== 'string') {
             return '';
         }
@@ -2814,7 +3151,7 @@ class TabManager {
         }
     }
 
-    generatePdfTabId(uniqueKey) {
+    generatePdfTabId(uniqueKey: string | null | undefined) {
         try {
             if (!uniqueKey) {
                 return `pdf-${Date.now().toString(36)}`;
@@ -2832,8 +3169,8 @@ class TabManager {
         }
     }
 
-    createPdfViewerContainer({ groupId, tabId, filePath, fileName, inline = false }) {
-        const group = this.groups.get(groupId);
+    createPdfViewerContainer({ groupId, tabId, filePath, fileName, inline = false }: PdfContainerOptions) {
+        const group = this.groups.get(groupId as string);
         const editorArea = group?.editorArea;
         if (!editorArea) {
             logError('创建PDF查看器失败：未找到目标编辑区域', groupId);
@@ -2842,9 +3179,9 @@ class TabManager {
 
         const container = document.createElement('div');
         container.className = 'pdf-viewer-container';
-        container.dataset.tabId = tabId;
-        container.dataset.groupId = groupId;
-        container.dataset.filePath = filePath || '';
+        container.dataset['tabId'] = tabId as string;
+        container.dataset['groupId'] = groupId as string;
+        container.dataset['filePath'] = filePath || '';
         container.style.display = 'none';
         if (!container.style.position) {
             container.style.position = 'relative';
@@ -2852,20 +3189,20 @@ class TabManager {
 
         const loader = document.createElement('div');
         loader.className = 'pdf-viewer-loading';
-        loader.innerHTML = '<div class="spinner"></div><div>PDF 加载中…</div>';
+        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading')) + '</div>';
 
         const iframe = document.createElement('iframe');
         iframe.className = 'pdf-viewer-frame';
-        iframe.dataset.tabId = tabId;
+        iframe.dataset['tabId'] = tabId as string;
         iframe.setAttribute('loading', 'lazy');
         iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-popups allow-downloads');
-        iframe.title = fileName ? `${fileName} (PDF 查看器)` : 'PDF 查看器';
+        iframe.title = fileName ? `${fileName} (${window.i18n.t('pdfViewer.loading')})` : window.i18n.t('pdfViewer.loading');
 
         const viewerSrc = this.buildPdfViewerSrc({ filePath, tabId, inline });
         if (viewerSrc) {
             iframe.src = viewerSrc;
         } else {
-            loader.innerHTML = '<div class="spinner"></div><div>无法定位 PDF 文件</div>';
+            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound')) + '</div>';
         }
 
         iframe.addEventListener('load', () => {
@@ -2875,12 +3212,15 @@ class TabManager {
 
         container.appendChild(loader);
         container.appendChild(iframe);
-        this.attachPdfDropHandlers(container, groupId);
+        this.attachPdfDropHandlers(container, groupId as string);
         editorArea.appendChild(container);
         return container;
     }
 
-    buildPdfViewerSrc({ filePath, tabId, zoom, inline = false } = {}) {
+    /**
+     * @param {{ filePath?: string, tabId?: string, zoom?: string, inline?: boolean }} opts
+     */
+    buildPdfViewerSrc({ filePath, tabId, zoom, inline = false }: PdfViewerSrcOptions = {}) {
         if (!filePath && !inline) {
             return '';
         }
@@ -2894,9 +3234,9 @@ class TabManager {
                 viewerUrl.searchParams.set('file', fileUrl);
             }
             if (tabId) {
-                viewerUrl.searchParams.set('tabId', tabId);
+                viewerUrl.searchParams.set('tabId', tabId as string);
             }
-            viewerUrl.searchParams.set('zoom', zoom || 'page-width');
+            viewerUrl.searchParams.set('zoom', (zoom as string) || 'page-width');
             viewerUrl.searchParams.set('disableFullscreen', 'true');
             const theme = this.getCurrentTheme();
             if (theme) {
@@ -2909,7 +3249,7 @@ class TabManager {
         }
     }
 
-    attachPdfDropHandlers(viewerContainer, groupId) {
+    attachPdfDropHandlers(viewerContainer: HTMLElement | null | undefined, groupId: string | null | undefined) {
         if (!viewerContainer || viewerContainer._pdfDnDBound) {
             return;
         }
@@ -2918,31 +3258,30 @@ class TabManager {
             viewerContainer.style.position = 'relative';
         }
 
-        let overlay = viewerContainer.querySelector('.pdf-drop-overlay');
+        let overlay = viewerContainer.querySelector('.pdf-drop-overlay') as HTMLElement | null;
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.className = 'pdf-drop-overlay';
             const message = document.createElement('div');
             message.className = 'pdf-drop-message';
-            message.textContent = '拖拽文件到此处打开';
+            message.textContent = window.i18n.t('pdfViewer.dragToOpen');
             overlay.appendChild(message);
             viewerContainer.appendChild(overlay);
         }
 
         let hoverCounter = 0;
 
-        const isTabDrag = (event) => {
+        const isTabDrag = (event: DragEvent | null | undefined) => {
             try {
-                const types = Array.isArray(event?.dataTransfer?.types)
-                    ? event.dataTransfer.types
-                    : Array.from(event?.dataTransfer?.types || []);
+                const rawTypes = event?.dataTransfer?.types;
+                const types = Array.isArray(rawTypes) ? rawTypes : Array.from(rawTypes || []);
                 return types.includes('application/oicpp-tab');
             } catch (_) {
                 return false;
             }
         };
 
-        const showOverlay = (event) => {
+        const showOverlay = (event: DragEvent | null | undefined) => {
             if (isTabDrag(event)) {
                 return;
             }
@@ -2958,8 +3297,8 @@ class TabManager {
             overlay.classList.remove('visible');
         };
 
-        const decrementHover = (event) => {
-            if (event && event.relatedTarget && viewerContainer.contains(event.relatedTarget)) {
+        const decrementHover = (event: DragEvent | null | undefined) => {
+            if (event && event.relatedTarget && viewerContainer.contains(event.relatedTarget as Node)) {
                 return;
             }
             hoverCounter = Math.max(hoverCounter - 1, 0);
@@ -2999,7 +3338,7 @@ class TabManager {
             event.stopPropagation();
             hideOverlay();
             try {
-                await this.processExternalDrop(event.dataTransfer, groupId);
+                await this.processExternalDrop(event.dataTransfer, groupId as string);
             } catch (error) {
                 logWarn('PDF 容器 drop 处理失败:', error);
             }
@@ -3015,7 +3354,7 @@ class TabManager {
 
         overlay.addEventListener('dragleave', (event) => {
             event.stopPropagation();
-            if (event.relatedTarget && overlay.contains(event.relatedTarget)) {
+            if (event.relatedTarget && overlay.contains(event.relatedTarget as Node)) {
                 return;
             }
             decrementHover(event);
@@ -3026,13 +3365,13 @@ class TabManager {
             event.stopPropagation();
             hideOverlay();
             try {
-                await this.processExternalDrop(event.dataTransfer, groupId);
+                await this.processExternalDrop(event.dataTransfer, groupId as string);
             } catch (error) {
                 logWarn('PDF 覆盖层 drop 处理失败:', error);
             }
         });
 
-        const frame = viewerContainer.querySelector('.pdf-viewer-frame');
+        const frame = viewerContainer.querySelector('.pdf-viewer-frame') as HTMLElement | null;
         if (frame) {
             frame.addEventListener('dragenter', (event) => {
                 event.preventDefault();
@@ -3062,7 +3401,7 @@ class TabManager {
                 event.stopPropagation();
                 hideOverlay();
                 try {
-                    await this.processExternalDrop(event.dataTransfer, groupId);
+                    await this.processExternalDrop(event.dataTransfer, groupId as string);
                 } catch (error) {
                     logWarn('PDF 框架 drop 处理失败:', error);
                 }
@@ -3078,7 +3417,7 @@ class TabManager {
             if (!body) {
                 return null;
             }
-            const dataTheme = body.getAttribute('data-theme') || body.dataset?.theme;
+            const dataTheme = body.getAttribute('data-theme') || body.dataset?.['theme'];
             if (dataTheme) {
                 return dataTheme;
             }
@@ -3094,11 +3433,11 @@ class TabManager {
         return null;
     }
 
-    handlePdfViewerLoaded(tabId) {
+    handlePdfViewerLoaded(tabId: string | null | undefined) {
         if (!tabId) {
             return;
         }
-        let targetTab = null;
+        let targetTab: TabRecord | null = null;
         for (const tabData of this.tabs.values()) {
             if (tabData.tabId === tabId) {
                 targetTab = tabData;
@@ -3109,7 +3448,7 @@ class TabManager {
             return;
         }
         targetTab.pdfViewerReady = true;
-        const frame = targetTab.viewerFrame || targetTab.viewerContainer?.querySelector('.pdf-viewer-frame');
+        const frame = (targetTab.viewerFrame || targetTab.viewerContainer?.querySelector('.pdf-viewer-frame')) as HTMLIFrameElement | null;
         if (frame) {
             try {
                 frame.focus();
@@ -3124,11 +3463,11 @@ class TabManager {
         }
     }
 
-    focusPdfViewer(tabData) {
+    focusPdfViewer(tabData: TabRecord | null | undefined) {
         if (!tabData || tabData.viewType !== 'pdf') {
             return;
         }
-        const frame = tabData.viewerFrame || tabData.viewerContainer?.querySelector('.pdf-viewer-frame');
+        const frame = (tabData.viewerFrame || tabData.viewerContainer?.querySelector('.pdf-viewer-frame')) as HTMLIFrameElement | null;
         if (frame) {
             try {
                 frame.focus();
@@ -3140,7 +3479,7 @@ class TabManager {
         }
     }
 
-    tryHandlePdfShortcut(action) {
+    tryHandlePdfShortcut(action: string | null | undefined) {
         if (!action) {
             return false;
         }
@@ -3152,7 +3491,7 @@ class TabManager {
         if (!tabData || tabData.viewType !== 'pdf') {
             return false;
         }
-        const frame = tabData.viewerFrame || tabData.viewerContainer?.querySelector('.pdf-viewer-frame');
+        const frame = (tabData.viewerFrame || tabData.viewerContainer?.querySelector('.pdf-viewer-frame')) as HTMLIFrameElement | null;
         if (!frame) {
             return false;
         }
@@ -3184,8 +3523,14 @@ class TabManager {
         }
     }
 
-    async handlePdfViewerMessage(event) {
+    async handlePdfViewerMessage(event: MessageEvent) {
         if (!event || !event.data) {
+            return;
+        }
+        // PDF viewer 是应用自身资源内嵌的同源 iframe；拒绝任何跨源来源，
+        // 防止任意第三方页面伪造 postMessage 数据注入 PDF 标签页状态。
+        if (typeof event.origin === 'string' && window.location?.origin
+            && event.origin !== window.location.origin) {
             return;
         }
         const { source, tabId, type, detail } = event.data;
@@ -3210,11 +3555,11 @@ class TabManager {
                     if (detail && typeof detail.scale === 'number' && Number.isFinite(detail.scale)) {
                         targetTab.pdfViewerScale = detail.scale;
                     }
-                    const loader = targetTab.viewerContainer?.querySelector('.pdf-viewer-loading');
+                    const loader = targetTab.viewerContainer?.querySelector('.pdf-viewer-loading') as HTMLElement | null;
                     if (loader) {
                         loader.style.display = 'none';
                     }
-                    const errorBox = targetTab.viewerContainer?.querySelector('.pdf-viewer-error');
+                    const errorBox = targetTab.viewerContainer?.querySelector('.pdf-viewer-error') as HTMLElement | null;
                     if (errorBox) {
                         errorBox.style.display = 'none';
                         errorBox.innerHTML = '';
@@ -3231,9 +3576,9 @@ class TabManager {
                     break;
                 }
                 case 'error': {
-                    const message = detail?.message || '未知错误';
+                    const message = detail?.message || window.i18n.t('panel.unknownError');
                     targetTab.pdfViewerError = message;
-                    const loader = targetTab.viewerContainer?.querySelector('.pdf-viewer-loading');
+                    const loader = targetTab.viewerContainer?.querySelector('.pdf-viewer-loading') as HTMLElement | null;
                     if (loader) {
                         loader.style.display = 'none';
                     }
@@ -3248,14 +3593,14 @@ class TabManager {
                     const files = Array.isArray(detail?.files) ? detail.files : [];
                     if (files.length > 0) {
                         const groupId = targetTab.groupId || this.activeGroupId || 'group-1';
-                        const entries = files.map((descriptor) => {
+                        const entries = files.map((descriptor: PdfDropDescriptor | null) => {
                             if (!descriptor) {
                                 return null;
                             }
                             const fileName = descriptor.name
                                 || (typeof descriptor.path === 'string' && descriptor.path.split(/[\\\/]/).pop())
                                 || 'untitled';
-                            const candidate = descriptor.file ?? descriptor.fileObject ?? descriptor;
+                            const candidate = (descriptor.file ?? descriptor.fileObject ?? descriptor) as FileLikeObject;
                             let fileObject = this.isLikelyFileObject(candidate) ? candidate : null;
                             if (!fileObject) {
                                 fileObject = this.buildFileObjectFromDescriptor(descriptor, fileName);
@@ -3292,7 +3637,7 @@ class TabManager {
         }
     }
 
-    async respondToPdfFileRequest(tabData, detail, tabId) {
+    async respondToPdfFileRequest(tabData: TabRecord | null | undefined, detail: PdfRequestDetail | null | undefined, tabId: string | null | undefined) {
         if (!tabData || !tabData.viewerContainer) {
             return;
         }
@@ -3301,13 +3646,13 @@ class TabManager {
             return;
         }
 
-        const frame = tabData.viewerFrame || tabData.viewerContainer.querySelector('.pdf-viewer-frame');
+        const frame = (tabData.viewerFrame || tabData.viewerContainer.querySelector('.pdf-viewer-frame')) as HTMLIFrameElement | null;
         const targetWindow = frame?.contentWindow;
         if (!targetWindow) {
             return;
         }
 
-        const postResponse = (payload) => {
+        const postResponse = (payload: Record<string, unknown>) => {
             try {
                 targetWindow.postMessage({
                     source: 'oicpp-tabs',
@@ -3326,58 +3671,58 @@ class TabManager {
             if (tabData.pdfBase64) {
                 postResponse({ base64: tabData.pdfBase64, filePath: null });
             } else {
-                postResponse({ error: '无法确定 PDF 文件路径' });
+                postResponse({ error: window.i18n.t('pdfViewer.cannotDeterminePath') });
             }
             return;
         }
 
         if (!window.electronAPI?.readFileBuffer) {
-            postResponse({ error: '当前环境不支持读取二进制文件' });
+            postResponse({ error: window.i18n.t('pdfViewer.cannotReadBinary') });
             return;
         }
 
         try {
             const base64 = await window.electronAPI.readFileBuffer(filePath);
             if (!base64) {
-                postResponse({ error: '读取 PDF 文件失败：无数据' });
+                postResponse({ error: window.i18n.t('pdfViewer.noData') });
                 return;
             }
             postResponse({ base64, filePath });
         } catch (error) {
             logError('读取 PDF 文件失败:', error);
-            postResponse({ error: error?.message || String(error) });
+            postResponse({ error: (error as Error)?.message || String(error) });
         }
     }
 
-    hideGroupViewContainers(groupId) {
-        const group = this.groups.get(groupId);
+    hideGroupViewContainers(groupId: string | null | undefined) {
+        const group = this.groups.get(groupId as string);
         const editorArea = group?.editorArea;
         if (!editorArea) {
             return;
         }
-        const panes = editorArea.querySelectorAll('.monaco-editor-container, .pdf-viewer-container, .markdown-preview-container, .browser-container');
+        const panes = editorArea.querySelectorAll('.monaco-editor-container, .pdf-viewer-container, .markdown-preview-container, .browser-container') as NodeListOf<HTMLElement>;
         panes.forEach((pane) => {
             pane.style.display = 'none';
             pane.classList.remove('active');
         });
         // 隐藏该分组的全部浏览器容器
         if (window.browserManager && typeof window.browserManager.hideGroupBrowserContainers === 'function') {
-            window.browserManager.hideGroupBrowserContainers(groupId);
+            window.browserManager.hideGroupBrowserContainers(groupId as string);
         }
     }
 
-    async openPdfTab({ fileName, filePath, uniqueKey, targetGroupId, targetGroup, isTempFile = false, pdfBase64 = null }) {
+    async openPdfTab({ fileName, filePath, uniqueKey, targetGroupId, targetGroup, isTempFile = false, pdfBase64 = null }: PdfTabOptions) {
         if (!filePath && !pdfBase64) {
             logError('打开PDF失败：缺少文件路径或数据');
-            this._openingKeys.delete(uniqueKey);
+            this._openingKeys.delete(uniqueKey as string);
             return;
         }
 
         const tabId = this.generatePdfTabId(uniqueKey);
         const tabElement = this.createTabElement(fileName, tabId);
 
-        tabElement.dataset.groupId = targetGroupId;
-        tabElement.dataset.viewType = 'pdf';
+        tabElement.dataset['groupId'] = targetGroupId as string;
+        tabElement.dataset['viewType'] = 'pdf';
         tabElement.classList.add('tab-type-pdf');
         this.addTabDragListeners(tabElement);
 
@@ -3390,13 +3735,13 @@ class TabManager {
         });
         if (!viewerContainer) {
             logError('创建 PDF 查看器容器失败');
-            this._openingKeys.delete(uniqueKey);
+            this._openingKeys.delete(uniqueKey as string);
             return;
         }
 
-        const viewerFrame = viewerContainer.querySelector('.pdf-viewer-frame') || null;
+        const viewerFrame = (viewerContainer.querySelector('.pdf-viewer-frame') || null) as HTMLIFrameElement | null;
 
-        const tabData = {
+        const tabData: TabRecord = {
             element: tabElement,
             fileName,
             modified: false,
@@ -3411,17 +3756,17 @@ class TabManager {
             pdfBase64
         };
 
-        this.tabs.set(uniqueKey, tabData);
-        targetGroup.tabs.set(uniqueKey, tabData);
+        this.tabs.set(uniqueKey as string, tabData);
+        targetGroup.tabs.set(uniqueKey as string, tabData);
         if (targetGroup.tabBar) {
             this.bindTabBarEvents(targetGroup.tabBar);
             targetGroup.tabBar.appendChild(tabElement);
         }
         targetGroup.activeTabKey = uniqueKey;
 
-        this.activeTab = fileName;
-        this.activeTabKey = uniqueKey;
-        this.activeGroupId = targetGroupId;
+        this.activeTab = fileName as string | null;
+        this.activeTabKey = uniqueKey as string | null;
+        this.activeGroupId = targetGroupId as string | null;
 
         this.setTabElementUniqueKey(tabElement, uniqueKey);
 
@@ -3441,14 +3786,14 @@ class TabManager {
     /**
      * 打开内置浏览器标签页
      * @param {object} options
-     * @param {string} options.url - 要打开的 URL
+     * @param {string} [options.url] - 要打开的 URL
      * @param {string} [options.groupId] - 目标分组 ID
      * @param {string} [options.title] - 标签标题
      */
-    async openBrowserTab(options = {}) {
+    async openBrowserTab(options: BrowserTabOptions = {}) {
         const url = options.url || '';
         const targetGroupId = options.groupId || this.activeGroupId || this.groupOrder[0] || 'group-1';
-        const title = options.title || (window.i18n ? window.i18n.t('browser.newTab') : '新建浏览器标签页');
+        const title = options.title || window.i18n.t('browser.newTab');
 
         const uniqueKey = `browser:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 
@@ -3462,7 +3807,7 @@ class TabManager {
         this._openingKeys.add(uniqueKey);
 
         try {
-            let targetGroup = this.groups.get(targetGroupId);
+            let targetGroup: EditorGroup | null | undefined = this.groups.get(targetGroupId);
             if (!targetGroup) {
                 targetGroup = this.createGroup({ afterGroupId: this.activeGroupId });
                 if (!targetGroup) {
@@ -3473,8 +3818,8 @@ class TabManager {
 
             // 创建标签元素
             const tabElement = this.createTabElement(title, uniqueKey);
-            tabElement.dataset.groupId = targetGroupId;
-            tabElement.dataset.viewType = 'browser';
+            tabElement.dataset['groupId'] = targetGroupId;
+            tabElement.dataset['viewType'] = 'browser';
             tabElement.classList.add('tab-type-browser');
 
             // 添加浏览器图标
@@ -3494,7 +3839,7 @@ class TabManager {
 
             this.addTabDragListeners(tabElement);
 
-            const tabData = {
+            const tabData: TabRecord = {
                 element: tabElement,
                 fileName: title,
                 modified: false,
@@ -3546,17 +3891,17 @@ class TabManager {
         }
     }
 
-    createMarkdownPreviewContainer(options) {
+    createMarkdownPreviewContainer(options: MarkdownPreviewOptions): HTMLElement | null {
         const { groupId, tabId, content, filePath } = options;
-        const group = this.groups.get(groupId);
+        const group = this.groups.get(groupId as string);
         if (!group || !group.editorArea) return null;
 
-        let container = group.editorArea.querySelector(`.markdown-preview-container[data-tab-id="${tabId}"]`);
+        let container = group.editorArea.querySelector(`.markdown-preview-container[data-tab-id="${tabId}"]`) as HTMLElement | null;
         if (!container) {
             container = document.createElement('div');
             container.className = 'markdown-preview-container markdown-body';
-            container.dataset.tabId = tabId;
-            container.dataset.groupId = groupId;
+            container.dataset['tabId'] = tabId as string;
+            container.dataset['groupId'] = groupId as string;
             container.style.display = 'none';
             container.style.overflow = 'auto';
             container.style.backgroundColor = 'transparent';
@@ -3569,46 +3914,63 @@ class TabManager {
         return container;
     }
 
-    updateMarkdownPreview(container, content, filePath) {
+    updateMarkdownPreview(container: HTMLElement | null | undefined, content: string | null | undefined, filePath: string | null | undefined) {
         if (window.markdownAPI) {
-            container.innerHTML = window.markdownAPI.render(content || '', filePath);
+            (container as HTMLElement).innerHTML = window.markdownAPI.render(content || '', filePath as string);
         } else {
-            container.textContent = 'Markdown API not available';
+            (container as HTMLElement).textContent = window.i18n.t('tabs.markdownApiUnavailable');
         }
     }
 
-    setupMarkdownLiveUpdate(tabId, previewContainer, filePath) {
+    // Markdown 预览每次按键都要全量重新渲染，开销较重；
+    // 合并为停手后渲染一次，避免连续输入时反复触发 markdown-it + highlight
+    debouncedUpdateMarkdownPreview(editor: monaco.editor.IStandaloneCodeEditor, timerKey: '_markdownLiveTimer' | '_markdownPreviewSyncTimer', container: HTMLElement | null | undefined, filePath: string | null | undefined) {
+        if (!container) return;
+        const pending = editor[timerKey];
+        if (pending) {
+            clearTimeout(pending);
+        }
+        editor[timerKey] = setTimeout(() => {
+            editor[timerKey] = null;
+            if (!container.isConnected) return;
+            this.updateMarkdownPreview(container, editor.getValue(), filePath);
+        }, 250);
+    }
+
+    setupMarkdownLiveUpdate(tabId: string | null | undefined, previewContainer: HTMLElement | null | undefined, filePath: string | null | undefined) {
         if (!this.monacoEditorManager) return;
-        const editor = this.monacoEditorManager.editors.get(tabId);
-        if (editor && !editor._markdownListenerAttached) {
+        const editor = tabId ? this.monacoEditorManager.editors.get(tabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownListenerAttached) {
             editor.onDidChangeModelContent(() => {
-                const val = editor.getValue();
-                this.updateMarkdownPreview(previewContainer, val, filePath);
+                this.debouncedUpdateMarkdownPreview(editor, '_markdownLiveTimer', previewContainer, filePath);
             });
             editor._markdownListenerAttached = true;
 
             editor.onDidScrollChange((e) => {
                 if (!previewContainer || previewContainer.style.display === 'none') return;
-                const percentage = e.scrollTop / (e.scrollHeight - e.viewHeight);
-                if (!isNaN(percentage)) {
+                // monaco 的 IScrollEvent 不带视口高度（旧代码读 e.viewHeight 恒为 undefined，
+                // 算出 NaN 后整条同步被丢掉），改用编辑器布局高度求滚动比例
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
                     previewContainer.scrollTop = percentage * (previewContainer.scrollHeight - previewContainer.clientHeight);
                 }
             });
         }
     }
 
-    isMarkdownTab(tabData) {
+    isMarkdownTab(tabData: TabRecord | null | undefined) {
         if (!tabData) return false;
         const filePath = String(tabData.filePath || '').toLowerCase();
         const fileName = String(tabData.fileName || '').toLowerCase();
         return filePath.endsWith('.md') || fileName.endsWith('.md');
     }
 
-    resolveMarkdownSourceTabForPreviewToggle(initialTabData = null) {
-        const normalizePath = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
-        const isValidSourceTab = (tab) => !!tab && tab.viewType !== 'markdown-preview' && this.isMarkdownTab(tab);
+    resolveMarkdownSourceTabForPreviewToggle(initialTabData: TabRecord | null = null) {
+        const normalizePath = (p: string | null | undefined) => String(p || '').replace(/\\/g, '/').toLowerCase();
+        const isValidSourceTab = (tab: TabRecord | null | undefined) => !!tab && tab.viewType !== 'markdown-preview' && this.isMarkdownTab(tab);
 
-        let tabData = initialTabData;
+        let tabData: TabRecord | null | undefined = initialTabData;
         if (tabData?.viewType === 'markdown-preview' && tabData.sourceTabKey) {
             const sourceTab = this.tabs.get(tabData.sourceTabKey);
             if (isValidSourceTab(sourceTab)) {
@@ -3663,15 +4025,15 @@ class TabManager {
         const tabData = this.resolveMarkdownSourceTabForPreviewToggle(initialTabData);
         if (!tabData) return;
 
-        this.activeTabKey = tabData.uniqueKey;
-        this.activeTab = tabData.fileName;
+        this.activeTabKey = tabData.uniqueKey as string | null;
+        this.activeTab = tabData;
         this.activeGroupId = tabData.groupId || this.activeGroupId;
 
         const previewUniqueKey = `${tabData.uniqueKey}::preview`;
         const existingPreviewTab = this.tabs.get(previewUniqueKey);
 
         if (existingPreviewTab) {
-            const previewGroup = this.groups.get(existingPreviewTab.groupId);
+            const previewGroup = this.groups.get(existingPreviewTab.groupId as string);
             const hasValidGroup = !!previewGroup;
             const hasValidElement = !!(existingPreviewTab.element && existingPreviewTab.element.isConnected);
 
@@ -3691,32 +4053,32 @@ class TabManager {
         this.openMarkdownPreviewInNewGroup(tabData);
     }
 
-    async openMarkdownPreviewInNewGroup(sourceTabData) {
+    async openMarkdownPreviewInNewGroup(sourceTabData: TabRecord) {
         const sourceGroupId = sourceTabData.groupId;
-        const sourceGroup = this.groups.get(sourceGroupId);
+        const sourceGroup = this.groups.get(sourceGroupId as string);
         if (!sourceGroup) return;
 
         const newGroup = this.createGroup({ afterGroupId: sourceGroupId });
         if (!newGroup) return;
 
         const previewUniqueKey = `${sourceTabData.uniqueKey}::preview`;
-        const previewFileName = `${sourceTabData.fileName} (预览)`;
+        const previewFileName = window.i18n.t('tabs.previewSuffix', { name: sourceTabData.fileName });
         const previewTabId = `preview-${sourceTabData.tabId}`;
 
         let content = sourceTabData.content || '';
         if (this.monacoEditorManager) {
-            const editor = this.monacoEditorManager.editors.get(sourceTabData.tabId);
-            if (editor) {
+            const editor = sourceTabData.tabId ? this.monacoEditorManager.editors.get(sourceTabData.tabId) : null;
+            if (editor && 'onDidChangeModelContent' in editor) {
                 content = editor.getValue();
             }
         }
 
         const tabElement = this.createTabElement(previewFileName, previewTabId);
-        tabElement.dataset.viewType = 'markdown-preview';
-        tabElement.dataset.groupId = newGroup.id;
+        tabElement.dataset['viewType'] = 'markdown-preview';
+        tabElement.dataset['groupId'] = newGroup.id;
         this.addTabDragListeners(tabElement);
 
-        const previewTabData = {
+        const previewTabData: TabRecord = {
             element: tabElement,
             fileName: previewFileName,
             modified: false,
@@ -3763,29 +4125,31 @@ class TabManager {
         this.activateTabByUniqueKey(previewUniqueKey).catch(logError);
     }
 
-    setupMarkdownPreviewSync(sourceTabId, previewTabData) {
+    setupMarkdownPreviewSync(sourceTabId: string | null | undefined, previewTabData: TabRecord) {
         if (!this.monacoEditorManager) return;
-        const editor = this.monacoEditorManager.editors.get(sourceTabId);
-        if (editor && !editor._markdownPreviewSyncAttached) {
+        const editor = sourceTabId ? this.monacoEditorManager.editors.get(sourceTabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownPreviewSyncAttached) {
             editor.onDidChangeModelContent(() => {
                 if (previewTabData.previewContainer) {
-                    const val = editor.getValue();
-                    this.updateMarkdownPreview(previewTabData.previewContainer, val, previewTabData.filePath);
+                    this.debouncedUpdateMarkdownPreview(editor, '_markdownPreviewSyncTimer', previewTabData.previewContainer, previewTabData.filePath);
                 }
             });
             editor._markdownPreviewSyncAttached = true;
 
             editor.onDidScrollChange((e) => {
-                if (!previewTabData.previewContainer || previewTabData.previewContainer.style.display === 'none') return;
-                const percentage = e.scrollTop / (e.scrollHeight - e.viewHeight);
-                if (!isNaN(percentage)) {
-                    previewTabData.previewContainer.scrollTop = percentage * (previewTabData.previewContainer.scrollHeight - previewTabData.clientHeight);
+                const container = previewTabData.previewContainer;
+                if (!container || container.style.display === 'none') return;
+                // 同上：视口高度取自身 clientHeight，旧代码读的是 previewTabData['clientHeight']（恒 undefined）
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
+                    container.scrollTop = percentage * (container.scrollHeight - container.clientHeight);
                 }
             });
         }
     }
 
-    async openFile(fileName, content = '', isNew = false, filePath = null) {
+    async openFile(fileName: string, content: string | null = '', isNew = false, filePath: string | OpenFileOptions | null = null) {
         if (this.tabs && typeof this.tabs.has === 'function' && this.tabs.has('Welcome')) {
             try {
                 this.closeWelcomePage();
@@ -3793,8 +4157,8 @@ class TabManager {
                 logWarn('关闭欢迎页面失败:', e);
             }
         }
-        let openOptions = {};
-        let pdfBase64 = null;
+        let openOptions: OpenFileOptions = {};
+        let pdfBase64: string | null = null;
         if (filePath && typeof filePath === 'object' && !Array.isArray(filePath)) {
             openOptions = filePath;
             filePath = openOptions.filePath || null;
@@ -3819,7 +4183,7 @@ class TabManager {
         this._openingKeys.add(uniqueKey);
 
         try {
-            let tabId;
+            let tabId: string;
             let targetGroupId = this.activeGroupId || this.groupOrder[0] || 'group-1';
             if (openOptions && typeof openOptions === 'object') {
                 targetGroupId = openOptions.groupId || openOptions.targetGroupId || targetGroupId;
@@ -3849,7 +4213,7 @@ class TabManager {
             }
 
             const isTempFile = !!(openOptions && typeof openOptions === 'object' && openOptions.isTempFile);
-            let targetGroup = this.groups.get(targetGroupId);
+            let targetGroup: EditorGroup | null | undefined = this.groups.get(targetGroupId);
             if (!targetGroup) {
                 targetGroup = this.createGroup({ afterGroupId: this.activeGroupId });
                 targetGroupId = targetGroup?.id || targetGroupId;
@@ -3888,30 +4252,31 @@ class TabManager {
                 }
             }
 
+            const codeFilePath: string | null = typeof filePath === 'string' ? filePath : null;
             if (this.monacoEditorManager) {
-                tabId = this.monacoEditorManager.generateTabId(fileName, filePath);
-                if (filePath) {
-                    this.monacoEditorManager.currentFilePath = filePath;
+                tabId = this.monacoEditorManager.generateTabId(fileName, codeFilePath);
+                if (codeFilePath) {
+                    this.monacoEditorManager.currentFilePath = codeFilePath;
                     this.monacoEditorManager.currentFileName = fileName;
                 }
-                await this.monacoEditorManager.createNewEditor(tabId, fileName, content, filePath, { groupId: targetGroupId });
+                await this.monacoEditorManager.createNewEditor(tabId, fileName, content ?? '', codeFilePath, { groupId: targetGroupId });
             } else {
                 tabId = `fallback-${Date.now()}`;
             }
 
             const tabElement = this.createTabElement(fileName, tabId);
-            tabElement.dataset.viewType = initialViewType;
+            tabElement.dataset['viewType'] = initialViewType;
 
-            tabElement.dataset.groupId = targetGroupId;
+            tabElement.dataset['groupId'] = targetGroupId;
             this.addTabDragListeners(tabElement);
 
-            const tabData = {
+            const tabData: TabRecord = {
                 element: tabElement,
                 fileName: fileName,
                 modified: isNew,
                 content: content,
                 active: true,
-                filePath: filePath,
+                filePath: codeFilePath,
                 tabId: tabId,
                 uniqueKey: uniqueKey,
                 groupId: targetGroupId,
@@ -3954,7 +4319,7 @@ class TabManager {
 
             if (initialViewType === 'markdown-split') {
                 tabData.viewType = 'code';
-                tabElement.dataset.viewType = 'code';
+                tabElement.dataset['viewType'] = 'code';
                 setTimeout(() => {
                     this.openMarkdownPreviewInNewGroup(tabData);
                 }, 100);
@@ -3964,7 +4329,7 @@ class TabManager {
         }
     }
 
-    async openDiff(files) {
+    async openDiff(files: DiffFileCandidate[] | null | undefined) {
         const candidates = Array.isArray(files) ? files.filter(f => f && f.type === 'file' && f.path) : [];
         if (candidates.length !== 2) {
             logWarn('openDiff 需要正好两个有效文件');
@@ -3976,8 +4341,8 @@ class TabManager {
             return;
         }
 
-        const [original, modified] = candidates;
-        const normalizePath = (p) => (typeof p === 'string' ? p.replace(/\\/g, '/') : '');
+        const [original, modified] = candidates as [DiffFileCandidate, DiffFileCandidate];
+        const normalizePath = (p: string | null | undefined) => (typeof p === 'string' ? p.replace(/\\/g, '/') : '');
         const originalPath = normalizePath(original.path);
         const modifiedPath = normalizePath(modified.path);
         const uniqueKey = `diff:${originalPath}::${modifiedPath}`;
@@ -3993,18 +4358,18 @@ class TabManager {
         this._openingKeys.add(uniqueKey);
 
         try {
-            const label = `${original.name || '原文件'} vs ${modified.name || '新文件'}`;
+            const label = `${original.name || window.i18n.t('tabs.originalFile')} vs ${modified.name || window.i18n.t('tabs.newFile')}`;
             let targetGroupId = this.activeGroupId || this.groupOrder[0] || 'group-1';
-            let targetGroup = this.groups.get(targetGroupId);
+            let targetGroup = this.groups.get(targetGroupId) as EditorGroup | null | undefined;
             if (!targetGroup) {
                 targetGroup = this.createGroup({ afterGroupId: this.activeGroupId });
                 targetGroupId = targetGroup?.id || targetGroupId;
             }
 
-            const readContent = async (file) => {
+            const readContent = async (file: DiffFileCandidate | null | undefined) => {
                 if (window.electronAPI?.readFileContent && file?.path) {
                     try {
-                        return await window.electronAPI.readFileContent(file.path);
+                        return await window.electronAPI.readFileContent(file.path as string);
                     } catch (error) {
                         logWarn('读取文件内容失败:', error);
                     }
@@ -4019,12 +4384,12 @@ class TabManager {
 
             const tabId = this.monacoEditorManager.generateTabId(label, uniqueKey);
             const tabElement = this.createTabElement(label, tabId);
-            tabElement.dataset.viewType = 'diff';
-            tabElement.dataset.groupId = targetGroupId;
+            tabElement.dataset['viewType'] = 'diff';
+            tabElement.dataset['groupId'] = targetGroupId;
             tabElement.classList.add('tab-type-diff');
             this.addTabDragListeners(tabElement);
 
-            const tabData = {
+            const tabData: TabRecord = {
                 element: tabElement,
                 fileName: label,
                 modified: false,
@@ -4080,7 +4445,7 @@ class TabManager {
         } catch (error) {
             logError('打开文件对比失败:', error);
             try {
-                logWarn('[TabOpenCompareErrorSuppressed]', error?.message || '打开文件对比失败');
+                logWarn('[TabOpenCompareErrorSuppressed]', (error as { message?: string })?.message || '打开文件对比失败');
             } catch (e) {
                 logWarn('显示错误提示失败:', e);
             }
@@ -4089,21 +4454,23 @@ class TabManager {
         }
     }
 
-    syncTabDOMWithMap(fileName, filePath) {
+    syncTabDOMWithMap(fileName: string | null | undefined, filePath: string | null | undefined) {
         logInfo(`同步标签页DOM: ${fileName}`);
 
         const allTabs = document.querySelectorAll('.tab');
-        for (const tabEl of allTabs) {
+        for (const tabElRaw of allTabs) {
+            if (!(tabElRaw instanceof HTMLElement)) continue;
+            const tabEl = tabElRaw;
             const tabLabel = tabEl.querySelector('.tab-label');
-            const datasetFileName = typeof tabEl.dataset?.file === 'string' ? tabEl.dataset.file : '';
+            const datasetFileName = typeof tabEl.dataset?.['file'] === 'string' ? tabEl.dataset['file'] : '';
             const labelText = tabLabel?.querySelector?.('.tab-label-text')?.textContent || tabLabel?.textContent || '';
-            const strippedLabel = labelText.split(' — ')[0].trim();
+            const strippedLabel = (labelText.split(' — ')[0] as string).trim();
             const candidateName = datasetFileName || strippedLabel;
 
             if (candidateName === fileName) {
-                if (!tabEl.dataset.tabId && this.monacoEditorManager && this.monacoEditorManager.generateTabId) {
+                if (!tabEl.dataset['tabId'] && this.monacoEditorManager && this.monacoEditorManager.generateTabId) {
                     const tabId = this.monacoEditorManager.generateTabId(fileName, filePath);
-                    tabEl.dataset.tabId = tabId;
+                    tabEl.dataset['tabId'] = tabId;
                     logInfo(`为标签页 ${fileName} 设置 tabId: ${tabId}`);
                 }
                 break;
@@ -4111,18 +4478,18 @@ class TabManager {
         }
     }
 
-    createTabElement(fileName, tabId) {
+    createTabElement(fileName: string | null | undefined, tabId: string | null | undefined) {
         const tab = document.createElement('div');
         tab.className = 'tab';
-        tab.dataset.file = fileName;
-        tab.dataset.tabId = tabId;
+        tab.dataset['file'] = fileName as string;
+        tab.dataset['tabId'] = tabId as string;
         tab.draggable = true;  // 启用拖拽
 
         const label = document.createElement('span');
         label.className = 'tab-label';
         const labelText = document.createElement('span');
         labelText.className = 'tab-label-text';
-        labelText.textContent = fileName;
+        labelText.textContent = fileName as string;
         label.appendChild(labelText);
 
         const closeBtn = document.createElement('span');
@@ -4133,20 +4500,21 @@ class TabManager {
         tab.appendChild(closeBtn);
 
         tab.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('tab-close')) {
-                const uniqueKey = tab.dataset.uniqueKey;
-                logInfo('标签页点击:', fileName, 'DOM uniqueKey:', uniqueKey);
-                if (uniqueKey && this.tabs.has(uniqueKey)) {
-                    this.activateTabByUniqueKey(uniqueKey).catch(logError);
-                } else {
-                    this.activateTab(fileName).catch(logError);
-                }
+            if (e.target instanceof Element && e.target.classList.contains('tab-close')) {
+                return;
+            }
+            const uniqueKey = tab.dataset['uniqueKey'];
+            logInfo('标签页点击:', fileName, 'DOM uniqueKey:', uniqueKey);
+            if (uniqueKey && this.tabs.has(uniqueKey)) {
+                this.activateTabByUniqueKey(uniqueKey).catch(logError);
+            } else {
+                this.activateTab(fileName).catch(logError);
             }
         });
 
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            const uniqueKey = tab.dataset.uniqueKey;
+            const uniqueKey = tab.dataset['uniqueKey'];
             logInfo('关闭标签页:', fileName, 'DOM uniqueKey:', uniqueKey);
             if (uniqueKey && this.tabs.has(uniqueKey)) {
                 this.closeTabByUniqueKey(uniqueKey);
@@ -4158,7 +4526,7 @@ class TabManager {
         tab.addEventListener('mouseup', (e) => {
             if (e.button === 1) {
                 e.preventDefault();
-                const uniqueKey = tab.dataset.uniqueKey;
+                const uniqueKey = tab.dataset['uniqueKey'];
                 logInfo('中键关闭标签页:', fileName, 'DOM uniqueKey:', uniqueKey);
                 if (uniqueKey && this.tabs.has(uniqueKey)) {
                     this.closeTabByUniqueKey(uniqueKey);
@@ -4176,14 +4544,14 @@ class TabManager {
         return tab;
     }
 
-    showTabContextMenu(event, tabElement) {
+    showTabContextMenu(event: MouseEvent, tabElement: HTMLElement | null | undefined) {
         if (!event || !tabElement) return;
         event.preventDefault();
         event.stopPropagation();
 
         this.hideTabContextMenu();
 
-        const uniqueKey = tabElement.dataset.uniqueKey;
+        const uniqueKey = tabElement.dataset['uniqueKey'];
         const tabData = uniqueKey ? this.tabs.get(uniqueKey) : null;
         if (!uniqueKey || !tabData) return;
 
@@ -4195,10 +4563,10 @@ class TabManager {
         const filePath = this.getTabFilePath(tabData, uniqueKey);
         const menuItems = [
             {
-                label: '在资源管理器中打开',
+                label: window.i18n.t('tabs.openInExplorer'),
                 action: () => {
                     if (!filePath) {
-                        window.oicppApp?.showMessage?.('该文件尚未保存，无法在资源管理器中打开。', 'warning');
+                        window.oicppApp?.showMessage?.(window.i18n.t('tabs.openInExplorerUnavailable'), 'warning');
                         return;
                     }
                     this.openInSystemExplorer(filePath);
@@ -4206,15 +4574,15 @@ class TabManager {
             },
             { label: '---' },
             {
-                label: '关闭此文件',
+                label: window.i18n.t('tabs.closeThisTab'),
                 action: () => this.closeTabByUniqueKey(uniqueKey)
             },
             {
-                label: '关闭除此以外的所有',
+                label: window.i18n.t('tabs.closeOtherTabs'),
                 action: () => this.closeOtherTabsByUniqueKey(uniqueKey)
             },
             {
-                label: '关闭右侧的所有标签页',
+                label: window.i18n.t('tabs.closeTabsToRight'),
                 action: () => this.closeTabsToRightByUniqueKey(uniqueKey)
             }
         ];
@@ -4252,8 +4620,8 @@ class TabManager {
         menu.style.left = `${Math.max(0, left)}px`;
         menu.style.top = `${Math.max(0, top)}px`;
 
-        const hideMenu = (e) => {
-            if (!menu.contains(e.target)) {
+        const hideMenu = (e: Event) => {
+            if (!menu.contains(e.target as Node)) {
                 this.hideTabContextMenu();
                 document.removeEventListener('click', hideMenu);
                 document.removeEventListener('contextmenu', hideMenu, true);
@@ -4270,7 +4638,7 @@ class TabManager {
         }
     }
 
-    getTabFilePath(tabData, uniqueKey) {
+    getTabFilePath(tabData: TabRecord | null | undefined, uniqueKey: string | null | undefined) {
         if (!tabData && !uniqueKey) return null;
         const raw = tabData?.filePath || tabData?.uniqueKey || uniqueKey || '';
         if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -4280,7 +4648,7 @@ class TabManager {
         return null;
     }
 
-    openInSystemExplorer(filePath) {
+    openInSystemExplorer(filePath: string | null | undefined) {
         try {
             if (!filePath) return;
             if (window.electronAPI?.openPath) {
@@ -4297,13 +4665,13 @@ class TabManager {
         }
     }
 
-    closeOtherTabsByUniqueKey(uniqueKey) {
+    closeOtherTabsByUniqueKey(uniqueKey: string | null | undefined) {
         if (!uniqueKey) return;
         const tabData = this.tabs.get(uniqueKey);
         if (!tabData) return;
         const groupId = tabData.groupId || this.activeGroupId;
         const group = groupId ? this.groups.get(groupId) : null;
-        let tabsToClose = [];
+        let tabsToClose: string[] = [];
         if (group && Array.isArray(group.tabOrder)) {
             tabsToClose = group.tabOrder.filter(key => key !== uniqueKey);
         } else {
@@ -4312,7 +4680,7 @@ class TabManager {
 
         const modifiedTabs = tabsToClose.filter(key => this.tabs.get(key)?.modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭其他标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeOtherConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
@@ -4321,7 +4689,7 @@ class TabManager {
         });
     }
 
-    closeTabsToRightByUniqueKey(uniqueKey) {
+    closeTabsToRightByUniqueKey(uniqueKey: string | null | undefined) {
         if (!uniqueKey) return;
         const tabData = this.tabs.get(uniqueKey);
         if (!tabData) return;
@@ -4335,7 +4703,7 @@ class TabManager {
 
         const modifiedTabs = tabsToClose.filter(key => this.tabs.get(key)?.modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭右侧标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeRightConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
@@ -4344,7 +4712,7 @@ class TabManager {
         });
     }
 
-    addTabDragListeners(tab) {
+    addTabDragListeners(tab: HTMLElement) {
         if (!tab || tab._dragListenersBound) {
             return;
         }
@@ -4354,7 +4722,7 @@ class TabManager {
         }
 
         const ensureTabBar = () => {
-            const parent = tab.parentNode;
+            const parent = tab.parentNode as HTMLElement | null;
             if (parent) {
                 this.bindTabBarEvents(parent);
             }
@@ -4363,7 +4731,7 @@ class TabManager {
 
         const tabBar = ensureTabBar();
 
-        const forwardDragHover = (event) => {
+        const forwardDragHover = (event: DragEvent) => {
             if (!event) {
                 return;
             }
@@ -4377,8 +4745,8 @@ class TabManager {
 
         tab.addEventListener('dragstart', (e) => {
             this.draggedTab = tab;
-            const uniqueKey = tab.dataset.uniqueKey;
-            const groupId = tab.dataset.groupId || tab.parentElement?.dataset.groupId || tab.closest('.editor-group')?.dataset.groupId || this.activeGroupId;
+            const uniqueKey = tab.dataset['uniqueKey'];
+            const groupId = tab.dataset['groupId'] || tab.parentElement?.dataset['groupId'] || (tab.closest('.editor-group') as HTMLElement | null)?.dataset['groupId'] || this.activeGroupId;
             this.draggedTabInfo = { uniqueKey, groupId };
             this.dropHandled = false;
             this.lastTabDropInfo = null;
@@ -4387,18 +4755,18 @@ class TabManager {
             tab.style.opacity = '0.5';
             this.tabDragInProgress = true;
 
-            e.dataTransfer.effectAllowed = 'move';
+            (e.dataTransfer as DataTransfer).effectAllowed = 'move';
             if (uniqueKey) {
-                e.dataTransfer.setData('application/oicpp-tab', uniqueKey);
+                (e.dataTransfer as DataTransfer).setData('application/oicpp-tab', uniqueKey);
             }
-            e.dataTransfer.setData('text/plain', uniqueKey || '');
+            (e.dataTransfer as DataTransfer).setData('text/plain', uniqueKey || '');
 
             try {
                 const rect = tab.getBoundingClientRect();
                 const canvas = document.createElement('canvas');
                 canvas.width = rect.width;
                 canvas.height = rect.height;
-                const ctx = canvas.getContext('2d');
+                const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
 
                 ctx.fillStyle = getComputedStyle(tab).backgroundColor || '#2d2d30';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -4407,14 +4775,14 @@ class TabManager {
                 ctx.font = getComputedStyle(tab).font || '13px "Segoe UI", sans-serif';
                 const label = tab.querySelector('.tab-label');
                 if (label) {
-                    ctx.fillText(label.textContent, 10, canvas.height / 2 + 5);
+                    ctx.fillText(label.textContent as string, 10, canvas.height / 2 + 5);
                 }
 
                 const dataUrl = canvas.toDataURL('image/png');
                 if (dataUrl && dataUrl.startsWith('data:')) {
                     const img = new Image();
                     img.onload = () => {
-                        e.dataTransfer.setDragImage(img, rect.width / 2, rect.height / 2);
+                        (e.dataTransfer as DataTransfer).setDragImage(img, rect.width / 2, rect.height / 2);
                     };
                     img.src = dataUrl;
                 } else {
@@ -4423,7 +4791,7 @@ class TabManager {
             } catch (err) {
                 const dragImage = new Image();
                 dragImage.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
-                e.dataTransfer.setDragImage(dragImage, 0, 0);
+                (e.dataTransfer as DataTransfer).setDragImage(dragImage, 0, 0);
             }
 
             if (this.canSplitGroup(groupId)) {
@@ -4464,10 +4832,10 @@ class TabManager {
         tab._dragListenersBound = true;
     }
 
-    getDragAfterElement(container, x) {
-        const draggableElements = [...container.querySelectorAll('.tab:not(.dragging):not(.tab-placeholder)')];
+    getDragAfterElement(container: HTMLElement | null | undefined, x: number) {
+        const draggableElements = [...(container as HTMLElement).querySelectorAll('.tab:not(.dragging):not(.tab-placeholder)')];
 
-        return draggableElements.reduce((closest, child) => {
+        return draggableElements.reduce<{ offset?: number; element?: Element }>((closest, child) => {
             const box = child.getBoundingClientRect();
             const offset = x - box.left - box.width / 2;
 
@@ -4479,8 +4847,8 @@ class TabManager {
         }, {}).element || null;
     }
 
-    reorderTabs(draggedTab, targetTab) {
-        const tabBar = draggedTab.parentNode;
+    reorderTabs(draggedTab: HTMLElement, targetTab: HTMLElement) {
+        const tabBar = draggedTab.parentNode as HTMLElement;
         const draggedIndex = Array.from(tabBar.children).indexOf(draggedTab);
         const targetIndex = Array.from(tabBar.children).indexOf(targetTab);
 
@@ -4490,12 +4858,12 @@ class TabManager {
             tabBar.insertBefore(draggedTab, targetTab);
         }
 
-        const groupId = tabBar?.dataset?.groupId || null;
+        const groupId = tabBar?.dataset?.['groupId'] || null;
         this.syncTabOrder(groupId);
     }
 
 
-    syncTabOrder(groupId = null) {
+    syncTabOrder(groupId: string | null = null) {
         if (groupId) {
             this.syncGroupTabs(groupId);
         } else {
@@ -4503,14 +4871,14 @@ class TabManager {
         }
     }
 
-    createEditorPane(fileName, content = '') {
+    createEditorPane(fileName: string | null | undefined, content: string | null = '') {
         return null;
     }
 
     async switchToNextTab() {
         if (this.tabOrder.length <= 1) return;
 
-        const currentIndex = this.tabOrder.indexOf(this.activeTab);
+        const currentIndex = this.tabOrder.indexOf(this.activeTab as string);
         const nextIndex = (currentIndex + 1) % this.tabOrder.length;
         const nextTab = this.tabOrder[nextIndex];
 
@@ -4520,14 +4888,14 @@ class TabManager {
     async switchToPreviousTab() {
         if (this.tabOrder.length <= 1) return;
 
-        const currentIndex = this.tabOrder.indexOf(this.activeTab);
+        const currentIndex = this.tabOrder.indexOf(this.activeTab as string);
         const prevIndex = (currentIndex - 1 + this.tabOrder.length) % this.tabOrder.length;
         const prevTab = this.tabOrder[prevIndex];
 
         await this.activateTab(prevTab);
     }
 
-    isAltWheelTabSwitchTarget(target) {
+    isAltWheelTabSwitchTarget(target: EventTarget | null) {
         if (!(target instanceof Element)) {
             return false;
         }
@@ -4543,7 +4911,7 @@ class TabManager {
         return Boolean(target.closest('#editor-groups, .editor-groups, .editor-group, .editor-area, .tab-bar, .tab, .monaco-editor, .monaco-editor-container'));
     }
 
-    handleAltWheelTabSwitch(event) {
+    handleAltWheelTabSwitch(event: WheelEvent) {
         if (!event?.altKey) {
             return;
         }
@@ -4579,7 +4947,7 @@ class TabManager {
         });
     }
 
-    markTabAsModified(fileName) {
+    markTabAsModified(fileName: string | null | undefined) {
         const tabData = this.getTabByFileName(fileName);
         if (tabData && !tabData.modified) {
             tabData.modified = true;
@@ -4587,7 +4955,7 @@ class TabManager {
         }
     }
 
-    markTabAsModifiedByUniqueKey(uniqueKey) {
+    markTabAsModifiedByUniqueKey(uniqueKey: string) {
         const tabData = this.tabs.get(uniqueKey);
         if (tabData && !tabData.modified) {
             tabData.modified = true;
@@ -4595,7 +4963,7 @@ class TabManager {
         }
     }
 
-    markTabAsSaved(fileName) {
+    markTabAsSaved(fileName: string | null | undefined) {
         const tabData = this.getTabByFileName(fileName);
         if (tabData && tabData.modified) {
             tabData.modified = false;
@@ -4603,8 +4971,8 @@ class TabManager {
         }
     }
 
-    markTabAsSavedByUniqueKey(uniqueKey) {
-        const tabData = this.tabs.get(uniqueKey);
+    markTabAsSavedByUniqueKey(uniqueKey: string | null | undefined) {
+        const tabData = this.tabs.get(uniqueKey as string);
         if (tabData && tabData.modified) {
             tabData.modified = false;
             this.refreshTabLabels();
@@ -4643,7 +5011,7 @@ class TabManager {
         }
 
         const modifiedEntries = Array.from(this.tabs.entries()).filter(([, tabData]) => {
-            return tabData && tabData.modified && !tabData.isTempFile && tabData.viewType !== 'pdf' && !tabData.externalModified;
+            return tabData && tabData.modified && !tabData.isTempFile && tabData.viewType !== 'pdf';
         });
 
         if (modifiedEntries.length === 0) {
@@ -4685,31 +5053,38 @@ class TabManager {
     closeAllTabs() {
         const modifiedTabs = this.getModifiedTabs();
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭所有标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeAllConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
-        // this.tabs 的 key 是 uniqueKey（文件路径），必须用 closeTabByUniqueKey 关闭。
+        // this.tabs 的 key 是 uniqueKey（磁盘文件即完整路径），不是 fileName，
+        // 直接把 key 当 fileName 传给 closeTab 会让 getTabByFileName 全部落空
         const tabsToClose = [...this.tabs.keys()];
-        tabsToClose.forEach(key => {
-            this.closeTabByUniqueKey(key, { skipCloseConfirm: true });
+        tabsToClose.forEach(uniqueKey => {
+            const tabData = this.tabs.get(uniqueKey);
+            this.closeTab(tabData?.fileName || uniqueKey, { skipCloseConfirm: true, uniqueKeyOverride: uniqueKey });
         });
     }
 
     closeOtherTabs() {
-        const currentKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab);
-        if (!currentKey) return;
+        if (!this.activeTab) return;
 
-        const tabsToClose = [...this.tabs.keys()].filter(key => key !== currentKey);
+        // 同样按 uniqueKey 比对，不能拿 key 与 fileName（this.activeTab）混比，
+        // 否则当前 tab 也在待关列表内
+        const currentKey = this.tabs.has(this.activeTabKey as string)
+            ? this.activeTabKey
+            : [...this.tabs.entries()].find(([, tabData]) => tabData?.fileName === this.activeTab)?.[0];
+        const tabsToClose = [...this.tabs.keys()].filter(uniqueKey => uniqueKey !== currentKey);
 
-        const modifiedTabs = tabsToClose.filter(key => this.tabs.get(key)?.modified);
+        const modifiedTabs = tabsToClose.filter(uniqueKey => this.tabs.get(uniqueKey)?.modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭其他标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeOtherConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
-        tabsToClose.forEach(key => {
-            this.closeTabByUniqueKey(key, { skipCloseConfirm: true });
+        tabsToClose.forEach(uniqueKey => {
+            const tabData = this.tabs.get(uniqueKey);
+            this.closeTab(tabData?.fileName || uniqueKey, { skipCloseConfirm: true, uniqueKeyOverride: uniqueKey });
         });
     }
 
@@ -4724,7 +5099,7 @@ class TabManager {
             return;
         }
 
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'none';
         }
         welcomeContainer.style.display = 'block';
@@ -4754,13 +5129,13 @@ class TabManager {
             isWelcome: true
         };
 
-        this.tabs.set('Welcome', welcomeTab);
+        this.tabs.set('Welcome', welcomeTab as unknown as TabRecord);
         this.activeTab = 'Welcome';
     }
 
     showWelcomeContent() {
         const editorArea = document.querySelector('.editor-area');
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'none';
         }
 
@@ -4798,12 +5173,12 @@ class TabManager {
         welcomeContainer.style.display = 'block';
     }
 
-    setupWelcomeEventListeners(container) {
+    setupWelcomeEventListeners(container: HTMLElement) {
         const actions = container.querySelectorAll('.welcome-action');
         actions.forEach(action => {
             action.addEventListener('click', (e) => {
                 e.preventDefault();
-                const actionType = e.currentTarget.dataset.action;
+                const actionType = (e.currentTarget as HTMLElement).dataset['action'];
                 this.handleWelcomeAction(actionType);
             });
         });
@@ -4812,8 +5187,8 @@ class TabManager {
         this.updateWelcomeLogo(container);
     }
 
-    async updateWelcomeLogo(container) {
-        const img = container.querySelector('.welcome-logo-image');
+    async updateWelcomeLogo(container: HTMLElement) {
+        const img = container.querySelector('.welcome-logo-image') as HTMLImageElement | null;
         if (!img) return;
 
         let logoPath = '';
@@ -4831,14 +5206,14 @@ class TabManager {
             const prefix = encoded.startsWith('/') ? 'file://' : 'file:///';
             img.src = `${prefix}${encoded}`;
         } else {
-            img.src = '../../build/icons/png/128x128.png';
+            img.src = '../../oicpp-plus.ico';
         }
     }
 
-    async loadRecentFiles(container) {
+    async loadRecentFiles(container: HTMLElement) {
         try {
             const recentFiles = await window.electronAPI.getRecentFiles();
-            const recentContainer = container.querySelector('#welcome-recent');
+            const recentContainer = container.querySelector('#welcome-recent') as HTMLElement | null;
 
             if (!recentContainer) return;
 
@@ -4846,7 +5221,7 @@ class TabManager {
                 recentContainer.innerHTML = `
                     <div class="welcome-recent-item">
                         <span class="icon" data-ui-icon="file" aria-hidden="true"></span>
-                        <span>暂无最近文件</span>
+                        <span>${window.i18n.t('welcome.noRecentFiles')}</span>
                     </div>
                 `;
                 if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
@@ -4873,7 +5248,7 @@ class TabManager {
             const recentItems = recentContainer.querySelectorAll('.welcome-recent-item[data-path]');
             recentItems.forEach(item => {
                 item.addEventListener('click', async (e) => {
-                    const filePath = e.currentTarget.dataset.path;
+                    const filePath = (e.currentTarget as HTMLElement).dataset['path'];
                     if (filePath) {
                         const success = await window.electronAPI.openRecentFile(filePath);
                         if (!success) {
@@ -4887,7 +5262,7 @@ class TabManager {
         }
     }
 
-    handleWelcomeAction(actionType) {
+    handleWelcomeAction(actionType: string | undefined) {
         logInfo('欢迎页面操作:', actionType);
 
         switch (actionType) {
@@ -4922,7 +5297,7 @@ class TabManager {
             welcomeContainer.style.display = 'none';
         }
 
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'block';
         }
 
@@ -4936,26 +5311,33 @@ class TabManager {
             } catch (e) { logWarn('恢复侧边栏(退出欢迎页)失败:', e); }
         }
 
+        // 两条身份都要认：displayWelcomePage 走 activateTabByUniqueKey，key 是 'Welcome'；
+        // showWelcomePage 只把字符串 'Welcome' 赋给 activeTab，key 仍是启动时的 null。
+        const welcomeWasActive = this.activeTabKey === 'Welcome' || this.activeTab === 'Welcome';
+
         this.tabs.delete('Welcome');
-        // 仅当欢迎页正处于激活状态时才清空 activeTab。
-        // 否则会误伤当前打开的文件标签，导致 Ctrl+W 等依赖 activeTab 的功能失效。
-        if (this.activeTab === 'Welcome' || !this.activeTab) {
+
+        // createNewCppFile 这类调用点在没有任何欢迎页时也会进来：
+        // 无条件清 activeTab 会把当前文件的身份一起抹掉，而 activeTabKey 又留着不动，
+        // 于是 key 悬空指向已删除的 'Welcome'（和 6ddac59 修的是同一类身份错位）。
+        if (welcomeWasActive) {
             this.activeTab = null;
+            this.activeTabKey = null;
         }
     }
 
 
 
     getSelectedText() {
-        const activeTab = this.getTabByFileName(this.activeTab);
+        const activeTab = this.getTabByFileName(this.activeTab as string | null);
         if (activeTab && this.monacoEditorManager) {
             return this.monacoEditorManager.getSelectedText(activeTab.fileName);
         }
         return '';
     }
 
-    insertText(text) {
-        const activeTab = this.getTabByFileName(this.activeTab);
+    insertText(text: string) {
+        const activeTab = this.getTabByFileName(this.activeTab as string | null);
         if (activeTab && this.monacoEditorManager) {
             this.monacoEditorManager.insertText(activeTab.fileName, text);
         }
@@ -4968,7 +5350,6 @@ class TabManager {
     getUnsavedFiles() {
         const unsavedFiles = [];
         for (const [uniqueKey, tabData] of this.tabs.entries()) {
-            if (this.isNonFileTab(tabData)) continue;
             if (tabData.modified) {
                 unsavedFiles.push(tabData.fileName);
             }
@@ -4976,53 +5357,49 @@ class TabManager {
         return unsavedFiles;
     }
 
-    // 欢迎页、PDF、Markdown 预览等标签不是可写入磁盘的文档，
-    // 关闭/保存全部时必须跳过，否则欢迎页会被当成未命名文件要求另存（issue #548）。
-    isNonFileTab(tab) {
-        if (!tab) return true;
-        if (tab.isWelcome) return true;
-        if (tab.fileName === 'Welcome') return true;
-        if (tab.viewType === 'welcome' || tab.viewType === 'pdf' || tab.viewType === 'markdown-preview') return true;
-        return false;
-    }
-
-    async saveFile(fileName) {
+    async saveFile(fileName: string | null | undefined): Promise<boolean> {
         const tab = this.getTabByFileName(fileName);
         if (!tab) return false;
-        const uniqueKey = tab.uniqueKey || this.findUniqueKeyByFileName(fileName);
+        const uniqueKey = tab.uniqueKey || this.findUniqueKeyByFileName(fileName as string);
         try {
+            // 原先是先落 modified=false 再叫 monaco 保存：磁盘写失败界面照样显示「已保存」，
+            // 关掉窗口就没了。现在等真实结果，成功才标记。
             const result = await this.monacoEditorManager?.saveFile?.(fileName);
             if (result && result.success === false) {
-                throw new Error(result.error || '保存失败');
+                throw new Error(String(result.error || window.i18n.t('dialog.saveWriteFailed')));
             }
             if (uniqueKey) {
                 this.markTabAsSavedByUniqueKey(uniqueKey);
             } else {
-                this.markTabAsSaved(fileName);
+                this.markTabAsSaved(fileName as string);
             }
             return true;
-        } catch (e) {
-            logError('保存文件失败:', e);
+        } catch (error) {
+            logError('保存文件失败:', error);
             return false;
         }
     }
 
-    async saveAllFiles() {
+    async saveAllFiles(): Promise<{ success: boolean; failures: Array<{ fileName?: string | null; error?: string }> }> {
+        const _t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        const failures: Array<{ fileName?: string | null; error?: string }> = [];
         if (this.isDiscardCloseInProgress()) {
-            return { success: true, failures: [] };
+            return { success: true, failures };
         }
-        const failures = [];
-        const tasks = [];
-        const isCloudPath = (p) => {
+        const isCloudPath = (p: unknown): boolean => {
             if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
-                return window.oicppApp.isCloudFilePath(p);
+                return !!window.oicppApp.isCloudFilePath(p);
             }
             return typeof p === 'string' && /^cloud:/i.test(p);
         };
 
+        // 按 uniqueKey 遍历、按 filePath 保存，两者不是一一对应：同一文件开在多个
+        // 分栏（或存在残留 tab）时会对同一文件并发发起 N 次保存，产生多余的 IPC
+        // 往返、file-saved 事件与重复的 clangd 分析。先按 filePath 归并。
+        const byFilePath = new Map();
+        const tasks: Array<Promise<void>> = [];
         for (const [uniqueKey, tab] of this.tabs.entries()) {
-            // 欢迎页没有文件路径，绝不能进入“另存为”流程，否则关闭窗口时会弹“未选择保存位置”并阻止退出（issue #548）。
-            if (this.isNonFileTab(tab)) {
+            if (!tab || tab.viewType === 'pdf' || tab.viewType === 'markdown-preview') {
                 continue;
             }
             try {
@@ -5030,25 +5407,26 @@ class TabManager {
                 const content = this.getTabContentForSave(tab);
                 if (typeof content !== 'string') continue;
 
-                // 未命名/临时标签不能静默跳过，否则用户选择“保存并退出”时会丢内容。
+                // 未命名标签原先是静默 continue：用户选了「保存并退出」却什么都没落盘。
                 if (!filePath) {
                     if (typeof window.electronAPI?.saveAsFile !== 'function') {
-                        failures.push({ fileName: tab.fileName, error: '保存接口不可用' });
+                        failures.push({ fileName: tab.fileName, error: _t('dialog.saveApiUnavailable') });
                         continue;
                     }
                     tasks.push((async () => {
                         try {
+                            // save-as-file 的 handler 已经落盘（writeUtf8FileIfChanged），
+                            // 这里再 saveFile 一次就是同一份内容写两遍，还会多触发一次
+                            // clangd didSave 与 file-saved 广播。
                             const savedPath = await window.electronAPI.saveAsFile(content);
                             if (!savedPath) {
-                                failures.push({ fileName: tab.fileName, error: '未选择保存位置' });
+                                failures.push({ fileName: tab.fileName, error: _t('dialog.saveNoLocation') });
                                 return;
                             }
-                            try {
-                                this.updateTabPathBySource(null, savedPath, null, uniqueKey);
-                            } catch (_) { }
+                            try { this.updateTabPathBySource(null, String(savedPath), null, uniqueKey); } catch (_) { }
                             this.markTabAsSavedByUniqueKey(String(savedPath).replace(/\\/g, '/'));
                         } catch (e) {
-                            failures.push({ fileName: tab.fileName, error: e?.message || String(e) });
+                            failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
                         }
                     })());
                     continue;
@@ -5059,35 +5437,53 @@ class TabManager {
                         try {
                             if (window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function') {
                                 const ok = await window.oicppApp.saveCloudFileToServer(filePath, content);
-                                if (!ok) throw new Error('云文件保存失败');
+                                if (!ok) throw new Error(_t('dialog.cloudSaveFailed'));
                                 this.markTabAsSavedByUniqueKey(uniqueKey);
+                            } else {
+                                throw new Error(_t('dialog.saveApiUnavailable'));
                             }
                         } catch (e) {
-                            failures.push({ fileName: tab.fileName, error: e?.message || String(e) });
+                            failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
                         }
                     })());
                     continue;
                 }
 
-                if (typeof window.electronAPI?.saveFile === 'function') {
-                    tasks.push(
-                        window.electronAPI.saveFile(filePath, content).then((result) => {
-                            if (result?.success === false) {
-                                throw new Error(result?.error || '写入失败');
-                            }
-                            this.markTabAsSavedByUniqueKey(uniqueKey);
-                        }).catch((e) => {
-                            failures.push({ fileName: tab.fileName, error: e?.message || String(e) });
-                            (window.logWarn || console.warn)('保存文件失败:', filePath, e);
-                        })
-                    );
+                if (!byFilePath.has(filePath)) {
+                    byFilePath.set(filePath, { content, uniqueKeys: [] });
                 } else {
-                    failures.push({ fileName: tab.fileName, error: '保存接口不可用' });
+                    // 同一文件被打开多次：内容取首个可用的，标记时覆盖全部 uniqueKey
+                    (window.logWarn || console.warn)('同一文件存在多个标签页，只保存一次:', filePath);
                 }
+                byFilePath.get(filePath).uniqueKeys.push(uniqueKey);
             } catch (e) {
-                failures.push({ fileName: tab?.fileName, error: e?.message || String(e) });
+                failures.push({ fileName: tab?.fileName, error: (e as Error)?.message || String(e) });
                 (window.logWarn || console.warn)('保存标签失败:', tab?.fileName, e);
             }
+        }
+
+        const hasSaveApi = typeof window.electronAPI?.saveFile === 'function';
+        for (const [filePath, { content, uniqueKeys }] of byFilePath.entries()) {
+            if (!hasSaveApi) {
+                // 原先这里直接标记已保存：桥不可用时界面显示干净、磁盘却是旧的，
+                // 关闭后改动就没了。标记去掉，改成如实上报。
+                failures.push({
+                    fileName: String(filePath).split('/').pop(),
+                    error: _t('dialog.saveApiUnavailable')
+                });
+                continue;
+            }
+            tasks.push(
+                window.electronAPI.saveFile(filePath, content).then((result: unknown) => {
+                    if (result && typeof result === 'object' && (result as Record<string, unknown>)['success'] === false) {
+                        throw new Error(String((result as Record<string, unknown>)['error'] || _t('dialog.saveWriteFailed')));
+                    }
+                    uniqueKeys.forEach((key: string) => this.markTabAsSavedByUniqueKey(key));
+                }).catch((e: unknown) => {
+                    failures.push({ fileName: String(filePath).split('/').pop(), error: (e as Error)?.message || String(e) });
+                    (window.logWarn || console.warn)('保存文件失败:', filePath, e);
+                })
+            );
         }
         try { await Promise.allSettled(tasks); } catch (_) { }
         return { success: failures.length === 0, failures };
@@ -5103,14 +5499,15 @@ class TabManager {
         input.click();
 
         input.addEventListener('change', (e) => {
-            const files = e.target.files;
-            if (files.length > 0) {
-                const file = files[0];
+            const inputEl = e.target as HTMLInputElement;
+            const files = inputEl.files;
+            if (files && files.length > 0) {
+                const file = files[0] as File;
                 const fileName = file.name;
 
                 const reader = new FileReader();
-                reader.onload = (e) => {
-                    const content = e.target.result;
+                reader.onload = (re) => {
+                    const content = re.target?.result as string | null;
                     this.openFile(fileName, content);
                 };
                 reader.readAsText(file);
@@ -5130,24 +5527,25 @@ class TabManager {
         input.click();
 
         input.addEventListener('change', (e) => {
-            const files = e.target.files;
+            const inputEl = e.target as HTMLInputElement;
+            const files: FileList | File[] = inputEl.files || [];
             const fileNames = Array.from(files).map(file => file.webkitRelativePath.split('/').pop());
 
             fileNames.forEach(fileName => {
-                const file = Array.from(files).find(f => f.webkitRelativePath.endsWith(fileName));
+                const file = Array.from(files).find(f => f.webkitRelativePath.endsWith(fileName as string));
                 const reader = new FileReader();
-                reader.onload = (e) => {
-                    const content = e.target.result;
-                    this.openFile(fileName, content);
+                reader.onload = (re) => {
+                    const content = re.target?.result as string | null;
+                    this.openFile(fileName as string, content);
                 };
-                reader.readAsText(file);
+                reader.readAsText(file as File);
             });
 
             document.body.removeChild(input);
         });
     }
 
-    createFileFromTemplate(templateName) {
+    createFileFromTemplate(templateName: string) {
         let content = '';
         switch (templateName) {
             case 'cpp':
@@ -5184,6 +5582,8 @@ void hello() {
         }
 
         const fileName = this.generateNewFileName();
+        // 下面那段 tabId 推导是死代码（tabData/uniqueKey 恒为 null），而且函数到头
+        // 也没打开文件：模板点了没反应。直接开新标签。
         this.openFile(fileName, content, true);
     }
 
@@ -5200,49 +5600,78 @@ void hello() {
             isWelcome: true
         };
 
-        this.tabs.set('Welcome', welcomeTab);
+        this.tabs.set('Welcome', welcomeTab as unknown as TabRecord);
 
         this.updateTabsUI();
 
         this.activateTab('Welcome');
     }
 
+    // 欢迎页原先把版本号硬编码成 '1.5.4 (v49)'，发版后不会变。
+    // build-info.json 由主进程 require，渲染层读不到，这里在首次需要时取一次并缓存。
+    getBuildVersionLabel() {
+        if (this._welcomeVersionLabel) return this._welcomeVersionLabel;
+        const fallback = '1.6.0-beta1-plus.1';
+        this._welcomeVersionLabel = fallback;
+        if (window.electronAPI?.getBuildInfo) {
+            Promise.resolve(window.electronAPI.getBuildInfo())
+                .then((info) => {
+                    const version = typeof info?.version === 'string' ? info.version.trim() : '';
+                    const tag = info?.buildTag || info?.buildVersion || info?.buildNo;
+                    if (!version) return;
+                    let label = version;
+                    if (!/\(v[^)]+\)/i.test(label) && typeof tag === 'string' && tag.trim()) {
+                        const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
+                        label = `${label} (${normalizedTag})`;
+                    }
+                    this._welcomeVersionLabel = label;
+                    // 已渲染的欢迎页同步刷新
+                    document.querySelectorAll('.welcome-version').forEach((el) => {
+                        el.textContent = `${window.i18n?.t?.('app.version')} ${label}`;
+                    });
+                })
+                .catch(() => { });
+        }
+        return this._welcomeVersionLabel;
+    }
+
     getWelcomePageContent() {
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
-                    <img class="welcome-logo-image" alt="OICPP Logo">
-                    <div class="welcome-logo">OICPP IDE</div>
-                    <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
-                    <div class="welcome-version">版本 1.6.1 (v53)</div>
+                    <img class="welcome-logo-image" alt="OICPP-Plus Logo">
+                    <div class="welcome-logo">OICPP-Plus</div>
+                    <div class="welcome-subtitle">${t('welcome.subtitle')}</div>
+                    <div class="welcome-version">${t('app.version')} ${this.getBuildVersionLabel()}</div>
                 </div>
                 
                 <div class="welcome-content">
                     <div class="welcome-section">
-                        <h3>开始</h3>
+                        <h3>${t('welcome.getStarted')}</h3>
                         <div class="welcome-actions">
                             <a href="#" class="welcome-action" data-action="open-folder">
                                 <span class="icon" data-ui-icon="folder" aria-hidden="true"></span>
-                                <span>打开文件夹</span>
+                                <span>${t('welcome.openFolder')}</span>
                                 <span class="shortcut">Ctrl+K</span>
                             </a>
                         </div>
                     </div>
                     
                     <div class="welcome-section">
-                        <h3>最近打开</h3>
+                        <h3>${t('welcome.recentFiles')}</h3>
                         <div class="welcome-recent" id="welcome-recent">
                             <div class="welcome-recent-item">
                                 <span class="icon" data-ui-icon="file" aria-hidden="true"></span>
-                                <span>暂无最近文件</span>
+                                <span>${t('welcome.noRecentFiles')}</span>
                             </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="welcome-footer">
-                    <p>OICPP IDE - 为 OIer 优化的 C++ 编程环境</p>
-                    <p>版本 1.6.1 (v53), Copyright (C) 2025 mywwzh.</p>
+                    <p>${t('welcome.footer')}</p>
+                    <p>${t('app.version')} ${this.getBuildVersionLabel()}, Copyright (C) 2025 mywwzh. Modified by qingyingge.</p>
                 </div>
             </div>
         `;
@@ -5256,14 +5685,14 @@ void hello() {
             group.tabBar.innerHTML = '';
             group.tabs?.forEach((tab) => {
                 if (tab?.element instanceof Element) {
-                    group.tabBar.appendChild(tab.element);
-                    tab.element.dataset.groupId = group.id;
+                    (group.tabBar as HTMLElement).appendChild(tab.element);
+                    tab.element.dataset['groupId'] = group.id;
                 }
             });
         });
     }
 
-    updateTabTitle(oldName, newName) {
+    updateTabTitle(oldName: string, newName: string) {
         const tab = this.getTabByFileName(oldName);
         if (!tab) {
             return;
@@ -5280,9 +5709,9 @@ void hello() {
         tab.fileName = newName;
 
         if (tab.element) {
-            tab.element.dataset.file = newName;
+            tab.element.dataset['file'] = newName;
             if (usesFileNameKey && newUniqueKey) {
-                tab.element.dataset.uniqueKey = newUniqueKey;
+                tab.element.dataset['uniqueKey'] = newUniqueKey;
             }
         }
 
@@ -5307,7 +5736,7 @@ void hello() {
         if (usesFileNameKey && tab.groupId) {
             const group = this.groups.get(tab.groupId);
             if (group && group.tabs) {
-                group.tabs.delete(uniqueKey);
+                group.tabs.delete(uniqueKey as string);
                 if (newUniqueKey) {
                     group.tabs.set(newUniqueKey, tab);
                 }
@@ -5321,7 +5750,7 @@ void hello() {
         logInfo('标签页标题已更新:', oldName, '->', newName);
     }
 
-    closeTabByFileName(fileName, options = {}) {
+    closeTabByFileName(fileName: string | null | undefined, options: CloseTabOptions = {}) {
         const tab = this.getTabByFileName(fileName);
         if (tab) {
             this.closeTab(fileName, options);
@@ -5329,7 +5758,7 @@ void hello() {
         }
     }
 
-    updateTabPath(fileName, newPath) {
+    updateTabPath(fileName: string | null | undefined, newPath: string | null | undefined) {
         const tab = this.getTabByFileName(fileName);
         if (tab) {
             tab.filePath = newPath;
@@ -5339,18 +5768,20 @@ void hello() {
     }
 
 
-    updateTabPathBySource(oldPath, newPath, newFileName = null, targetUniqueKey = null) {
+    updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null, targetUniqueKey: string | null = null) {
         try {
             if (!newPath) return;
-            const norm = (p) => String(p).replace(/\\/g, '/');
+            const norm = (p: string | null | undefined) => String(p).replace(/\\/g, '/');
             const oldKey = oldPath ? norm(oldPath) : '';
             const newKey = norm(newPath);
 
-            let tabData = null;
+            let tabData: TabRecord | null = null;
             let actualOldKey = oldKey;
+            // 调用方知道是哪个标签时（未命名标签另存为就是这种），必须按 key 精确取，
+            // 兜底的「当前激活标签」一次只能猜中一个，批量保存会把路径绑到错的标签上。
             const targetKey = targetUniqueKey ? norm(targetUniqueKey) : '';
             if (targetKey && this.tabs.has(targetKey)) {
-                tabData = this.tabs.get(targetKey);
+                tabData = this.tabs.get(targetKey) || null;
                 actualOldKey = targetKey;
             }
             if (!tabData && oldKey) {
@@ -5361,11 +5792,16 @@ void hello() {
                     }
                 }
             }
-            if (!tabData) {
-                // 未命名标签另存为时 oldPath 为 null，此时按当前激活标签定位。
-                const activeKey = this.activeTabKey || this.findUniqueKeyByFileName(this.activeTab);
+            if (!tabData && !oldKey) {
+                // 未命名标签「另存为」后没有旧路径可查，按当前激活标签定位，
+                // 否则新路径永远绑不上，后续保存与编译会写到旧位置或静默跳过。
+                // 只在压根没给 oldPath 时才兜底：给了却查不到说明调用方递错了路径，
+                // 这时改激活标签会把不相干的 tab 悄悄改名。
+                const activeKey = this.activeTabKey
+                    || (typeof this.activeTab === 'string' ? this.findUniqueKeyByFileName(this.activeTab) : this.activeTab?.uniqueKey)
+                    || '';
                 if (activeKey && this.tabs.has(activeKey)) {
-                    tabData = this.tabs.get(activeKey);
+                    tabData = this.tabs.get(activeKey) || null;
                     actualOldKey = activeKey;
                 }
             }
@@ -5375,16 +5811,24 @@ void hello() {
             }
 
             if (!newFileName || typeof newFileName !== 'string') {
-                newFileName = newKey.split('/').pop() || tabData.fileName;
+                newFileName = newKey.split('/').pop() || tabData.fileName || null;
             }
 
             if (this.tabs.has(newKey) && newKey !== actualOldKey) {
                 const dup = this.tabs.get(newKey);
+                if (dup?.modified) {
+                    // 重名 tab 有未保存内容：不能静默丢弃，至少要留下痕迹
+                    logWarn('重命名目标已存在且该标签页有未保存内容，重命名后的内容将覆盖它:', newFileName || newKey);
+                }
                 try {
+                    const editorManager = this.monacoEditorManager || window.monacoEditorManager || window.editorManager;
+                    if (dup?.tabId && typeof editorManager?.cleanupEditor === 'function') {
+                        editorManager.cleanupEditor(dup.tabId);
+                    }
                     if (dup && dup.element && dup.element.parentNode) {
                         dup.element.parentNode.removeChild(dup.element);
                     }
-                } catch (_) { }
+                } catch (e) { logWarn('清理重名标签页失败:', e); }
                 this.tabs.delete(newKey);
             }
 
@@ -5398,37 +5842,35 @@ void hello() {
             }
             this.tabs.set(newKey, tabData);
 
-            // 保持所有指向旧 key 的引用同步，否则切换标签时取不到当前 tab，自动保存静默失效。
-            if (this.activeTabKey === actualOldKey) {
-                this.activeTabKey = newKey;
-            }
+            // group.tabs 的 key 与 group.activeTabKey 都以 uniqueKey 为准，必须同步迁移，
+            // 否则分组内找不到该 tab
             try {
-                const groupId = tabData.groupId;
-                const group = groupId ? this.groups.get(groupId) : null;
-                if (group) {
-                    if (group.activeTabKey === actualOldKey) {
-                        group.activeTabKey = newKey;
-                    }
-                    if (group.tabs && group.tabs.has(actualOldKey)) {
+                for (const group of this.groups.values()) {
+                    if (!(group.tabs instanceof Map)) continue;
+                    if (group.tabs.has(actualOldKey)) {
                         group.tabs.delete(actualOldKey);
                         group.tabs.set(newKey, tabData);
                     }
+                    if (group.activeTabKey === actualOldKey) {
+                        group.activeTabKey = newKey;
+                    }
+                    // tabOrder 存的也是 uniqueKey，漏掉它会让分组内的顺序指向已删除的 key
                     if (Array.isArray(group.tabOrder)) {
                         const idx = group.tabOrder.indexOf(actualOldKey);
                         if (idx !== -1) group.tabOrder[idx] = newKey;
                     }
                 }
-            } catch (e) { logWarn('同步分组标签引用失败:', e); }
+            } catch (e) { logWarn('同步分组结构失败:', e); }
 
             try {
-                let tabEl = tabData.element;
+                let tabEl = tabData.element as HTMLElement | null;
                 if (!tabEl && tabData.tabId) {
                     tabEl = document.querySelector(`.tab[data-tab-id="${tabData.tabId}"]`);
                 }
                 if (tabEl) {
-                    tabEl.dataset.uniqueKey = newKey;
+                    tabEl.dataset['uniqueKey'] = newKey;
                     if (newFileName && typeof newFileName === 'string') {
-                        tabEl.dataset.file = newFileName;
+                        tabEl.dataset['file'] = newFileName;
                     }
                     tabData.element = tabEl;
                 }
@@ -5439,13 +5881,17 @@ void hello() {
             } catch (e) { logWarn('同步分组标签失败:', e); }
 
             if (newFileName && typeof newFileName === 'string') {
-                const tabOrderIndex = this.tabOrder.indexOf(previousFileName);
+                const tabOrderIndex = this.tabOrder.indexOf(previousFileName as string);
                 if (tabOrderIndex !== -1) {
                     this.tabOrder[tabOrderIndex] = newFileName;
                 }
-                if (this.activeTabKey === newKey || this.activeTabKey === actualOldKey) {
-                    this.activeTab = newFileName;
-                }
+            }
+
+            // activeTabKey 必须跟着迁移：它悬空指向已删除的 key 时，
+            // 依赖它的自动保存/编译路径会静默 return
+            if (this.activeTabKey === actualOldKey || this.activeTabKey === newKey) {
+                this.activeTabKey = newKey;
+                this.activeTab = tabData;
             }
 
             try {
@@ -5474,8 +5920,13 @@ void hello() {
 
 
 
-    updateTabPathsUnderDirectory(oldDir, newDir) {
-        const norm = (p) => String(p || '').replace(/\\/g, '/');
+    /**
+     * 目录被重命名或剪切后，它下面每一个已打开的标签都要换到新路径。
+     * 只更新目录自身的话，子文件的 tab 会继续指向已经不存在的旧位置，
+     * 保存写回旧路径、文件监视也全部失联。
+     */
+    updateTabPathsUnderDirectory(oldDir: string | null | undefined, newDir: string | null | undefined) {
+        const norm = (p: string | null | undefined) => String(p ?? '').replace(/\\/g, '/');
         const oldPrefix = norm(oldDir).replace(/\/+$/, '') + '/';
         const newPrefix = norm(newDir).replace(/\/+$/, '') + '/';
         const entries = Array.from(this.tabs.entries());
@@ -5483,11 +5934,11 @@ void hello() {
             const oldPath = norm(tab.filePath || '');
             if (!oldPath.startsWith(oldPrefix)) continue;
             const newPath = newPrefix + oldPath.slice(oldPrefix.length);
-            this.updateTabPathBySource(oldPath, newPath, newPath.split('/').pop());
+            this.updateTabPathBySource(oldPath, newPath, newPath.split('/').pop() || null);
         }
     }
 
-    setFilePath(fileName, filePath) {
+    setFilePath(fileName: string | null | undefined, filePath: string | null | undefined) {
         const tab = this.getTabByFileName(fileName);
         if (tab) {
             tab.filePath = filePath;
@@ -5510,11 +5961,11 @@ void hello() {
         logError('TabManager: 文件管理器不可用，无法创建新文件');
         if (window.dialogManager) {
             try { logError('[DialogError]', { message: '请先打开一个工作区文件夹', from: 'TabManager.createNewCppFile' }); } catch (_) { }
-            window.dialogManager.showError('请先打开一个工作区文件夹');
+            window.dialogManager.showError(window.i18n.t('fileExplorer.openWorkspaceFirst'));
         }
     }
 
-    updateAllEditorsSettings(settings) {
+    updateAllEditorsSettings(settings: Record<string, unknown>) {
         if (!this.monacoEditorManager) {
             this.tryGetEditorManagerReference();
         }
@@ -5561,7 +6012,7 @@ void hello() {
         }
 
         const editorArea = document.querySelector('.editor-area');
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'block';
             editorArea.innerHTML = '';
         }
@@ -5584,3 +6035,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.tabManager = tabManager;
     logInfo('标签页管理器已初始化');
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = TabManager;
+}
