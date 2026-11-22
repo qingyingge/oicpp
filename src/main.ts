@@ -1,8 +1,8 @@
 // 迁移过渡期：logger / settings / currentExternalWorkspacePath 等作为全局名直接使用，
 // 先声明为 any 使 tsc 可通过；后续再逐步收紧类型。
-declare function logInfo(...args: any[]): void;
-declare function logWarn(...args: any[]): void;
-declare function logError(...args: any[]): void;
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
 declare function decodeBufferAuto(buf: Buffer): string;
 declare function updateProgress(message: string, percent?: number): void;
 
@@ -395,7 +395,7 @@ function shouldUseAsciiTempCompileFile(inputFile) {
 function resolveClangdRootFromBundle() {
     const platformKey = getClangdPlatformKey();
     const bundled = app.isPackaged
-        ? path.join((process as any).resourcesPath, 'clangd')
+        ? path.join((process as { resourcesPath: string }).resourcesPath, 'clangd')
         : path.join(__dirname, '..', 'build', 'clangd', platformKey);
     if (bundled && fs.existsSync(bundled)) {
         return bundled;
@@ -719,7 +719,7 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
         logInfo('[LSP] 正在查询编译器信息:', compilerPath, args.join(' '));
 
         const runtimeBinPaths = getCompilerRuntimeBinPaths(compilerPath);
-        const compilerEnv: any = {
+        const compilerEnv: Record<string, string> = {
             ...process.env
         };
         if (runtimeBinPaths.length > 0) {
@@ -812,11 +812,11 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
 }
 
 class ClangdLspManager {
-    proc: any = null;
-    buffer: any = Buffer.alloc(0);
-    pending: any = new Map();
-    nextId: any = 1;
-    procGeneration: any = 0;
+    proc: import('child_process').ChildProcess | null = null;
+    buffer: Buffer = Buffer.alloc(0);
+    pending: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void; method: string }> = new Map();
+    nextId: number = 1;
+    procGeneration: number = 0;
 
     constructor() {
         this.proc = null;
@@ -1306,7 +1306,7 @@ async function handleIdeLoginCallback(req, res) {
     }
 
     try {
-        const verifyResult: any = await verifyIdeLoginToken({ uid, username, timestamp, token, service });
+        const verifyResult: { success?: boolean; code?: string; error?: string; message?: string; user?: { username?: string }; access_token?: string; login_token?: string; token?: string; username?: string } = await verifyIdeLoginToken({ uid, username, timestamp, token, service });
         if (!verifyResult || verifyResult.success !== true || !verifyResult.user) {
             logWarn('[登录] 验证失败:', {
                 success: verifyResult?.success,
@@ -1631,7 +1631,7 @@ async function handleWatcherEvent(key, eventType) {
     }
 }
 
-function markLocalSave(filePath, state: any = {}) {
+function markLocalSave(filePath: string, state: { exists?: boolean; fingerprint?: string; mtimeMs?: number } = {}) {
     const normalized = normalizeWatchKey(filePath);
     if (!normalized) return;
     const entry = fileWatchRegistry.get(normalized.key);
@@ -1928,7 +1928,7 @@ function normalizeSettingsRuntimeShape(nextSettings) {
     return nextSettings;
 }
 
-let settings: any = getDefaultSettings();
+let settings: ReturnType<typeof getDefaultSettings> & Record<string, unknown> = getDefaultSettings();
 
 let isUpdateDownloading = false; // 是否正在下载更新
 let currentDownloadingVersion = null; // 正在下载的版本
@@ -2244,7 +2244,7 @@ function refreshNativeUpdateMenuState() {
     }
 }
 
-function broadcastUpdateDownloadState(extra: any = {}) {
+function broadcastUpdateDownloadState(extra: Partial<ReturnType<typeof getUpdateDownloadState>> = {}) {
     const state = { ...getUpdateDownloadState(), ...extra };
     if (mainWindow && !mainWindow.isDestroyed()) {
         try { mainWindow.webContents.send('update-download-status', state); } catch (_) { }
@@ -2992,7 +2992,7 @@ function createWindow() {
 
 
 function createMenuBar() {
-    const defaultKeybindings: any = getDefaultSettings().keybindings || {};
+    const defaultKeybindings: ReturnType<typeof getDefaultSettings>['keybindings'] = getDefaultSettings().keybindings || ({} as ReturnType<typeof getDefaultSettings>['keybindings']);
     const activeKeybindings = (settings && settings.keybindings && typeof settings.keybindings === 'object')
         ? settings.keybindings
         : {};
@@ -3663,7 +3663,7 @@ function setupIPC() {
     ipcMain.handle('update-settings', async (event, newSettings) => {
         try {
             const incomingRaw = { ...(newSettings || {}) };
-            const incomingSettings: any = sanitizeIncomingSettings(incomingRaw);
+            const incomingSettings: Partial<ReturnType<typeof getDefaultSettings>> = sanitizeIncomingSettings(incomingRaw);
             if (Object.prototype.hasOwnProperty.call(incomingSettings, 'runMode')) {
                 incomingSettings.runMode = normalizeRunModeForPlatform(incomingSettings.runMode);
             }
@@ -3764,7 +3764,7 @@ function setupIPC() {
         return terminalManager.getStatus();
     });
 
-    ipcMain.handle('terminal-create', (_event, options: any = {}) => {
+    ipcMain.handle('terminal-create', (_event, options: Parameters<typeof terminalManager.createSession>[0] = {}) => {
         try {
             const terminal = terminalManager.createSession(options || {});
             return {
@@ -3816,7 +3816,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('lsp-start', async (_event, options: any = {}) => {
+    ipcMain.handle('lsp-start', async (_event, options: Parameters<typeof clangdLspManager.start>[0] = {}) => {
         logInfo('[LSP] 渲染进程请求启动 LSP, options:', JSON.stringify(options));
         const result = await clangdLspManager.start(options || {});
         if (result.ok) {
@@ -3832,7 +3832,7 @@ function setupIPC() {
         return clangdLspManager.stop();
     });
 
-    ipcMain.handle('lsp-restart', async (_event, options: any = {}) => {
+    ipcMain.handle('lsp-restart', async (_event, options: Parameters<typeof clangdLspManager.start>[0] = {}) => {
         logInfo('[LSP] 渲染进程请求重启 LSP, options:', JSON.stringify(options));
         const stopResult = await clangdLspManager.stop();
         if (!stopResult || stopResult.ok !== true) {
@@ -3851,7 +3851,7 @@ function setupIPC() {
     ipcMain.handle('lsp-request', async (_event, method, params) => {
         logInfo('[LSP] 请求: ' + method);
         try {
-            const result: any = await clangdLspManager.request(method, params || {});
+            const result: { capabilities?: { semanticTokensProvider?: { legend?: { tokenTypes?: unknown[]; tokenModifiers?: unknown[] } } }; serverInfo?: { version?: string; name?: string } } = await clangdLspManager.request(method, params || {});
             if (method === 'initialize') {
                 const caps = result?.capabilities;
                 const version = result?.serverInfo?.version || '?';
@@ -4015,7 +4015,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('open-path', async (_event, targetPath, options: any = {}) => {
+    ipcMain.handle('open-path', async (_event, targetPath, options: { reveal?: boolean; highlight?: boolean } = {}) => {
         try {
             if (!targetPath || typeof targetPath !== 'string') {
                 throw new Error('无效的路径');
@@ -4298,7 +4298,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('debug-expand-variable', (event, variableName, options: any = {}) => {
+    ipcMain.on('debug-expand-variable', (event, variableName, options: { scope?: string; path?: unknown; cacheKey?: string } = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.expandVariable(variableName, options).then((result) => {
                 event.reply('debug-output', { message: `已展开变量: ${variableName}`, type: 'info' });
@@ -4323,7 +4323,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('debug-load-more-variable', (event, variableName, options: any = {}) => {
+    ipcMain.on('debug-load-more-variable', (event, variableName, options: { scope?: string; path?: unknown; append?: boolean; cacheKey?: string } = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             const nextOptions = { ...options, append: true };
             gdbDebugger.expandVariable(variableName, nextOptions).then((result) => {
@@ -4350,7 +4350,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('debug-collapse-variable', (event, variableName, options: any = {}) => {
+    ipcMain.on('debug-collapse-variable', (event, variableName, options: { scope?: string; path?: unknown } = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.collapseVariable(variableName, options).then(result => {
                 event.reply('debug-output', { message: `已折叠变量: ${variableName}`, type: 'info' });
@@ -4823,7 +4823,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('walk-directory', async (event, dirPath, options: any = {}) => {
+    ipcMain.handle('walk-directory', async (event, dirPath, options: { includeExts?: string[]; excludeGlobs?: string[]; maxFiles?: number } = {}) => {
         const {
             includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'],
             excludeGlobs = ['node_modules', '.git', '.oicpp', '.vscode', '.dsym'],
@@ -5314,7 +5314,7 @@ function setupIPC() {
                     return memorySamplePromise;
                 }
                 memorySamplePromise = readMemoryBytes()
-                    .then((bytes: any) => {
+                    .then((bytes: number) => {
                         peakMemoryBytes = Math.max(peakMemoryBytes, bytes);
                         if (memoryLimitBytes > 0 && bytes > memoryLimitBytes && !memoryLimitTriggered) {
                             memoryLimitTriggered = true;
@@ -5552,7 +5552,7 @@ function setupIPC() {
         });
     });
 
-    ipcMain.handle('run-interactive', async (event, options: any = {}) => {
+    ipcMain.handle('run-interactive', async (event, options: Record<string, unknown> = {}) => {
         const { spawn } = require('child_process');
         const contestantPath = options?.contestantExecutablePath;
         const graderPath = options?.graderExecutablePath;
@@ -5706,7 +5706,7 @@ function setupIPC() {
                 : 0;
             const sampleMemory = () => {
                 if (memoryPromise) return memoryPromise;
-                memoryPromise = readMemory().then((bytes: any) => {
+                memoryPromise = readMemory().then((bytes: number) => {
                     peakMemoryBytes = Math.max(peakMemoryBytes, bytes);
                     if (memoryLimitBytes > 0 && bytes > memoryLimitBytes && !memoryLimitExceeded) {
                         memoryLimitExceeded = true;
@@ -6824,7 +6824,7 @@ function setupIPC() {
 
             let compilerArgs = '-std=c++17';
 
-            const compileResult: any = await compileFile({
+            const compileResult: { success?: boolean; stderr?: string } = await compileFile({
                 inputFile: testCppFile,
                 outputFile: testExeFile,
                 compilerPath: compilerPath,
@@ -6839,7 +6839,7 @@ function setupIPC() {
             const runResult = await new Promise<{ success: boolean; message?: string; details?: string }>((resolve) => {
                 const { spawn } = require('child_process');
 
-                let testEnv: any = { ...process.env };
+                let testEnv: Record<string, string> = { ...process.env };
                 if (compilerPath && fs.existsSync(compilerPath)) {
                     const compilerDir = path.dirname(compilerPath);
                     const compilerRoot = path.dirname(compilerDir);
@@ -7006,8 +7006,8 @@ async function readFileContent(filePath) {
             throw new Error('不支持的二进制文件');
         }
 
-        const encoding = detectEncoding(buffer);
-        if ((encoding as any) === 'gbk' || (encoding as any) === 'gb2312') {
+        const encoding = detectEncoding(buffer) as string;
+        if (encoding === 'gbk' || encoding === 'gb2312') {
             const iconv = require('iconv-lite');
             return iconv.decode(buffer, 'gbk');
         } else {
@@ -7492,12 +7492,12 @@ async function checkForUpdates(isManual = false) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        const updateInfo: any = await response.json();
+        const updateInfo: Record<string, unknown> = await response.json();
 
         const currentVersion = APP_VERSION; // 当前程序版本
         const latestVersion = pickUpdateTargetVersion(updateInfo);
         // 服务器 description 只对应 latestVersion，切到稳定版时不要展示 beta 的更新说明。
-        const description = versionsEqual(latestVersion, updateInfo.latestVersion) ? (updateInfo.description || '') : '';
+        const description = versionsEqual(latestVersion, updateInfo.latestVersion) ? String(updateInfo.description || '') : '';
 
         logInfo('[更新] 检查完成:', {
             channel: settings.receiveBetaUpdates === true ? 'beta' : 'stable',
@@ -7652,7 +7652,7 @@ function promptLinuxManualInstall(pendingUpdate) {
     }).catch(() => { });
 }
 
-async function downloadAndInstallUpdate(updateInfo = null, options: any = {}) {
+async function downloadAndInstallUpdate(updateInfo = null, options: { isManual?: boolean } = {}) {
     try {
         logInfo('=== 开始下载安装程序(静默) ===');
         const isManual = !!options.isManual;
@@ -7668,7 +7668,7 @@ async function downloadAndInstallUpdate(updateInfo = null, options: any = {}) {
             try {
                 const versionResponse = await fetch('https://oicppide.com/api/checkUpdate');
                 if (versionResponse.ok) {
-                    const versionInfo: any = await versionResponse.json();
+                    const versionInfo: Record<string, unknown> = await versionResponse.json();
                     latestVersion = pickUpdateTargetVersion(versionInfo);
                     updateDescription = versionsEqual(latestVersion, versionInfo.latestVersion)
                         ? (versionInfo.description || '')
@@ -7709,7 +7709,7 @@ async function downloadAndInstallUpdate(updateInfo = null, options: any = {}) {
                 if (!filelistResp.ok) {
                     continue;
                 }
-                const data: any = await filelistResp.json();
+                const data: Record<string, unknown> = await filelistResp.json();
                 if (data && Array.isArray(data.files) && data.files.length > 0) {
                     filelist = data;
                     break;
@@ -8205,7 +8205,7 @@ function loadSettings() {
             const normalizedCompileAndRunShortcut = 'Ctrl+F11';
             const existingKeybindings = settings.keybindings && typeof settings.keybindings === 'object'
                 ? settings.keybindings
-                : {};
+                : ({} as ReturnType<typeof getDefaultSettings>['keybindings']);
             const existingCompileAndRun = typeof existingKeybindings.compileAndRun === 'string'
                 ? existingKeybindings.compileAndRun.trim()
                 : '';
@@ -8780,7 +8780,7 @@ async function compileFile(options) {
         ]);
         const libraryEnvValue = mergeEnvPathValue(libraryCandidates, process.env.LIBRARY_PATH);
 
-        const compilerEnv: any = {
+        const compilerEnv: Record<string, string> = {
             ...process.env,
             PATH: envPath,
             MINGW_PREFIX: compilerRoot
@@ -9168,7 +9168,7 @@ async function runExecutable(options) {
             child.unref(); // 允许父进程退出而不等待子进程
             child.on('error', (error) => {
                 try {
-                    let diag: any = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
+                    let diag: { message: string; code?: string; errno?: number; syscall?: string; targetMode?: string; size?: number; targetExists?: boolean; command?: string; args?: string[]; cwd?: string } = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
                     try {
                         if (fs.existsSync(executablePath)) {
                             const st = fs.statSync(executablePath);
@@ -9398,7 +9398,7 @@ function isSupportedExternalFile(filePath) {
     }
 }
 
-function extractSupportedFilesFromArgs(args = [], options: any = {}) {
+function extractSupportedFilesFromArgs(args = [], options: { workingDirectory?: string } = {}) {
     const results = [];
     if (!Array.isArray(args)) {
         return results;
@@ -9486,7 +9486,7 @@ function extractSupportedFilesFromArgs(args = [], options: any = {}) {
     return results;
 }
 
-function extractOpenTargetsFromArgs(args = [], options: any = {}) {
+function extractOpenTargetsFromArgs(args = [], options: { workingDirectory?: string } = {}) {
     const targets = { files: [], folders: [] };
     if (!Array.isArray(args)) {
         return targets;
@@ -9879,7 +9879,7 @@ function buildCloudSyncSignature({ loginToken, method, path, timestamp, nonce, b
     return nodeCrypto.createHmac('sha256', loginToken).update(payload).digest('hex');
 }
 
-async function callCloudSyncApi(options: any = {}) {
+async function callCloudSyncApi(options: { method?: string; path?: string; query?: Record<string, unknown>; body?: unknown } = {}) {
     const loginToken = getLoginToken();
     if (!loginToken) {
         return { ok: false, status: 401, error: '未登录' };
@@ -10077,7 +10077,7 @@ async function deleteSettingsBackupFiles(files) {
     }
 }
 
-async function backupSettingsToCloud(options: any = {}) {
+async function backupSettingsToCloud(options: Record<string, unknown> = {}) {
     if (!getLoginToken()) {
         return { success: false, error: 'NOT_LOGGED_IN' };
     }
@@ -10147,7 +10147,7 @@ async function backupSettingsToCloud(options: any = {}) {
     }
 }
 
-async function getLatestSettingsBackupInfo() {
+async function getLatestSettingsBackupInfo(): Promise<{ success: boolean; error?: string; info?: Record<string, unknown> }> {
     if (!getLoginToken()) {
         return { success: false, error: 'NOT_LOGGED_IN' };
     }
@@ -10226,7 +10226,7 @@ async function syncSettingsFromCloud() {
         return infoResult;
     }
 
-    const info = (infoResult as any).info;
+    const info: Record<string, unknown> | undefined = infoResult.info;
     const downloadResult = await callCloudSyncApi({
         method: 'GET',
         path: '/cloudSync/download',
@@ -10457,7 +10457,7 @@ async function sendHeartbeat(type = 'heartbeat', username = '') {
             }
         } catch (_) { }
 
-        const data: any = {
+        const data: { type: string; token: string; version: string; login_token?: string; username?: string; device_name?: string; cpu_id?: string } = {
             type: type,
             token: token,
             version: currentVersion
@@ -10480,7 +10480,7 @@ async function sendHeartbeat(type = 'heartbeat', username = '') {
             },
             body: JSON.stringify(data),
             timeout: 10000 // 10秒超时
-        } as any);
+        } as RequestInit & { timeout?: number });
 
         const result = await response.json();
         return result;
@@ -10804,7 +10804,7 @@ ipcMain.handle('save-setting', async (event, key, value) => {
     }
 });
 
-function runCommandVersionProbe(command, args = [], options: any = {}) {
+function runCommandVersionProbe(command: string, args: string[] = [], options: { env?: Record<string, string>; timeoutMs?: number } = {}) {
     const { spawnSync } = require('child_process');
     const env = options.env ? { ...process.env, ...options.env } : { ...process.env };
     try {
@@ -11032,7 +11032,7 @@ async function killConsolePauserForTargetWindows(targetExePath) {
     } catch (_) { }
 }
 
-async function startDebugSession(filePath, options: any = {}) {
+async function startDebugSession(filePath: string, options: { inferiorTTY?: string; useInputBridge?: boolean; runMode?: string; breakpoints?: Array<{ line: number } | number> } = {}) {
     try {
         logInfo('[主进程] 开始调试会话:', filePath);
         logInfo('[主进程] 调试选项:', options);
@@ -11281,8 +11281,8 @@ async function startDebugSession(filePath, options: any = {}) {
  * 通过 fuser 命令（回退到 /proc 扫描）找到实际打开了指定 TTY 设备的所有 PID。
  * 不能用 ps -t，因为 GDB 的 set inferior-tty 只重定向 fd，不改变控制终端。
  */
-function _resolvePidsOnTTY(ttyPath) {
-    const pids = new Set();
+function _resolvePidsOnTTY(ttyPath): Set<number> {
+    const pids = new Set<number>();
     if (!ttyPath) return pids;
     try {
         // 优先用 fuser，速度快且不受进程数限制
@@ -11548,7 +11548,7 @@ function setupDebuggerEvents() {
 
         try {
             // 获取终端 shell 的 PID：取 TTY 上最小的 PID（排除 inferior 自身）
-            const allPids: any = _resolvePidsOnTTY(ttyPath);
+            const allPids: Set<number> = _resolvePidsOnTTY(ttyPath);
             let shellPid = 0;
             for (const pid of allPids) {
                 if (pid !== inferiorPid && (!shellPid || pid < shellPid)) {
