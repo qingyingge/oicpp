@@ -1,5 +1,5 @@
 // 迁移过渡期：logger / settings / currentExternalWorkspacePath 等作为全局名直接使用，
-// 先声明为 unknown[] 使 tsc 可通过；后续再逐步收紧类型。
+// 先声明为 any 使 tsc 可通过；后续再逐步收紧类型。
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
