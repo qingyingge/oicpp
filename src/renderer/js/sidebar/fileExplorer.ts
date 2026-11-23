@@ -203,16 +203,76 @@ class FileExplorer {
     }
 
     renderFileTree(): void {
-        // 批次 2 实现（渲染 HTML）
+        const fileTree = this._fileTree || document.querySelector<HTMLElement>('.file-tree');
+        if (!fileTree) return;
+
+        if (!this.hasWorkspace) {
+            fileTree.innerHTML = '<div class="empty-state">没有打开的文件夹</div>';
+            this._treeItemsByPath.clear();
+            return;
+        }
+
+        fileTree.innerHTML = '';
+        this._treeItemsByPath.clear();
+        const fragment = document.createDocumentFragment();
+
+        this.files.forEach((file) => {
+            const item = this.createTreeItem(file);
+            fragment.appendChild(item);
+            this._treeItemsByPath.set(file.path, item);
+        });
+
+        fileTree.appendChild(fragment);
     }
 
-    createTreeItem(_file: FileEntry): HTMLElement {
-        // 批次 2 实现
-        return document.createElement('div');
+    createTreeItem(file: FileEntry): HTMLElement {
+        const item = document.createElement('div');
+        item.className = 'tree-item';
+        item.dataset.path = file.path;
+        item.dataset.type = file.type;
+
+        const content = document.createElement('div');
+        content.className = 'tree-item-content';
+
+        if (file.type === 'folder') {
+            const arrow = document.createElement('span');
+            arrow.className = 'tree-item-arrow';
+            arrow.textContent = '▶';
+            content.appendChild(arrow);
+        }
+
+        const icon = document.createElement('span');
+        icon.className = 'tree-item-icon';
+        icon.textContent = this.getFileIconText(file);
+        content.appendChild(icon);
+
+        const label = document.createElement('span');
+        label.className = 'tree-item-label';
+        label.textContent = file.name;
+        content.appendChild(label);
+
+        item.appendChild(content);
+        return item;
+    }
+
+    private getFileIconText(file: FileEntry): string {
+        if (file.type === 'folder') {
+            return '📁';
+        }
+        const ext = (file.extension || '').toLowerCase();
+        const iconMap: Record<string, string> = {
+            '.cpp': '📄', '.cc': '📄', '.cxx': '📄', '.c': '📄',
+            '.h': '📄', '.hpp': '📄',
+            '.md': '📝', '.txt': '📝',
+            '.json': '📋',
+            '.in': '📥', '.out': '📤', '.ans': '✅',
+            '.pdf': '📕'
+        };
+        return iconMap[ext] || '📄';
     }
 
     toggleFolder(_path: string): void {
-        // 批次 2 实现
+        // 批次 2 实现（展开/折叠文件夹）
     }
 
     createNewFile(): void {
