@@ -171,10 +171,6 @@ class TabManager {
         }
     }
 
-    openFile(fileName: string, content: string = '', isNew: boolean = false, filePath: string | null = null): void {
-        // 实际的标签打开逻辑将在后续批次完善
-    }
-
     getGroupTabCount(groupId: string): number {
         if (!groupId) return 0;
         const group = this.groups.get(groupId);
@@ -401,6 +397,145 @@ class TabManager {
 
     private getDropTargetInfo(tabBar: HTMLElement, e: DragEvent): { targetIndex: number } {
         return { targetIndex: 0 };
+    }
+
+    closeTab(fileName: string | null, options: Record<string, unknown> = {}): void {
+        if (!fileName) return;
+        const tabData = this.tabs.get(fileName) as Record<string, unknown> | undefined;
+        if (!tabData) return;
+
+        const explicitKey = (options.explicitKey as string | undefined);
+        const uniqueKey = explicitKey || tabData.uniqueKey || this.findUniqueKeyByFileName(fileName);
+        const skipAutoSave = options.skipAutoSave === true;
+
+        // Prompt if tab has unsaved modifications
+        if (tabData.modified && !this.isDiscardCloseInProgress() && !tabData.isTempFile && tabData.viewType !== 'pdf') {
+            const message = `文件 “${fileName}” 有未保存修改。关闭将自动保存这些修改并关闭标签页，是否继续？`;
+            let confirmed = false;
+            if (window.dialogManager?.showConfirmDialog) {
+                window.dialogManager.showConfirmDialog('确认关闭标签页', message)
+                    .then((result) => { if (result) confirmed = true; })
+                    .catch((e) => logWarn('关闭标签页确认弹窗失败:', e));
+            } else {
+                confirmed = window.confirm(message);
+            }
+            if (!confirmed) return;
+        }
+
+        Promise.resolve(this.unregisterFileWatchForTab(tabData)).catch((error) => {
+            try { logWarn('TabManager: 移除文件监听失败:', error); } catch (_) { }
+        });
+
+        // Auto-save before closing
+        if (!skipAutoSave && !tabData.isTempFile && tabData.viewType !== 'pdf') {
+            try {
+                const pathRaw = tabData.filePath as string | null;
+                const content = this.getTabContentForSave(tabData);
+                const pathStr = (pathRaw as string) || '';
+                if (pathRaw && typeof content === "string" && window.electronAPI?.saveAsFile && !this.isCloudPath(pathRaw)) {
+                    window.electronAPI.saveAsFile(content, pathStr)
+                        .then(() => {
+                            if (this.markTabAsSavedByUniqueKey) {
+                                this.markTabAsSavedByUniqueKey(pathStr.replace(/\\/g, "/"));
+                            } else if (fileName) {
+                                this.markTabAsSaved(fileName);
+                            }
+                        })
+                        .catch((e) => logWarn('关闭前自动保存失败:', e));
+                }
+            } catch (e) { logWarn('关闭前自动保存异常:', e); }
+        }
+
+        // Clean up view containers
+        if (tabData.viewType === 'pdf') {
+            const viewerContainer = tabData.viewerContainer as Node | null;
+            if (viewerContainer && viewerContainer.parentNode) {
+                viewerContainer.parentNode.removeChild(viewerContainer);
+                tabData.viewerContainer = null;
+            }
+        } else if (tabData.viewType === 'markdown-preview') {
+            const previewContainer = tabData.previewContainer as Node | null;
+            if (previewContainer && previewContainer.parentNode) {
+                previewContainer.parentNode.removeChild(previewContainer);
+                tabData.previewContainer = null;
+            }
+        } else if (tabData.viewType === 'browser') {
+            const bm = window.browserManager as { destroyBrowserTab?: (key: string) => void } | undefined;
+            if (bm && typeof bm.destroyBrowserTab === 'function' && uniqueKey) {
+                bm.destroyBrowserTab(uniqueKey as string);
+            }
+        } else if (tabData.tabId && window.monacoEditorManager) {
+            // monacoEditorManager.disposeEditor would be here
+        }
+
+        // Remove tab from map and groups
+        this.tabs.delete(fileName);
+        const groupId = tabData.groupId as string | undefined;
+        if (groupId) {
+            const relatedGroup = this.groups.get(groupId) as Record<string, unknown> | undefined;
+            if (relatedGroup && relatedGroup.activeTabKey === uniqueKey) {
+                relatedGroup.activeTabKey = null;
+            }
+        }
+
+        // Remove tab element from DOM
+        if (tabData.element) {
+            const el = tabData.element as Node | null;
+            if (el && el.parentNode) {
+                el.parentNode.removeChild(el);
+                tabData.element = null;
+            }
+        }
+    }
+
+    private findUniqueKeyByFileName(fileName: string): string | null {
+        for (const [key, data] of this.tabs) {
+            if (data && typeof data === 'object' && (data as Record<string, unknown>).fileName === fileName) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    private unregisterFileWatchForTab(tabData: Record<string, unknown>): Promise<void> {
+        return Promise.resolve();
+    }
+
+    private markTabAsSaved(fileName: string): void {
+        const tabData = this.tabs.get(fileName) as Record<string, unknown> | undefined;
+        if (tabData) tabData.modified = false;
+    }
+
+    private markTabAsSavedByUniqueKey(uniqueKey: string): void {
+        for (const [, data] of this.tabs) {
+            if (data && typeof data === 'object' && (data as Record<string, unknown>).uniqueKey === uniqueKey) {
+                (data as Record<string, unknown>).modified = false;
+            }
+        }
+    }
+
+    private getTabContentForSave(tabData: Record<string, unknown>): string {
+        return typeof tabData.content === 'string' ? tabData.content : '';
+    }
+
+    private getFallbackTabKeyWithinGroup(groupId: string, uniqueKey: string): string | null {
+        return null;
+    }
+
+    private isDiscardCloseInProgress(): boolean {
+        return false;
+    }
+
+    private isCloudPath(p: string | null): boolean {
+        if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
+            return window.oicppApp.isCloudFilePath(p);
+        }
+        return typeof p === 'string' && /^cloud:/i.test(p);
+    }
+
+    private openFile(fileName: string | null, content?: string): void {
+        // Placeholder - will be fully implemented in later batch
+        if (!fileName) return;
     }
 }
 
