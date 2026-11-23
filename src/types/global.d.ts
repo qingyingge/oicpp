@@ -30,6 +30,7 @@ interface Window {
         send?: (channel: string, ...args: unknown[]) => void;
         saveAsFile?: (content: string, filePath?: string) => Promise<unknown>;
         on?: (channel: string, listener: (...args: unknown[]) => void) => void;
+        walkDirectory?: (root: string, options?: { excludeGlobs?: string[] }) => Promise<{ success?: boolean; files?: Array<{ name: string; path: string }> }>;
     };
 
     // electronIPC
@@ -47,6 +48,7 @@ interface Window {
 
     // Sidebar
     sidebarManager?: {
+        panels?: { files?: { currentPath?: string; workspacePath?: string } };
         getPanelManager?: (name: string) => unknown;
         updateFileExplorerButtons?: () => void;
         checkResizeStatus?: () => void;
@@ -54,6 +56,7 @@ interface Window {
 
     // TabManager
     tabManager?: {
+        openFile?: (name: string, content: string, readonly: boolean, options?: { filePath?: string; viewType?: string }) => void;
         saveAllFiles?: () => Promise<{ success: boolean; failures: any[] }>;
         saveCurrentFile?: () => Promise<unknown>;
         getTabCount?: () => number;
@@ -92,6 +95,18 @@ interface Window {
     uiIcons?: {
         hydrate?: (container: HTMLElement) => void;
         svg?: unknown;
+    };
+
+    // EditorManager
+    editorManager?: {
+        openFile?: (filePath: string, content: string) => void;
+    };
+
+    // QuickOpen
+    quickOpen?: {
+        open?: () => void;
+        close?: () => void;
+        ensureIndex?: () => Promise<boolean>;
     };
 
     [key: string]: unknown;
