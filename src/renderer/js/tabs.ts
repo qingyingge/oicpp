@@ -289,6 +289,119 @@ class TabManager {
         }
         return entries.length > 0;
     }
+
+    bindTabBarEvents(tabBar: HTMLElement): void {
+        if (!tabBar || (tabBar as unknown as Record<string, unknown>)._tabBarEventsBound) return;
+        const groupId = tabBar.dataset.groupId || (tabBar.closest('.editor-group') as HTMLElement | null)?.dataset.groupId || this.activeGroupId || 'group-1';
+        tabBar.dataset.groupId = groupId;
+        this.ensureTabBarDragHandlers(tabBar);
+        if (!(tabBar as unknown as Record<string, unknown>)._horizontalWheelHandlerBound) {
+            tabBar.addEventListener('wheel', (event: WheelEvent) => {
+                if (event.altKey || event.ctrlKey || event.metaKey) return;
+                const deltaY = Number(event.deltaY) || 0;
+                const deltaX = Number(event.deltaX) || 0;
+                const scrollDelta = Math.abs(deltaY) >= 1 ? deltaY : deltaX;
+                const maxScrollLeft = Math.max(0, tabBar.scrollWidth - tabBar.clientWidth);
+                if (!scrollDelta || maxScrollLeft <= 0) return;
+                tabBar.scrollLeft += scrollDelta;
+                event.preventDefault();
+            }, { passive: false });
+            (tabBar as unknown as Record<string, unknown>)._horizontalWheelHandlerBound = true;
+        }
+        (tabBar as unknown as Record<string, unknown>)._tabBarEventsBound = true;
+    }
+
+    ensureTabBarDragHandlers(tabBar: HTMLElement): void {
+        if (!tabBar || (tabBar as unknown as Record<string, unknown>)._dragHandlersBound) return;
+        tabBar.addEventListener('dragover', (e: DragEvent) => {
+            if (this.draggedTab && this.draggedTabInfo) {
+                this.handleTabBarDragOver(e, tabBar);
+            }
+        });
+        tabBar.addEventListener('drop', (e: DragEvent) => {
+            if (this.draggedTab && this.draggedTabInfo) {
+                this.handleTabBarDrop(e, tabBar);
+            }
+        });
+        tabBar.addEventListener('dragleave', (e: DragEvent) => {
+            if (this.placeholder && this.placeholder.parentNode === tabBar) {
+                const rect = tabBar.getBoundingClientRect();
+                const x = e.clientX;
+                const y = e.clientY;
+                if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+                    const relatedTarget = e.relatedTarget as Node | null;
+                    if (relatedTarget && !tabBar.contains(relatedTarget)) { }
+                }
+            }
+        });
+        (tabBar as unknown as Record<string, unknown>)._dragHandlersBound = true;
+    }
+
+    private handleTabBarDragOver(e: DragEvent, tabBar: HTMLElement): void {
+        if (!this.draggedTab || !this.draggedTabInfo) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        const afterElement = this.getDragAfterElement(tabBar, e.clientX);
+        if (!this.placeholder) {
+            this.placeholder = document.createElement('div');
+            this.placeholder.className = 'tab-placeholder';
+            const baseWidth = this.draggedTab.offsetWidth || 140;
+            const baseHeight = this.draggedTab.offsetHeight || 35;
+            Object.assign(this.placeholder.style, {
+                width: `${baseWidth}px`,
+                height: `${baseHeight}px`,
+                backgroundColor: '#2a2d2e',
+                border: '2px dashed #0e639c',
+                opacity: '0.4',
+                boxSizing: 'border-box',
+                display: 'inline-block'
+            });
+        }
+        const currentParent = this.placeholder.parentNode;
+        if (currentParent && currentParent !== tabBar) {
+            currentParent.removeChild(this.placeholder);
+        }
+        if (afterElement == null) {
+            if (!currentParent || currentParent !== tabBar || this.placeholder.nextSibling !== null) {
+                tabBar.appendChild(this.placeholder);
+            }
+        } else if (afterElement !== this.placeholder) {
+            const nextSibling = this.placeholder.nextSibling;
+            if (nextSibling !== afterElement) {
+                tabBar.insertBefore(this.placeholder, afterElement);
+            }
+        }
+        const dropInfo = this.getDropTargetInfo(tabBar, e);
+        const targetGroupId = tabBar.dataset.groupId || this.activeGroupId || 'group-1';
+        this.lastTabDropInfo = {
+            tabBar,
+            targetGroupId,
+            targetIndex: dropInfo.targetIndex,
+        };
+    }
+
+    private handleTabBarDrop(e: DragEvent, tabBar: HTMLElement): void {
+        // Tab bar drop handled by drag-over logic
+    }
+
+    private getDragAfterElement(tabBar: HTMLElement, x: number): HTMLElement | null {
+        const tabs = Array.from(tabBar.querySelectorAll('.tab:not(.dragging)'));
+        return tabs.reduce((closest, child) => {
+            const el = child as HTMLElement;
+            const box = el.getBoundingClientRect();
+            const offset = x - box.left - box.width / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: el };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY, element: null as HTMLElement | null }).element;
+    }
+
+    private getDropTargetInfo(tabBar: HTMLElement, e: DragEvent): { targetIndex: number } {
+        return { targetIndex: 0 };
+    }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
