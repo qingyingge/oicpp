@@ -100,7 +100,7 @@ class OICPPApp {
                 this.terminalPanel = new IntegratedTerminalPanelCtor({
                     getApp: () => this
                 });
-                await (this.terminalPanel as Record<string, unknown>).init();
+                await ((this.terminalPanel as { init: () => Promise<unknown> }).init());
             }
             await this.restoreStartupWorkspaceIfNeeded();
             await this.restoreLastOpenTabs();
@@ -177,7 +177,7 @@ class OICPPApp {
 
             const menuItem = target.classList.contains('menu-dropdown-item')
                 ? target
-                : target.closest('.menu-dropdown-item');
+                : (target.closest('.menu-dropdown-item') as HTMLElement | null);
             if (!menuItem) {
                 return;
             }
@@ -287,7 +287,7 @@ class OICPPApp {
                     break;
                 }
                 if (this.compilerManager && typeof (this.compilerManager as Record<string, unknown>).cloudCompileCurrentFile === 'function') {
-                    (this.compilerManager as Record<string, unknown>).cloudCompileCurrentFile();
+                    ((this.compilerManager as Record<string, unknown>).cloudCompileCurrentFile as () => void)();
                 }
                 break;
             case 'find-replace':
@@ -345,7 +345,7 @@ class OICPPApp {
         if (typeof electronAPI.onIdeLoginUpdated === 'function') {
             (electronAPI.onIdeLoginUpdated as (cb: (payload: Record<string, unknown>) => void) => void)((payload) => {
                 this.accountLoggedIn = !!payload?.loggedIn;
-                this.accountInfo = payload?.user || null;
+                this.accountInfo = (payload?.user as Record<string, unknown> | null) ?? null;
                 this.updateAccountMenu();
                 if (payload?.message) {
                     this.showMessage(String(payload.message), payload.loggedIn ? 'success' : 'info');
@@ -371,7 +371,7 @@ class OICPPApp {
             const electronAPI = w.electronAPI as Record<string, unknown>;
             const status = await (electronAPI.getIdeLoginStatus as () => Promise<Record<string, unknown>>)();
             this.accountLoggedIn = !!status?.loggedIn;
-            this.accountInfo = status?.user || null;
+            this.accountInfo = (status?.user as Record<string, unknown> | null) ?? null;
             logInfo('[Account] 获取登录状态:', {
                 loggedIn: this.accountLoggedIn,
                 user: this.accountInfo?.username || ''
@@ -390,7 +390,7 @@ class OICPPApp {
         try {
             const w = window as unknown as { sidebarManager?: unknown };
             if (w.sidebarManager && typeof (w.sidebarManager as Record<string, unknown>).setCloudPanelVisible === 'function') {
-                (w.sidebarManager as Record<string, unknown>).setCloudPanelVisible(this.accountLoggedIn);
+                ((w.sidebarManager as Record<string, unknown>).setCloudPanelVisible as (visible: boolean) => void)(this.accountLoggedIn);
             }
         } catch (error) {
             logWarn('更新云同步面板可见性失败:', error);
