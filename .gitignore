@@ -1,0 +1,11 @@
+# tsc emit products (.ts is hand-written source, .js is generated)
+src/**/*.js
+
+# dependencies
+node_modules/
+
+# npm
+.npmrc
+
+# build output
+dist/
