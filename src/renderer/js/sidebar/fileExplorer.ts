@@ -678,6 +678,61 @@ class FileExplorer {
         return null;
     }
 
+    // ========== 批次 4：拖放状态辅助 ==========
+
+    private _clearDraggingItems(): void {
+        for (const item of this._draggingItems) {
+            item?.classList.remove('dragging');
+        }
+        this._draggingItems.clear();
+    }
+
+    private _applyDragHover(fileTree: HTMLElement): void {
+        const target = this._pendingDragOverTarget;
+        const nextItem = target && target.dataset?.type === 'folder' && fileTree.contains(target) ? target : null;
+        if (this._dragOverItem !== nextItem) {
+            this._dragOverItem?.classList.remove('drag-over');
+            nextItem?.classList.add('drag-over');
+            this._dragOverItem = nextItem;
+        }
+        fileTree.classList.toggle('drag-over-root', this._pendingDragOverRoot && !nextItem);
+    }
+
+    private _scheduleDragHover(fileTree: HTMLElement, targetItem: HTMLElement | null): void {
+        this._pendingDragOverTarget = targetItem;
+        this._pendingDragOverRoot = !targetItem;
+        if (this._dragHoverFrame !== null) return;
+        const requestFrame = typeof window.requestAnimationFrame === 'function'
+            ? window.requestAnimationFrame.bind(window)
+            : (callback: () => void) => setTimeout(callback, 0);
+        this._dragHoverFrame = requestFrame(() => {
+            this._dragHoverFrame = null;
+            this._applyDragHover(fileTree);
+        });
+    }
+
+    private _clearDragIndicators(fileTree: HTMLElement): void {
+        if (this._dragHoverFrame !== null) {
+            if (typeof window.cancelAnimationFrame === 'function') {
+                window.cancelAnimationFrame(this._dragHoverFrame);
+            } else {
+                clearTimeout(this._dragHoverFrame);
+            }
+            this._dragHoverFrame = null;
+        }
+        this._dragOverItem?.classList.remove('drag-over');
+        this._dragOverItem = null;
+        this._pendingDragOverTarget = null;
+        this._pendingDragOverRoot = false;
+        fileTree.classList.remove('drag-over-root');
+    }
+
+    private _clearDragState(fileTree: HTMLElement): void {
+        this._clearDragIndicators(fileTree);
+        this._clearDraggingItems();
+        this.isDragging = false;
+    }
+
     searchFiles(_query: string): void {
         // 批次 5 实现
     }
