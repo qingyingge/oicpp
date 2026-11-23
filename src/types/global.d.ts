@@ -33,6 +33,10 @@ interface Window {
         walkDirectory?: (root: string, options?: { excludeGlobs?: string[] }) => Promise<{ success?: boolean; files?: Array<{ name: string; path: string }> }>;
         getAllSettings?: () => Promise<Record<string, unknown>>;
         updateSettings?: (settings: Record<string, unknown>) => Promise<{ success?: boolean; error?: string }>;
+        getLanguage?: () => Promise<string>;
+        getLanguageFile?: (lang: string) => Promise<Record<string, unknown> | null>;
+        onLanguageChanged?: (cb: (langCode: string) => void) => void;
+        getAvailableLanguages?: () => Promise<string[]>;
     };
 
     // electronIPC
@@ -48,6 +52,7 @@ interface Window {
         t?: (key: string, params?: Record<string, unknown>) => string;
         _applyToDOM?: () => void;
     };
+    __?: (key: string, params?: Record<string, unknown>) => string;
 
     // Sidebar
     sidebarManager?: {
