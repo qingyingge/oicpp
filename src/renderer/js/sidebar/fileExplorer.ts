@@ -304,12 +304,125 @@ class FileExplorer {
         this.renderFileTree();
     }
 
-    createNewFile(): void {
-        // 批次 3 实现
+    async createNewFile(): Promise<void> {
+        if (!this.hasWorkspace) {
+            logInfo('没有工作区，无法创建文件');
+            return;
+        }
+
+        try {
+            const dm = window.dialogManager as {
+                showNewFileDialog?: (msg: string, defaultName: string) => Promise<unknown>;
+                showNewFolderDialog?: () => Promise<unknown>;
+            } | undefined;
+            if (!dm || typeof dm.showNewFileDialog !== 'function') {
+                this.showMessage('对话框不可用，无法创建文件', 'error');
+                return;
+            }
+
+            const fileName = await dm.showNewFileDialog('', 'untitled.cpp');
+            if (!fileName || typeof fileName !== 'string') return;
+
+            const trimmed = fileName.trim();
+            const validation = this.validateFileName(trimmed);
+            if (!validation.valid) {
+                this.showMessage(validation.error, 'error');
+                return;
+            }
+
+            let name = trimmed;
+            if (!name.includes('.')) {
+                name = name + '.cpp';
+            }
+
+            const filePath = this.currentPath + '/' + name;
+            if (this.files.some((f) => f.path === filePath)) {
+                this.showMessage(`文件 "${name}" 已存在`, 'error');
+                return;
+            }
+
+            const ipc = window.electronIPC;
+            if (!ipc) {
+                this.showMessage('文件创建功能需要在完整应用环境中运行', 'error');
+                return;
+            }
+
+            const defaultContent = '';
+            ipc.send('create-file', filePath, defaultContent);
+
+            const handler = (_event: unknown, createdPath: unknown, error: unknown) => {
+                if (String(createdPath) === filePath) {
+                    if (error) {
+                        this.showMessage(`创建文件失败: ${String(error)}`, 'error');
+                    } else {
+                        this.refresh();
+                        if (window.tabManager?.openFile) {
+                            window.tabManager.openFile(name, defaultContent, false, { filePath });
+                        }
+                    }
+                }
+            };
+            window.electronIPC.on('file-created', handler);
+        } catch (error) {
+            logError('创建文件时出错:', error);
+            this.showMessage(`创建文件失败: ${String(error)}`, 'error');
+        }
     }
 
-    createNewFolder(): void {
-        // 批次 3 实现
+    async createNewFolder(): Promise<void> {
+        if (!this.hasWorkspace) {
+            logInfo('没有工作区，无法创建文件夹');
+            return;
+        }
+
+        try {
+            const dm = window.dialogManager as {
+                showNewFileDialog?: (msg: string, defaultName: string) => Promise<unknown>;
+                showNewFolderDialog?: () => Promise<unknown>;
+            } | undefined;
+            if (!dm || typeof dm.showNewFolderDialog !== 'function') {
+                this.showMessage('对话框不可用，无法创建文件夹', 'error');
+                return;
+            }
+
+            const folderName = await dm.showNewFolderDialog();
+            if (!folderName || typeof folderName !== 'string') return;
+
+            const trimmed = folderName.trim();
+            const validation = this.validateFileName(trimmed);
+            if (!validation.valid) {
+                this.showMessage(validation.error, 'error');
+                return;
+            }
+
+            const folderPath = this.currentPath + '/' + trimmed;
+            if (this.files.some((f) => f.path === folderPath)) {
+                this.showMessage(`文件夹 "${trimmed}" 已存在`, 'error');
+                return;
+            }
+
+            const ipc = window.electronIPC;
+            if (!ipc) {
+                this.showMessage('文件夹创建功能需要在完整应用环境中运行', 'error');
+                return;
+            }
+
+            ipc.send('create-folder', folderPath);
+
+            const handler = (_event: unknown, createdPath: unknown, error: unknown) => {
+                if (String(createdPath) === folderPath) {
+                    if (error) {
+                        this.showMessage(`创建文件夹失败: ${String(error)}`, 'error');
+                    } else {
+                        this.refresh();
+                    }
+                }
+            };
+            window.electronIPC.on('folder-created', handler);
+        } catch (error) {
+            logError('创建文件夹时出错:', error);
+            this.showMessage(`创建文件夹失败: ${String(error)}`, 'error');
+        }
     }
 
     renameFile(_file: FileEntry): void {
