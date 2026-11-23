@@ -61,6 +61,17 @@ interface Window {
         clipboardWriteText?: (text: string) => Promise<{ success?: boolean }>;
         clipboardReadText?: () => Promise<{ success?: boolean; text?: string }>;
         pathDirname?: (p: string) => Promise<string>;
+        // Compiler download
+        downloadCompiler?: (opts: { url: string; version: string; name: string }) => Promise<{ success?: boolean; compilerPath?: string; error?: string }>;
+        selectCompiler?: (version: string) => Promise<{ success?: boolean; compilerPath?: string; error?: string }>;
+        downloadTestlib?: (opts: { url: string; version: string; name: string }) => Promise<{ success?: boolean; testlibPath?: string; error?: string }>;
+        selectTestlib?: (version: string) => Promise<{ success?: boolean; testlibPath?: string; error?: string }>;
+        getDownloadedCompilers?: () => Promise<string[]>;
+        getDownloadedTestlibs?: () => Promise<string[]>;
+        isCompilerSelected?: (path: string) => Promise<boolean>;
+        isTestlibSelected?: (version: string) => Promise<boolean>;
+        saveSetting?: (key: string, value: string) => Promise<unknown>;
+        runCommandVersionProbe?: (cmd: string, args: string[], options?: { env?: Record<string, string>; timeoutMs?: number }) => Promise<{ ok: boolean; output: string; message: string }>;
     };
 
     // electronIPC
@@ -195,6 +206,14 @@ interface Window {
 
     // IntegratedTerminalPanel
     IntegratedTerminalPanel?: unknown;
+
+    // Compiler settings
+    compilerSettings?: {
+        compilerPath?: string;
+        pythonInterpreterPath?: string;
+        compilerArgs?: string;
+        runMode?: string;
+    };
 
     [key: string]: unknown;
 }
