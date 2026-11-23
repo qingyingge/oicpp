@@ -320,8 +320,36 @@ class FileExplorer {
         // 批次 3 实现
     }
 
-    selectFile(_filePath: string): void {
-        // 批次 3 实现
+    selectFile(filePath: string): void {
+        if (!filePath) return;
+
+        const file = this.files.find((f) => f.path === filePath);
+        if (!file) return;
+
+        this.selectedFiles.clear();
+        this.selectedFiles.set(file.path, file);
+        this.selectedFile = file;
+
+        this.applySelectionStyles();
+
+        const item = this._treeItemsByPath.get(file.path);
+        if (item) {
+            item.setAttribute('tabindex', '0');
+            item.focus();
+        }
+
+        logInfo('选择文件:', file.name);
+    }
+
+    private applySelectionStyles(): void {
+        const fileTree = this._fileTree || document.querySelector<HTMLElement>('.file-tree');
+        if (!fileTree) return;
+        const selectedPaths = new Set(this.selectedFiles.keys());
+        fileTree.querySelectorAll('.tree-item').forEach((item) => {
+            const el = item as HTMLElement;
+            const isSelected = selectedPaths.has(el.dataset?.path ?? '');
+            el.classList.toggle('selected', isSelected);
+        });
     }
 
     copyFile(): void {
@@ -348,8 +376,29 @@ class FileExplorer {
         // 批次 3 实现（由 sidebar.ts 调用）
     }
 
-    openFile(_file: FileEntry): void {
-        // 批次 3 实现
+    async openFile(file: FileEntry): Promise<void> {
+        if (file.type !== 'file') return;
+
+        logInfo('打开文件:', file.name);
+
+        const api = window.electronAPI;
+        if (!api?.readFileContent) {
+            logWarn('electronAPI.readFileContent 不可用');
+            return;
+        }
+
+        try {
+            const content = await api.readFileContent(file.path);
+            const tabManager = window.tabManager;
+            if (tabManager?.openFile) {
+                tabManager.openFile(file.name, content, false, { filePath: file.path });
+            } else {
+                logWarn('tabManager 不可用，无法打开文件');
+            }
+        } catch (error) {
+            logError('读取文件失败:', error);
+            this.showMessage(`无法读取文件: ${String(error)}`, 'error');
+        }
     }
 
     activate(): void {
