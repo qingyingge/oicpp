@@ -223,9 +223,9 @@ class TitlebarManager {
 
     async _confirmTemporaryFilesBeforeClose() {
         const tempFiles = Array.from(window.tabManager?.tabs?.values?.() || [])
-            .filter((tab) => tab?.isTempFile && tab.viewType !== 'pdf');
+            .filter((tab) => (tab as { isTempFile?: boolean; viewType?: string })?.isTempFile && (tab as { viewType?: string })?.viewType !== 'pdf');
         for (const tab of tempFiles) {
-            const fileName = tab.fileName || '临时文件';
+            const fileName = (tab as { fileName?: string })?.fileName || '临时文件';
             const result = await window.dialogManager?.showActionDialog?.(
                 '确认丢弃临时文件',
                 `临时文件“${fileName}”未保存。\n\n请选择如何处理临时文件。`,

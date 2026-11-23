@@ -91,6 +91,7 @@ interface Window {
     // uiIcons
     uiIcons?: {
         hydrate?: (container: HTMLElement) => void;
+        svg?: unknown;
     };
 
     [key: string]: unknown;
