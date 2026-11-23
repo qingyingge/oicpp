@@ -1,3 +1,5 @@
+export {};
+
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = require('electron');
 const http = require('http');
 const https = require('https');
@@ -166,7 +168,7 @@ const SETTINGS_ALLOWED_KEYS = new Set([
     'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'runAllSamples'
 ]);
 
-function sanitizeIncomingSettings(payload) {
+function sanitizeIncomingSettings(payload: Record<string, unknown>): Partial<ReturnType<typeof getDefaultSettings>> {
     const result = {};
     const rejected = [];
     for (const key of Object.keys(payload || {})) {
@@ -386,7 +388,7 @@ function shouldUseAsciiTempCompileFile(inputFile) {
 function resolveClangdRootFromBundle() {
     const platformKey = getClangdPlatformKey();
     const bundled = app.isPackaged
-        ? path.join(process.resourcesPath, 'clangd')
+        ? path.join((process as unknown as { resourcesPath: string }).resourcesPath, 'clangd')
         : path.join(__dirname, '..', 'build', 'clangd', platformKey);
     if (bundled && fs.existsSync(bundled)) {
         return bundled;
@@ -803,6 +805,12 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
 }
 
 class ClangdLspManager {
+    proc: { kill?: (signal?: string) => void; on?: (event: string, listener: (...args: unknown[]) => void) => void; once?: (event: string, listener: (...args: unknown[]) => void) => void; stdin?: { write: (data: string, encoding?: string) => void; end?: () => void }; stderr?: { on: (event: string, listener: (data: unknown) => void) => void }; stdout?: { on: (event: string, listener: (data: unknown) => void) => void }; pid?: number } | null = null;
+    buffer: Buffer = Buffer.alloc(0);
+    pending: Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void; method?: string }> = new Map();
+    nextId: number = 1;
+    procGeneration: number = 0;
+
     constructor() {
         this.proc = null;
         this.buffer = Buffer.alloc(0);
@@ -815,7 +823,11 @@ class ClangdLspManager {
         return !!this.proc;
     }
 
-    async start(options = {}) {
+    async start(options: {
+        compilerPath?: string;
+        fallbackFlags?: string[];
+        clangdArgs?: string[];
+    } = {}) {
         if (this.proc) {
             logInfo('[LSP] clangd 已在运行中，复用了现有进程');
             return { ok: true, alreadyRunning: true };
@@ -976,7 +988,7 @@ class ClangdLspManager {
         });
         this.pending.clear();
 
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
             let settled = false;
             const finish = () => {
                 if (settled) return;
@@ -1211,8 +1223,19 @@ function sendLoginHtml(res, title, message, statusCode = 200) {
     }
 }
 
-function verifyIdeLoginToken(payload) {
-    return new Promise((resolve, reject) => {
+interface VerifyIdeLoginResult {
+    success?: boolean;
+    code?: number | string;
+    error?: string;
+    message?: string;
+    user?: { username?: string };
+    access_token?: string;
+    login_token?: string;
+    token?: string;
+}
+
+function verifyIdeLoginToken(payload: Record<string, unknown>): Promise<VerifyIdeLoginResult> {
+    return new Promise<VerifyIdeLoginResult>((resolve, reject) => {
         const body = JSON.stringify(payload || {});
         const req = https.request(`${AUTH_BASE}${AUTH_VERIFY_PATH}`, {
             method: 'POST',
@@ -1616,7 +1639,7 @@ async function handleWatcherEvent(key, eventType) {
     }
 }
 
-function markLocalSave(filePath, state = {}) {
+function markLocalSave(filePath, state: { exists?: boolean; fingerprint?: string; mtimeMs?: number } = {}) {
     const normalized = normalizeWatchKey(filePath);
     if (!normalized) return;
     const entry = fileWatchRegistry.get(normalized.key);
@@ -1732,6 +1755,7 @@ function getDefaultSettings() {
 
     return {
         compilerPath: '',
+        gdbPath: '',
         pythonInterpreterPath: '',
         compilerArgs,
         runMode: normalizeRunModeForPlatform('popup'),
@@ -1740,6 +1764,8 @@ function getDefaultSettings() {
         fontSize: 14,
         terminalFontSize: 14,
         terminalStartupCommand: '',
+        consoleTerminalTemplate: '',
+        debugConsoleTerminal: '',
         syntaxCheckEnabled: true,
         lineHeight: 0,
         theme: 'dark',
@@ -2457,7 +2483,7 @@ async function ensureConsolePauserExecutable(compilerPath) {
             PATH: [...getCompilerRuntimeBinPaths(compilerPath), process.env.PATH || ''].join(path.delimiter)
         };
 
-        return new Promise((resolve) => {
+        return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
             const child = spawn(compilerPath, args, {
                 cwd: oicppDir,
                 stdio: ['ignore', 'pipe', 'pipe'],
@@ -2977,7 +3003,7 @@ function createWindow() {
 
 
 function createMenuBar() {
-    const defaultKeybindings = getDefaultSettings().keybindings || {};
+    const defaultKeybindings: Record<string, string> = getDefaultSettings().keybindings || {};
     const activeKeybindings = (settings && settings.keybindings && typeof settings.keybindings === 'object')
         ? settings.keybindings
         : {};
@@ -3836,9 +3862,9 @@ function setupIPC() {
     ipcMain.handle('lsp-request', async (_event, method, params) => {
         logInfo('[LSP] 请求: ' + method);
         try {
-            const result = await clangdLspManager.request(method, params || {});
+            const result = (await clangdLspManager.request(method, params || {})) as unknown as { capabilities?: unknown; serverInfo?: { name?: string; version?: string } };
             if (method === 'initialize') {
-                const caps = result?.capabilities;
+                const caps = result?.capabilities as { semanticTokensProvider?: { legend?: { tokenTypes?: unknown[]; tokenModifiers?: unknown[] } } } | undefined;
                 const version = result?.serverInfo?.version || '?';
                 logInfo('[LSP] 初始化完成, 服务器:', result?.serverInfo?.name || 'clangd', '版本:', version);
                 if (caps?.semanticTokensProvider) {
@@ -4000,7 +4026,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('open-path', async (_event, targetPath, options = {}) => {
+    ipcMain.handle('open-path', async (_event, targetPath, options: { reveal?: boolean; highlight?: boolean } = {}) => {
         try {
             if (!targetPath || typeof targetPath !== 'string') {
                 throw new Error('无效的路径');
@@ -4283,7 +4309,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('debug-expand-variable', (event, variableName, options = {}) => {
+    ipcMain.on('debug-expand-variable', (event, variableName, options: { path?: string[]; cacheKey?: string; append?: boolean } = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.expandVariable(variableName, options).then((result) => {
                 event.reply('debug-output', { message: `已展开变量: ${variableName}`, type: 'info' });
@@ -4308,7 +4334,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('debug-load-more-variable', (event, variableName, options = {}) => {
+    ipcMain.on('debug-load-more-variable', (event, variableName, options: { path?: string[]; cacheKey?: string; append?: boolean } = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             const nextOptions = { ...options, append: true };
             gdbDebugger.expandVariable(variableName, nextOptions).then((result) => {
@@ -4579,7 +4605,7 @@ function setupIPC() {
             }
 
             zip = new StreamZip.async({ file: zipPath });
-            const entries = await zip.entries();
+            const entries = (await zip.entries()) as Array<{ isDirectory: boolean; size: number }>;
             const allowedExts = new Set(['.in', '.out', '.ans', '.txt', '.input', '.output']);
             const files = [];
             // 超过 8MB 的样例不再整体读入内存（20MB 的 .in 会把 IPC 和渲染进程拖垮），
@@ -4808,7 +4834,7 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('walk-directory', async (event, dirPath, options = {}) => {
+    ipcMain.handle('walk-directory', async (event, dirPath, options: { includeExts?: string[]; excludeGlobs?: string[]; maxFiles?: number } = {}) => {
         const {
             includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'],
             excludeGlobs = ['node_modules', '.git', '.oicpp', '.vscode', '.dsym'],
@@ -5124,10 +5150,7 @@ function setupIPC() {
             if (options && typeof options === 'object') {
                 assertExecutableAllowed(options.executablePath);
             }
-            const result = await runExecutable(options);
-            if (result && typeof result === 'object') {
-                return result;
-            }
+            await runExecutable(options);
             return { success: true };
         } catch (error) {
             throw error;
@@ -5265,7 +5288,7 @@ function setupIPC() {
                 ? effectiveMemoryLimitMb * 1024 * 1024
                 : 0;
 
-            const readMemoryBytes = () => new Promise((resolve) => {
+            const readMemoryBytes = () => new Promise<number>((resolve) => {
                 const pid = childProcess?.pid;
                 if (!pid) return resolve(0);
                 if (process.platform === 'linux') {
@@ -5537,7 +5560,7 @@ function setupIPC() {
         });
     });
 
-    ipcMain.handle('run-interactive', async (event, options = {}) => {
+    ipcMain.handle('run-interactive', async (event, options: { contestantExecutablePath?: string; graderExecutablePath?: string; inputFilePath?: string; timeLimit?: number; memoryLimit?: number; contestantWorkingDirectory?: string; graderWorkingDirectory?: string } = {}) => {
         const { spawn } = require('child_process');
         const contestantPath = options?.contestantExecutablePath;
         const graderPath = options?.graderExecutablePath;
@@ -5657,7 +5680,7 @@ function setupIPC() {
                 killTimer = null;
             };
 
-            const readMemory = () => new Promise((done) => {
+            const readMemory = () => new Promise<number>((done) => {
                 const pid = contestant?.pid;
                 if (!pid) return done(0);
                 if (process.platform === 'linux') {
@@ -6196,7 +6219,7 @@ function setupIPC() {
                     logError('[编译器下载] 页面加载失败:', errorCode, errorDescription);
                 });
 
-                function updateProgress(message, percent = null, speed = null) {
+                function updateProgress(message: string, percent?: number | null, speed?: string | null) {
                     try {
                         if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
                             progressWindow.webContents.executeJavaScript(`
@@ -6291,7 +6314,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error('7z 解压工具不可用，请联网安装依赖或改用zip包');
                     }
-                    await new Promise((resolve, reject) => {
+                    await new Promise<void>((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6598,7 +6621,7 @@ function setupIPC() {
                     logError('[testlib下载] 页面加载失败:', errorCode, errorDescription);
                 });
 
-                function updateProgress(message, percent = null, speed = null) {
+                function updateProgress(message: string, percent?: number | null, speed?: string | null) {
                     try {
                         if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
                             progressWindow.webContents.executeJavaScript(`
@@ -6688,7 +6711,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error('7z 解压工具不可用，请联网安装依赖或改用zip包');
                     }
-                    await new Promise((resolve, reject) => {
+                    await new Promise<void>((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6809,13 +6832,13 @@ function setupIPC() {
 
             let compilerArgs = '-std=c++17';
 
-            const compileResult = await compileFile({
+            const compileResult = (await compileFile({
                 inputFile: testCppFile,
                 outputFile: testExeFile,
                 compilerPath: compilerPath,
                 compilerArgs: compilerArgs,
                 workingDirectory: testDir
-            });
+            })) as unknown as { success: boolean; stderr?: string };
 
             if (!compileResult.success) {
                 return { success: false, message: '编译测试代码失败。', details: compileResult.stderr };
@@ -6991,7 +7014,7 @@ async function readFileContent(filePath) {
             throw new Error('不支持的二进制文件');
         }
 
-        const encoding = detectEncoding(buffer);
+        const encoding = detectEncoding(buffer) as string;
         if (encoding === 'gbk' || encoding === 'gb2312') {
             const iconv = require('iconv-lite');
             return iconv.decode(buffer, 'gbk');
@@ -7637,7 +7660,7 @@ function promptLinuxManualInstall(pendingUpdate) {
     }).catch(() => { });
 }
 
-async function downloadAndInstallUpdate(updateInfo = null, options = {}) {
+async function downloadAndInstallUpdate(updateInfo = null, options: { isManual?: boolean } = {}) {
     try {
         logInfo('=== 开始下载安装程序(静默) ===');
         const isManual = !!options.isManual;
@@ -8068,7 +8091,7 @@ function scheduleNextUpdateCheck(delayMs = UPDATE_CHECK_INTERVAL_MS) {
 async function checkDailyUpdate() {
     if (hasPendingUpdateToInstall()) {
         logInfo('已有待安装更新，停止自动检查更新直到安装完成');
-        return;
+        return undefined;
     }
 
     const lastCheckTimestamp = getLastUpdateCheckTimestamp();
@@ -8079,7 +8102,7 @@ async function checkDailyUpdate() {
     logInfo('启动时检查更新...');
     logInfo('上次检查时间:', lastCheckTimestamp > 0 ? new Date(lastCheckTimestamp).toISOString() : '从未检查');
 
-    return new Promise(resolve => {
+    return new Promise<void>(resolve => {
         setTimeout(async () => {
             try {
                 if (lastCheckTimestamp > 0 && elapsed < UPDATE_CHECK_INTERVAL_MS) {
@@ -8188,9 +8211,9 @@ function loadSettings() {
                 ? normalizeCompilerArgsForPlatform(settings.compilerArgs, 'darwin')
                 : settings.compilerArgs;
             const normalizedCompileAndRunShortcut = 'Ctrl+F11';
-            const existingKeybindings = settings.keybindings && typeof settings.keybindings === 'object'
+            const existingKeybindings = (settings.keybindings && typeof settings.keybindings === 'object'
                 ? settings.keybindings
-                : {};
+                : {}) as Record<string, string>;
             const existingCompileAndRun = typeof existingKeybindings.compileAndRun === 'string'
                 ? existingKeybindings.compileAndRun.trim()
                 : '';
@@ -8201,7 +8224,7 @@ function loadSettings() {
                 settings.keybindings = {
                     ...existingKeybindings,
                     compileAndRun: normalizedCompileAndRunShortcut
-                };
+                } as ReturnType<typeof getDefaultSettings>['keybindings'];
             }
 
             if (settings.runMode !== normalizedRunMode || settings.compilerArgs !== normalizedCompilerArgs || shouldMigrateCompileAndRun) {
@@ -8765,7 +8788,7 @@ async function compileFile(options) {
         ]);
         const libraryEnvValue = mergeEnvPathValue(libraryCandidates, process.env.LIBRARY_PATH);
 
-        const compilerEnv = {
+        const compilerEnv: Record<string, string | undefined> = {
             ...process.env,
             PATH: envPath,
             MINGW_PREFIX: compilerRoot
@@ -9153,7 +9176,7 @@ async function runExecutable(options) {
             child.unref(); // 允许父进程退出而不等待子进程
             child.on('error', (error) => {
                 try {
-                    let diag = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
+                    let diag: { message: string; code?: string | number; errno?: number; syscall?: string; targetMode?: string; size?: number; targetExists?: boolean; command?: string; args?: string[]; cwd?: string } = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
                     try {
                         if (fs.existsSync(executablePath)) {
                             const st = fs.statSync(executablePath);
@@ -9383,7 +9406,7 @@ function isSupportedExternalFile(filePath) {
     }
 }
 
-function extractSupportedFilesFromArgs(args = [], options = {}) {
+function extractSupportedFilesFromArgs(args: unknown[] = [], options: { workingDirectory?: string } = {}) {
     const results = [];
     if (!Array.isArray(args)) {
         return results;
@@ -9471,7 +9494,7 @@ function extractSupportedFilesFromArgs(args = [], options = {}) {
     return results;
 }
 
-function extractOpenTargetsFromArgs(args = [], options = {}) {
+function extractOpenTargetsFromArgs(args: unknown[] = [], options: { workingDirectory?: string } = {}) {
     const targets = { files: [], folders: [] };
     if (!Array.isArray(args)) {
         return targets;
@@ -9864,7 +9887,7 @@ function buildCloudSyncSignature({ loginToken, method, path, timestamp, nonce, b
     return crypto.createHmac('sha256', loginToken).update(payload).digest('hex');
 }
 
-async function callCloudSyncApi(options = {}) {
+async function callCloudSyncApi(options: { method?: string; path?: string; query?: Record<string, unknown>; body?: unknown } = {}) {
     const loginToken = getLoginToken();
     if (!loginToken) {
         return { ok: false, status: 401, error: '未登录' };
@@ -10211,7 +10234,10 @@ async function syncSettingsFromCloud() {
         return infoResult;
     }
 
-    const info = infoResult.info;
+    const info = ('info' in infoResult && infoResult.info) ? infoResult.info : null;
+    if (!info || typeof info !== 'object') {
+        return { success: false, error: 'NO_BACKUP' };
+    }
     const downloadResult = await callCloudSyncApi({
         method: 'GET',
         path: '/cloudSync/download',
@@ -10442,7 +10468,7 @@ async function sendHeartbeat(type = 'heartbeat', username = '') {
             }
         } catch (_) { }
 
-        const data = {
+        const data: { type: string; token: string; version: string; login_token?: string; username?: string; device_name?: string; cpu_id?: string } = {
             type: type,
             token: token,
             version: currentVersion
@@ -10465,7 +10491,7 @@ async function sendHeartbeat(type = 'heartbeat', username = '') {
             },
             body: JSON.stringify(data),
             timeout: 10000 // 10秒超时
-        });
+        } as RequestInit & { timeout?: number });
 
         const result = await response.json();
         return result;
@@ -10789,7 +10815,7 @@ ipcMain.handle('save-setting', async (event, key, value) => {
     }
 });
 
-function runCommandVersionProbe(command, args = [], options = {}) {
+function runCommandVersionProbe(command: string, args: string[] = [], options: { env?: Record<string, string>; timeoutMs?: number } = {}) {
     const { spawnSync } = require('child_process');
     const env = options.env ? { ...process.env, ...options.env } : { ...process.env };
     try {
@@ -10976,7 +11002,7 @@ async function killImageWindows(imageName) {
     if (process.platform !== 'win32') return;
     try {
         const { spawn } = require('child_process');
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
             const p = spawn('taskkill', ['/F', '/IM', imageName], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 1500);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -10992,7 +11018,7 @@ async function killByExePathWindows(exePath) {
         const { spawn } = require('child_process');
         const escaped = String(exePath).replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '${escaped}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -11008,7 +11034,7 @@ async function killConsolePauserForTargetWindows(targetExePath) {
         const { spawn } = require('child_process');
         const escaped = String(targetExePath).replace(/`/g, '``').replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match 'consolepauser\\.exe$' -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -11017,7 +11043,7 @@ async function killConsolePauserForTargetWindows(targetExePath) {
     } catch (_) { }
 }
 
-async function startDebugSession(filePath, options = {}) {
+async function startDebugSession(filePath: string, options: { inferiorTTY?: string; useInputBridge?: boolean; runMode?: string; breakpoints?: Array<{ line: number } | number> } = {}) {
     try {
         logInfo('[主进程] 开始调试会话:', filePath);
         logInfo('[主进程] 调试选项:', options);
@@ -11266,8 +11292,8 @@ async function startDebugSession(filePath, options = {}) {
  * 通过 fuser 命令（回退到 /proc 扫描）找到实际打开了指定 TTY 设备的所有 PID。
  * 不能用 ps -t，因为 GDB 的 set inferior-tty 只重定向 fd，不改变控制终端。
  */
-function _resolvePidsOnTTY(ttyPath) {
-    const pids = new Set();
+function _resolvePidsOnTTY(ttyPath: string): Set<number> {
+    const pids = new Set<number>();
     if (!ttyPath) return pids;
     try {
         // 优先用 fuser，速度快且不受进程数限制

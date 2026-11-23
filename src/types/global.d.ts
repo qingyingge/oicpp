@@ -6,7 +6,7 @@ declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
 declare function decodeBufferAuto(buffer: Buffer): string;
-declare function updateProgress(channel: string, percent: number, msg?: string): void;
+declare function updateProgress(message: string, percent?: number | null, speed?: string | null): void;
 
 declare const APP_VERSION: string;
 
