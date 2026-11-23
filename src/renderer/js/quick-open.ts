@@ -120,8 +120,9 @@ async function openFile(item: QuickOpenFile): Promise<void> {
     try {
         const isPdf = item?.name?.toLowerCase?.().endsWith('.pdf');
         if (isPdf) {
-            if (window.tabManager?.openFile) {
-                await window.tabManager.openFile(item.name, '', false, { filePath: item.path, viewType: 'pdf' });
+            const tm = window.tabManager as { openFile?: (name: string, content: string, readonly: boolean, options?: { filePath?: string; viewType?: string }) => void } | undefined;
+            if (tm?.openFile) {
+                await tm.openFile(item.name, '', false, { filePath: item.path, viewType: 'pdf' });
             } else {
                 (logWarn || console.warn)('tabManager 不可用，无法打开PDF:', item?.path);
             }
@@ -130,10 +131,14 @@ async function openFile(item: QuickOpenFile): Promise<void> {
         }
         const content = await window.electronAPI.readFileContent(item.path);
         const fileName = item.name;
-        if (window.tabManager?.openFile) {
-            window.tabManager.openFile(fileName, content, false, { filePath: item.path });
-        } else if (window.editorManager?.openFile) {
-            window.editorManager.openFile(item.path, content);
+        const tm2 = window.tabManager as { openFile?: (name: string, content: string, readonly: boolean, options?: { filePath?: string }) => void } | undefined;
+        if (tm2?.openFile) {
+            tm2.openFile(fileName, content, false, { filePath: item.path });
+        } else {
+            const em = window.editorManager as { openFile?: (filePath: string, content: string) => void } | undefined;
+            if (em?.openFile) {
+                em.openFile(item.path, content);
+            }
         }
         close();
     } catch (e) {

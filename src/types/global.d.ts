@@ -31,6 +31,8 @@ interface Window {
         saveAsFile?: (content: string, filePath?: string) => Promise<unknown>;
         on?: (channel: string, listener: (...args: unknown[]) => void) => void;
         walkDirectory?: (root: string, options?: { excludeGlobs?: string[] }) => Promise<{ success?: boolean; files?: Array<{ name: string; path: string }> }>;
+        getAllSettings?: () => Promise<Record<string, unknown>>;
+        updateSettings?: (settings: Record<string, unknown>) => Promise<{ success?: boolean; error?: string }>;
     };
 
     // electronIPC
@@ -44,6 +46,7 @@ interface Window {
         init?: () => Promise<void>;
         enableAutoTranslate?: () => void;
         t?: (key: string, params?: Record<string, unknown>) => string;
+        _applyToDOM?: () => void;
     };
 
     // Sidebar
@@ -97,10 +100,15 @@ interface Window {
         svg?: unknown;
     };
 
-    // EditorManager
-    editorManager?: {
-        openFile?: (filePath: string, content: string) => void;
+    // fontDetector
+    fontDetector?: {
+        validateFont?: (font: string) => string;
     };
+
+    // applySettings / getCurrentSettings / updateSettings
+    applySettings?: (settings: Record<string, unknown>) => void;
+    getCurrentSettings?: () => Promise<Record<string, unknown>>;
+    updateSettings?: (newSettings: Record<string, unknown>) => Promise<boolean>;
 
     // QuickOpen
     quickOpen?: {
