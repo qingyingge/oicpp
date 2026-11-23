@@ -1,4 +1,13 @@
+export {};
+
 class BackupSettings {
+    settings: { autoBackupSettings: boolean; theme: string } = {
+        autoBackupSettings: false,
+        theme: 'dark'
+    };
+    _saving = false;
+    latestInfoEl: HTMLElement | null = null;
+
     constructor() {
         this.settings = {
             autoBackupSettings: false,
@@ -31,8 +40,9 @@ class BackupSettings {
 
         if (window.electronIPC && window.electronIPC.on) {
             window.electronIPC.on('settings-imported', (_event, allSettings) => {
-                if (allSettings && typeof allSettings.autoBackupSettings === 'boolean') {
-                    this.settings.autoBackupSettings = allSettings.autoBackupSettings;
+                const settings = allSettings as { autoBackupSettings?: unknown } | null;
+                if (settings && typeof settings.autoBackupSettings === 'boolean') {
+                    this.settings.autoBackupSettings = settings.autoBackupSettings;
                     this.updateUI();
                 }
             });
@@ -86,7 +96,7 @@ class BackupSettings {
             }
 
             if (allSettings) {
-                this.settings.autoBackupSettings = allSettings.autoBackupSettings === true;
+                this.settings.autoBackupSettings = (allSettings as { autoBackupSettings?: unknown }).autoBackupSettings === true;
                 if (allSettings.theme) {
                     this.applyTheme(allSettings.theme);
                 }
@@ -99,7 +109,7 @@ class BackupSettings {
     updateUI() {
         const autoBackupCheckbox = document.getElementById('auto-backup-settings');
         if (autoBackupCheckbox) {
-            autoBackupCheckbox.checked = this.settings.autoBackupSettings === true;
+            (autoBackupCheckbox as HTMLInputElement).checked = this.settings.autoBackupSettings === true;
         }
     }
 
@@ -137,7 +147,7 @@ class BackupSettings {
     collectSettings() {
         const autoBackupCheckbox = document.getElementById('auto-backup-settings');
         return {
-            autoBackupSettings: !!autoBackupCheckbox?.checked
+            autoBackupSettings: !!(autoBackupCheckbox as HTMLInputElement)?.checked
         };
     }
 

@@ -37,6 +37,10 @@ interface Window {
         getLanguageFile?: (lang: string) => Promise<Record<string, unknown> | null>;
         onLanguageChanged?: (cb: (langCode: string) => void) => void;
         getAvailableLanguages?: () => Promise<string[]>;
+        // Settings backup
+        getSettingsBackupInfo?: () => Promise<{ success?: boolean; error?: string; info?: Record<string, unknown> }>;
+        backupSettingsToCloud?: () => Promise<{ success?: boolean; error?: string }>;
+        syncSettingsFromCloud?: () => Promise<{ success?: boolean; error?: string }>;
         // LSP
         lspStart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
         lspStop?: () => Promise<unknown>;
