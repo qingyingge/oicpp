@@ -425,8 +425,58 @@ class FileExplorer {
         }
     }
 
-    renameFile(_file: FileEntry): void {
-        // 批次 3 实现
+    async renameFile(file: FileEntry): Promise<void> {
+        if (!file) {
+            logWarn('renameFile 调用时未提供有效文件');
+            return;
+        }
+
+        const name = file.name;
+        const lastDot = name.lastIndexOf('.');
+        let selectEnd = name.length;
+        if (file.type !== 'folder' && lastDot > 0) {
+            selectEnd = lastDot;
+        }
+
+        const dm = window.dialogManager as {
+            showInputDialog?: (title: string, defaultValue: string, placeholder: string, options?: { selectStart?: number; selectEnd?: number }) => Promise<unknown>;
+        } | undefined;
+        if (!dm || typeof dm.showInputDialog !== 'function') {
+            this.showMessage('对话框不可用，无法重命名', 'error');
+            return;
+        }
+
+        const newName = await dm.showInputDialog('重命名', name, '请输入新名称', { selectStart: 0, selectEnd });
+        if (!newName || typeof newName !== 'string') return;
+
+        const trimmedName = newName.trim();
+        if (!trimmedName || trimmedName === file.name) return;
+
+        const validation = this.validateFileName(trimmedName);
+        if (!validation.valid) {
+            this.showMessage(validation.error, 'error');
+            return;
+        }
+
+        const ipc = window.electronIPC;
+        if (!ipc) {
+            this.showMessage('文件重命名功能需要在完整应用环境中运行', 'error');
+            return;
+        }
+
+        ipc.send('rename-file', file.path, trimmedName);
+
+        const handler = (_event: unknown, oldPath: unknown, newPath: unknown, error: unknown) => {
+            if (String(oldPath) === file.path) {
+                if (error) {
+                    this.showMessage(`重命名失败: ${String(error)}`, 'error');
+                } else {
+                    logInfo('文件重命名成功:', file.path, '->', String(newPath));
+                    this.refresh();
+                }
+            }
+        };
+        window.electronIPC.on('file-renamed', handler);
     }
 
     deleteFile(_file: FileEntry): void {
