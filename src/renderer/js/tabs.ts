@@ -1,31 +1,32 @@
 class TabManager {
+    tabs: Map<string, unknown> = new Map();
+    groups: Map<string, unknown> = new Map();
+    groupOrder: string[] = [];
+    activeGroupId: string | null = null;
+    activeTab: unknown = null;
+    activeTabKey: string | null = null;
+    tabOrder: string[] = [];
+    monacoEditorManager: unknown = null;
+    editorGroupsElement: HTMLElement | null = null;
+    welcomeContainer: HTMLElement | null = null;
+    splitOverlay: HTMLElement | null = null;
+    groupCounter: number = 1;
+    draggedTabInfo: unknown = null;
+    draggedTab: unknown = null;
+    placeholder: HTMLElement | null = null;
+    tabDragInProgress: boolean = false;
+    lastTabDropInfo: unknown = null;
+    dropHandled: boolean = false;
+    _openingKeys: Set<string> = new Set();
+    _watchedFiles: Map<string, unknown> = new Map();
+    _fileWatchListenerBound: boolean = false;
+    _externalFileChangeUnsubscribe: (() => void) | null = null;
+    _fileWatchCleanupBound: boolean = false;
+    _tabContextMenu: unknown = null;
+    _altWheelListenerBound: boolean = false;
+    _lastAltWheelSwitchTs: number = 0;
+
     constructor() {
-        this.tabs = new Map();
-        this.groups = new Map();
-        this.groupOrder = [];
-        this.activeGroupId = null;
-        this.activeTab = null;
-        this.activeTabKey = null;
-        this.tabOrder = [];
-        this.monacoEditorManager = null;
-        this.editorGroupsElement = null;
-        this.welcomeContainer = null;
-        this.splitOverlay = null;
-        this.groupCounter = 1;
-        this.draggedTabInfo = null;
-        this.draggedTab = null;
-        this.placeholder = null;
-        this.tabDragInProgress = false;
-        this.lastTabDropInfo = null;
-        this.dropHandled = false;
-        this._openingKeys = new Set();
-        this._watchedFiles = new Map(); 
-        this._fileWatchListenerBound = false;
-        this._externalFileChangeUnsubscribe = null;
-        this._fileWatchCleanupBound = false;
-        this._tabContextMenu = null;
-        this._altWheelListenerBound = false;
-        this._lastAltWheelSwitchTs = 0;
 
         if (typeof window !== 'undefined') {
             this.handlePdfViewerMessage = this.handlePdfViewerMessage.bind(this);

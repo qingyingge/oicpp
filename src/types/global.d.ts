@@ -22,6 +22,7 @@ interface Window {
         getIdeLoginStatus?: () => Promise<{ loggedIn?: boolean; user?: { username?: string } }>;
         clipboardWriteText?: (text: string) => void;
         browserResolveUrl?: (url: string) => string;
+        readFileContent?: (filePath: string) => Promise<string>;
         onRequestSaveAll?: (cb: () => Promise<unknown>) => void;
         notifySaveAllFailed?: (d: unknown) => void;
         notifySaveAllComplete?: () => void;
@@ -58,7 +59,7 @@ interface Window {
         getTabCount?: () => number;
         showWelcomePage?: () => void;
         getUnsavedFiles?: () => unknown;
-        tabs?: Array<{ isTempFile?: boolean; viewType?: string; fileName?: string }>;
+        tabs?: Map<string, unknown>;
         getTabContentForSave?: (tab: unknown) => unknown;
         saveAsFile?: (content: string, filePath?: string) => Promise<unknown>;
     };
@@ -69,6 +70,7 @@ interface Window {
         saveCurrentFile?: () => Promise<unknown>;
         saveCurrentOpenTabs?: (tabs?: unknown) => void;
         createNewCppFile?: () => void;
+        openDroppedFile?: (filePath: string) => void;
         showMessage?: (message: string, type?: string) => void;
         getActiveFilePath?: () => string | null;
         isCloudFilePath?: (path: string) => boolean;
@@ -80,10 +82,16 @@ interface Window {
         showSpringFestivalGreeting?: (d: Date) => void;
         showConfirmDialog?: (title: string, msg: string) => Promise<void>;
         showActionDialog?: (title: string, msg: string, buttons: Array<{ id: string; label: string; className?: string }>) => Promise<unknown>;
+        showError?: (title: string, msg: string) => void;
     };
 
     // Titlebar
     titlebarManager?: unknown;
+
+    // uiIcons
+    uiIcons?: {
+        hydrate?: (container: HTMLElement) => void;
+    };
 
     [key: string]: unknown;
 }

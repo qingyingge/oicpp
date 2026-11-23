@@ -1,10 +1,5 @@
 // Forward-declared globals (attached to window by their respective .ts modules)
-// SidebarManager, TitlebarManager, FileExplorer, SampleTester, CodeComparer,
-// DebugPanel, CloudSyncPanel are declared in sidebar.ts / titlebar.ts (script scope).
-declare const TabManager: { new (): { saveAllFiles: () => Promise<{ success: boolean; failures: any[] }>; saveCurrentFile: () => Promise<unknown>; getTabCount: () => number; showWelcomePage: () => void; getUnsavedFiles: () => unknown; tabs: Array<{ isTempFile?: boolean; viewType?: string; fileName?: string }>; getTabContentForSave: () => unknown; saveAsFile: (content: string, filePath: string) => Promise<unknown>; }; };
 declare const OICPPApp: { new (): { init: () => Promise<void>; saveCurrentFile: () => Promise<unknown>; createNewCppFile: () => void; showMessage: (message: string, type?: string) => void; getActiveFilePath: () => string | null; isCloudFilePath: (path: string) => boolean; }; };
-
-const dialogManager = window.dialogManager as { showConfirmDialog: (title: string, msg: string) => Promise<void> } | undefined;
 
 document.addEventListener('DOMContentLoaded', function() {
     const i18n = window.i18n as { init: () => Promise<void>; enableAutoTranslate: () => void; t: (key: string, params?: Record<string, unknown>) => string } | undefined;

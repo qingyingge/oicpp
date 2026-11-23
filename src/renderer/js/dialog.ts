@@ -1,4 +1,7 @@
 class DialogManager {
+    currentDialog: { id: string; element: HTMLElement; resolve: (value: unknown) => void; reject: (reason?: unknown) => void } | null = null;
+    _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
     constructor() {
         this.currentDialog = null;
         this._keydownHandler = null;
@@ -60,7 +63,7 @@ class DialogManager {
         }
     }
 
-    showInputDialog(title, defaultValue = '', placeholder = '', options = {}) {
+    showInputDialog(title: string, defaultValue = '', placeholder = '', options: { selectStart?: number; selectEnd?: number } = {}) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = document.getElementById('dialog-overlay');
@@ -85,7 +88,7 @@ class DialogManager {
 
             overlay.style.display = 'flex';
 
-            const input = document.getElementById('dialog-input');
+            const input = document.getElementById('dialog-input') as HTMLInputElement | null;
             if (input) {
                 input.value = String(defaultValue ?? '');
             }
@@ -122,6 +125,8 @@ class DialogManager {
             });
 
             this.currentDialog = {
+                id: 'dialog',
+                element: container!,
                 resolve: resolve,
                 reject: reject
             };
@@ -151,6 +156,8 @@ class DialogManager {
             overlay.style.display = 'flex';
 
             this.currentDialog = {
+                id: 'dialog',
+                element: container!,
                 resolve: resolve,
                 reject: reject
             };
@@ -186,6 +193,8 @@ class DialogManager {
             overlay.style.display = 'flex';
 
             this.currentDialog = {
+                id: 'dialog',
+                element: container!,
                 resolve: resolve,
                 reject: reject
             };
@@ -241,6 +250,8 @@ class DialogManager {
             this.attachEscapeToClose();
 
             this.currentDialog = {
+                id: 'dialog',
+                element: container!,
                 resolve: resolve,
                 reject: () => {}
             };
@@ -295,6 +306,8 @@ class DialogManager {
             this.attachEscapeToClose();
 
             this.currentDialog = {
+                id: 'dialog',
+                element: container!,
                 resolve: resolve,
                 reject: () => {}
             };
@@ -304,7 +317,7 @@ class DialogManager {
     confirmDialog() {
         if (!this.currentDialog) return;
 
-        const input = document.getElementById('dialog-input');
+        const input = document.getElementById('dialog-input') as HTMLInputElement | null;
         const result = input ? input.value : true;
 
         this.currentDialog.resolve(result);
