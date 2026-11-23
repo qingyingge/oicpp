@@ -1,6 +1,3 @@
-// 终端渲染 oh-my-posh 等主题时需要 Nerd Font 图标字体。
-// 这些字体不一定安装，浏览器会自动跳过不可用的字体，因此可以安全地作为回退链使用。
-// 仅使用单宽（Mono）变体，避免图标按双宽渲染导致提示符错位。
 const TERMINAL_NERD_FONT_FALLBACKS = [
     'Symbols Nerd Font Mono',
     'CaskaydiaCove NFM',
@@ -27,8 +24,43 @@ const TERMINAL_NERD_FONT_FALLBACKS = [
     'RobotoMono NFM'
 ];
 
+type TerminalSession = {
+    terminalId: string;
+    tab: HTMLElement;
+    pane: HTMLElement;
+    mount: HTMLElement;
+    terminal: { cols: number; rows: number; options?: Record<string, unknown>; refresh?: (a: number, b: number) => void; scrollLines?: (delta: number) => void; write?: (data: string) => void; writeln?: (data: string) => void; focus?: () => void; dispose?: () => void; };
+    fitAddon: { fit: () => void };
+    remoteId: string | null;
+    cwd: string | null;
+    shell: string | null;
+    inputBridge: ((data: string) => void) | null;
+    muteRemoteOutput: boolean;
+};
+
 class IntegratedTerminalPanel {
-    constructor(options = {}) {
+    activeId: string | null = null;
+    sessions: Map<string, TerminalSession> = new Map();
+    visible: boolean = false;
+    empty: HTMLElement | null = null;
+    status: { available?: boolean; reason?: string; detail?: string } = { available: false, reason: '', detail: '' };
+    getApp: () => { getActiveFilePath?: () => string | null; isCloudFilePath?: (p: string) => boolean; settings?: Record<string, unknown> } = () => null;
+
+    counter: number = 0;
+    tabs: HTMLElement | null = null;
+    body: HTMLElement | null = null;
+    panel: HTMLElement | null = null;
+    resizer: HTMLElement | null = null;
+    panelHeight: number = 290;
+    fixedTerminalFontSize: number = 14;
+    initialized: boolean = false;
+    hideBtn: HTMLElement | null = null;
+    _dragState: { startY: number; startHeight: number } | null = null;
+    _resizeObserver: { observe: (target: Element) => void } | null = null;
+    statusNode: HTMLElement | null = null;
+    newBtn: HTMLElement | null = null;
+
+    constructor(options: { getApp?: () => unknown } = {}) {
         this.getApp = typeof options.getApp === 'function' ? options.getApp : () => null;
         this.sessions = new Map();
         this.activeId = null;
@@ -188,7 +220,7 @@ class IntegratedTerminalPanel {
         // Status line intentionally removed from UI.
     }
 
-    async open(options = {}) {
+    async open(options: { forceCreate?: boolean; createIfNone?: boolean } = {}) {
         await this.init();
         await this.refreshFeatureStatus();
 
@@ -337,10 +369,10 @@ class IntegratedTerminalPanel {
         this.applyTerminalFontSettings();
     }
 
-    async createTerminal(options = {}) {
+    async createTerminal(options: { cwd?: string } = {}) {
         if (!this.status.available) {
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         if (typeof window.Terminal !== 'function') {
@@ -351,7 +383,7 @@ class IntegratedTerminalPanel {
             };
             this.renderStatus();
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         const fitAddonCtor = window.FitAddon?.FitAddon;
@@ -363,7 +395,7 @@ class IntegratedTerminalPanel {
             };
             this.renderStatus();
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         const unicode11AddonCtor = window.Unicode11Addon?.Unicode11Addon;
@@ -375,7 +407,7 @@ class IntegratedTerminalPanel {
             };
             this.renderStatus();
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         this.counter += 1;
@@ -449,27 +481,27 @@ class IntegratedTerminalPanel {
             cwd: options.cwd || await this.getPreferredCwd()
         };
 
-        let created;
+        let created: { ok?: boolean; terminalId?: string; cwd?: string; shell?: string; error?: string } | undefined;
         try {
             created = await window.electronAPI.createTerminal(createPayload);
         } catch (error) {
             terminal.writeln('\r\n[Error] 创建终端失败: ' + (error?.message || String(error)));
             tab.classList.remove('pending');
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         if (!created?.ok || !created?.terminalId) {
             terminal.writeln(`\r\n[Error] ${created?.error || (window.i18n ? window.i18n.t('panel.terminalCreateFailed') : '终端创建失败')}`);
             tab.classList.remove('pending');
             this.renderEmptyState();
-            return;
+            return null;
         }
 
         const remoteId = created.terminalId;
         provisionalSession.remoteId = remoteId;
-        provisionalSession.cwd = created.cwd || null;
-        provisionalSession.shell = created.shell || null;
+        provisionalSession.cwd = (created as { cwd?: string }).cwd || null;
+        provisionalSession.shell = (created as { shell?: string }).shell || null;
 
         const labelNode = tab.querySelector('.terminal-tab-label');
         if (labelNode) {
@@ -819,8 +851,8 @@ class IntegratedTerminalPanel {
         try {
             if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
                 await window.electronAPI.openExternal(targetUrl);
-            } else if (window.electron && window.electron.shell && typeof window.electron.shell.openExternal === 'function') {
-                window.electron.shell.openExternal(targetUrl);
+            } else if ((window as { electron?: { shell?: { openExternal?: (url: string) => void } } }).electron?.shell?.openExternal) {
+                (window as { electron?: { shell?: { openExternal?: (url: string) => void } } }).electron.shell.openExternal(targetUrl);
             } else if (typeof window.open === 'function') {
                 window.open(targetUrl, '_blank', 'noopener');
             }
@@ -882,7 +914,7 @@ class IntegratedTerminalPanel {
 
         try {
             const result = await window.electronAPI?.clipboardWriteText?.(value);
-            if (result?.success) {
+            if ((result as unknown as { success?: boolean } | null)?.success) {
                 return;
             }
         } catch (_) { }
@@ -940,7 +972,7 @@ class IntegratedTerminalPanel {
         return `${quoted}\r`;
     }
 
-    async runExecutableInNewTerminal(executablePath, options = {}) {
+    async runExecutableInNewTerminal(executablePath: string, options: { workingDirectory?: string } = {}) {
         if (!executablePath) {
             throw new Error(window.i18n ? window.i18n.t('panel.terminalExePathEmpty') : '可执行文件路径为空');
         }
@@ -980,7 +1012,7 @@ class IntegratedTerminalPanel {
         }
 
         session.tab.addEventListener('click', (event) => {
-            const closeBtn = event.target.closest('.terminal-tab-close');
+            const closeBtn = (event.target as HTMLElement).closest('.terminal-tab-close');
             if (closeBtn) {
                 event.preventDefault();
                 event.stopPropagation();

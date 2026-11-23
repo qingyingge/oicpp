@@ -44,6 +44,19 @@ interface Window {
         lspRequest?: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
         lspNotify?: (method: string, params: Record<string, unknown>) => Promise<unknown>;
         onLspNotification?: (cb: (payload: Record<string, unknown>) => void) => void;
+        // Terminal
+        onTerminalData?: (cb: (payload: { terminalId: string; data: string }) => void) => void;
+        onTerminalExit?: (cb: (payload: { terminalId: string; exitCode?: number; signal?: string }) => void) => void;
+        getTerminalFeatureStatus?: () => Promise<{ available?: boolean; reason?: string; detail?: string }>;
+        createTerminal?: (payload: { cols: number; rows: number; cwd: string }) => Promise<{ ok?: boolean; terminalId?: string; cwd?: string; shell?: string; error?: string }>;
+        writeTerminal?: (terminalId: string, data: string) => Promise<unknown>;
+        getPlatform?: () => Promise<string>;
+        resizeTerminal?: (terminalId: string, cols: number, rows: number) => void;
+        killTerminal?: (terminalId: string) => Promise<unknown>;
+        openExternal?: (url: string) => Promise<unknown>;
+        clipboardWriteText?: (text: string) => Promise<{ success?: boolean }>;
+        clipboardReadText?: () => Promise<{ success?: boolean; text?: string }>;
+        pathDirname?: (p: string) => Promise<string>;
     };
 
     // electronIPC
@@ -134,9 +147,50 @@ interface Window {
         format?: (code: string, options?: Record<string, unknown>) => string;
     };
 
+    // xterm
+    Terminal?: new (options: Record<string, unknown>) => {
+        cols: number;
+        rows: number;
+        open: (mount: HTMLElement) => void;
+        loadAddon: (addon: unknown) => void;
+        write: (data: string) => void;
+        writeln: (data: string) => void;
+        focus: () => void;
+        dispose: () => void;
+        onData: (callback: (data: string) => void) => void;
+        registerLinkProvider: (provider: unknown) => void;
+        attachCustomKeyEventHandler: (handler: (event: unknown) => boolean) => void;
+        buffer?: {
+            active?: {
+                getLine?: (row: number) => { translateToString?: (trim: boolean) => string } | null;
+                length?: number;
+            };
+        };
+        registerCharacterJoiner?: (joiner: unknown) => void;
+        options?: {
+            theme?: unknown;
+            fontFamily?: string;
+            fontSize?: number;
+            fontWeight?: string;
+            fontWeightBold?: string;
+            letterSpacing?: number;
+            lineHeight?: number;
+            convertEol?: boolean;
+            scrollback?: number;
+            allowTransparency?: boolean;
+            allowProposedApi?: boolean;
+        };
+        unicode?: { activeVersion?: string | number };
+    };
+    FitAddon?: { FitAddon: new () => { fit: () => void } };
+    Unicode11Addon?: { Unicode11Addon: new () => void };
+
     // LSP
     LspClientBridge?: typeof import('./lsp-client').LspClientBridge;
     lspClient?: LspClientBridge;
+
+    // IntegratedTerminalPanel
+    IntegratedTerminalPanel?: unknown;
 
     [key: string]: unknown;
 }
