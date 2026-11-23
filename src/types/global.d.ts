@@ -122,5 +122,10 @@ interface Window {
         ensureIndex?: () => Promise<boolean>;
     };
 
+    // cppFormatter
+    cppFormatter?: {
+        format?: (code: string, options?: Record<string, unknown>) => string;
+    };
+
     [key: string]: unknown;
 }

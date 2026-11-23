@@ -1,5 +1,32 @@
-(function () {
-    function getDefaultClangFormatStyle() {
+export {};
+
+interface ClangFormatStyle {
+    BasedOnStyle: string;
+    IndentWidth: number;
+    TabWidth: number;
+    UseTab: string;
+    ColumnLimit: number;
+    BreakBeforeBraces: string;
+    AllowShortIfStatementsOnASingleLine: string;
+    AllowShortFunctionsOnASingleLine: string;
+    IndentCaseLabels: boolean;
+    PointerAlignment: string;
+    SpaceBeforeParens: string;
+    SortIncludes: boolean;
+    AlignConsecutiveAssignments: boolean;
+    AlignConsecutiveDeclarations: boolean;
+}
+
+interface FormatResult {
+    segments: string[];
+    open: number;
+    close: number;
+    noIndent: boolean;
+    restore: (text: string) => string;
+}
+
+(function init(): void {
+    function getDefaultClangFormatStyle(): ClangFormatStyle {
         return {
             BasedOnStyle: 'LLVM',
             IndentWidth: 4,
@@ -18,18 +45,18 @@
         };
     }
 
-    function normalizeClangFormatStyle(raw) {
+    function normalizeClangFormatStyle(raw: Record<string, unknown>): ClangFormatStyle {
         const defaults = getDefaultClangFormatStyle();
-        const normalized = { ...defaults };
+        const normalized: ClangFormatStyle = { ...defaults };
         if (!raw || typeof raw !== 'object') {
             return normalized;
         }
 
-        const toInt = (value, fallback) => {
-            const parsed = parseInt(value, 10);
+        const toInt = (value: unknown, fallback: number): number => {
+            const parsed = parseInt(String(value), 10);
             return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
         };
-        const toBool = (value, fallback) => {
+        const toBool = (value: unknown, fallback: boolean): boolean => {
             if (typeof value === 'boolean') return value;
             if (typeof value === 'string') {
                 const lowered = value.trim().toLowerCase();
@@ -38,7 +65,7 @@
             }
             return fallback;
         };
-        const toEnum = (value, allowed, fallback) => {
+        const toEnum = (value: unknown, allowed: string[], fallback: string): string => {
             const rawValue = String(value || '').trim();
             if (!rawValue) return fallback;
             const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
@@ -72,13 +99,13 @@
         return normalized;
     }
 
-    function formatCpp(code, options = {}) {
+    function formatCpp(code: string, options: Record<string, unknown> = {}): string {
         if (!code || typeof code !== 'string') return code || '';
 
-        const clangFormatStyle = normalizeClangFormatStyle(options.clangFormatStyle || options.clangFormat || {});
+        const clangFormatStyle = normalizeClangFormatStyle((options.clangFormatStyle || options.clangFormat || {}) as Record<string, unknown>);
         const indentWidth = Number.isFinite(clangFormatStyle.IndentWidth) && clangFormatStyle.IndentWidth > 0
             ? clangFormatStyle.IndentWidth
-            : (Number.isFinite(options.tabSize) && options.tabSize > 0 ? options.tabSize : 4);
+            : (Number.isFinite(options.tabSize as number) && (options.tabSize as number) > 0 ? (options.tabSize as number) : 4);
         const insertSpaces = clangFormatStyle.UseTab === 'Never';
         const breakBeforeBraces = String(clangFormatStyle.BreakBeforeBraces || 'Attach');
         const indentCaseLabels = clangFormatStyle.IndentCaseLabels !== false;
@@ -93,41 +120,41 @@
         let blankCount = 0;
         let inPreprocessorContinuation = false;
         // 跨行原始字符串：遇到 R"(" 未在同一行闭合时记录结束符，后续行原样保留。
-        let rawStringTerminator = null;
+        let rawStringTerminator: string | null = null;
 
-        const mkIndent = (level) => insertSpaces ? ' '.repeat(level * indentWidth) : '\t'.repeat(level);
+        const mkIndent = (level: number): string => insertSpaces ? ' '.repeat(level * indentWidth) : '\t'.repeat(level);
 
-        const out = [];
+        const out: string[] = [];
 
-        function processLine(line, nextLine) {
+        function processLine(line: string, nextLine: string): FormatResult {
             const trimmedLeft = line.replace(/^[\t ]+/, '');
             if (trimmedLeft.startsWith('#')) {
                 const keep = line.replace(/[ \t]+$/g, '');
-                return { segments: [keep], open: 0, close: 0, noIndent: true };
+                return { segments: [keep], open: 0, close: 0, noIndent: true, restore: (t: string) => t };
             }
 
             let open = 0, close = 0;
             let i = 0, s = line;
             let out = '';
-            let segments = [];
+            const segments: string[] = [];
 
             let templateDepth = 0;
             let inlineBraceDepth = 0;
             let parenDepth = 0; // 括号深度，用于判定是否允许在分号处换行
 
-            const isSpace = (ch) => ch === ' ' || ch === '\t';
+            const isSpace = (ch: string): boolean => ch === ' ' || ch === '\t';
 
             // 字符串/字符/注释等字面量原样保留：扫描时用占位符代替，行尾统一还原，
             // 避免后续的正则规范化改到字面量内部（见 issue #385）
-            const literals = [];
-            const pushLiteral = (text) => {
+            const literals: string[] = [];
+            const pushLiteral = (text: string): void => {
                 literals.push(text);
                 out += '\u0001' + String(literals.length - 1) + '\u0002';
             };
-            const restoreLiterals = (text) => text.replace(/\u0001(\d+)\u0002/g, (m, n) => literals[Number(n)]);
+            const restoreLiterals = (text: string): string => text.replace(/\u0001(\d+)\u0002/g, (_m, n) => literals[Number(n)]);
 
             let pendingSpace = false; // 记录遇到的空白，按需输出
-            const addPendingSpace = () => {
+            const addPendingSpace = (): void => {
                 if (!pendingSpace) return;
                 pendingSpace = false;
                 if (!out || /\s$/.test(out)) return;
@@ -135,7 +162,7 @@
                 if (prevCh === '(' || prevCh === '[' || prevCh === '{') return;
                 out += ' ';
             };
-            const emitPendingSpaceIfNeeded = (nextCharCategory) => {
+            const emitPendingSpaceIfNeeded = (nextCharCategory: string): void => {
                 if (!pendingSpace) return;
                 const prev = out.replace(/\s+$/g, '').slice(-1);
                 const noSpaceBefore = new Set([')', ']', '}', ',', ';', ':']);
@@ -510,14 +537,14 @@
             }
 
             // 对每个输出片段做统一规范化（片段可能已在扫描阶段被切开）
-            const normalize = (text) => {
+            const normalize = (text: string): string => {
                 let t = text;
                 t = t.replace(/\b(if|for|while|switch|catch)\s*\(/g, '$1 (');
                 // 不能用 [^:]+?，否则 case Color::Red: 会被拆成 case Color: :Red :
                 t = t.replace(/\bcase\s+(.+?)\s*(?<!:):(?!:)\s*/g, 'case $1: ');
                 t = t.replace(/\bdefault\s*:\s*/g, 'default: ');
                 const kw = new Set(['if', 'for', 'while', 'switch', 'catch']);
-                t = t.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s+\(/g, (m, name) => {
+                t = t.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s+\(/g, (m: string, name: string) => {
                     return kw.has(name) ? `${name} (` : `${name}(`;
                 });
                 t = t.replace(/([\]\>])\s+\(/g, '$1(');
@@ -530,7 +557,7 @@
             if (out.length > 0) segments.push(out);
 
             // 规范化后若片段内部被拆成多行（如 case 标签与语句），展开为独立片段
-            const expanded = [];
+            const expanded: string[] = [];
             segments.forEach((seg) => {
                 normalize(seg).split('\n').forEach((part) => {
                     if (part.length > 0) expanded.push(part);
@@ -613,7 +640,6 @@
                 });
                 indentLevel = tempLevel;
             }
-
         }
 
         return out.join(EOL);
