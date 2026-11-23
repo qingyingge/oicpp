@@ -216,13 +216,28 @@ class FileExplorer {
         this._treeItemsByPath.clear();
         const fragment = document.createDocumentFragment();
 
-        this.files.forEach((file) => {
-            const item = this.createTreeItem(file);
-            fragment.appendChild(item);
-            this._treeItemsByPath.set(file.path, item);
-        });
+        this.files
+            .filter((file) => this._isVisible(file))
+            .forEach((file) => {
+                const item = this.createTreeItem(file);
+                fragment.appendChild(item);
+                this._treeItemsByPath.set(file.path, item);
+            });
 
         fileTree.appendChild(fragment);
+    }
+
+    private _isVisible(file: FileEntry): boolean {
+        // 顶层项（当前工作区直接下的）始终可见；子项需其所有祖先文件夹均展开
+        let visible = true;
+        this.files.forEach((folder) => {
+            if (folder.type !== 'folder') return;
+            if (file.path === folder.path) return;
+            if (file.path.startsWith(folder.path + '/') && !this.expandedFolders.has(folder.path)) {
+                visible = false;
+            }
+        });
+        return visible;
     }
 
     createTreeItem(file: FileEntry): HTMLElement {
@@ -252,6 +267,14 @@ class FileExplorer {
         content.appendChild(label);
 
         item.appendChild(content);
+
+        if (file.type === 'folder') {
+            item.addEventListener('click', (event: MouseEvent) => {
+                event.stopPropagation();
+                this.toggleFolder(file.path);
+            });
+        }
+
         return item;
     }
 
@@ -271,8 +294,14 @@ class FileExplorer {
         return iconMap[ext] || '📄';
     }
 
-    toggleFolder(_path: string): void {
-        // 批次 2 实现（展开/折叠文件夹）
+    toggleFolder(path: string): void {
+        if (!path) return;
+        if (this.expandedFolders.has(path)) {
+            this.expandedFolders.delete(path);
+        } else {
+            this.expandedFolders.add(path);
+        }
+        this.renderFileTree();
     }
 
     createNewFile(): void {
