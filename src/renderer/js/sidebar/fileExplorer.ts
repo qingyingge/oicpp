@@ -602,8 +602,80 @@ class FileExplorer {
         logInfo('剪切文件:', valid.map((f) => f.name));
     }
 
-    pasteFile(): void {
-        // 批次 4 实现
+    pasteFile(targetFolder?: FileEntry): void {
+        if (!this.clipboard) {
+            logWarn('尝试粘贴但剪贴板为空');
+            return;
+        }
+        if (!this.hasWorkspace || !this.currentPath) {
+            logWarn('尝试粘贴但当前没有有效工作区');
+            return;
+        }
+
+        if (!targetFolder) {
+            targetFolder = this.getPasteTargetFolder();
+            logInfo('未提供 targetFolder，自动推断为:', targetFolder);
+        }
+
+        if (!targetFolder || !targetFolder.path) {
+            logError('粘贴失败：无法确定目标文件夹', targetFolder);
+            return;
+        }
+
+        const targetPath = targetFolder.type === 'folder' ? targetFolder.path : this.currentPath;
+        logInfo('粘贴文件到:', targetPath);
+        logInfo('粘贴的文件:', this.clipboard.files.map((f) => f.name));
+        logInfo('操作类型:', this.clipboard.operation);
+
+        const ipc = window.electronIPC;
+        if (!ipc) {
+            this.showMessage('文件粘贴功能需要在完整应用环境中运行', 'error');
+            return;
+        }
+
+        const normPath = (p: string) => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+        const tgtNorm = normPath(targetPath);
+
+        this.clipboard.files.forEach((file) => {
+            const srcNorm = normPath(file.path);
+            if (file.type === 'folder' && (tgtNorm === srcNorm || tgtNorm.startsWith(srcNorm + '/'))) {
+                this.showMessage('不能把文件夹粘贴到自身或其子目录', 'error');
+                return;
+            }
+            ipc.send('paste-file', file.path, targetPath, this.clipboard.operation);
+
+            const handler = (_event: unknown, sourcePath: unknown, destPath: unknown, operation: unknown, error: unknown) => {
+                if (String(sourcePath) === file.path) {
+                    if (error) {
+                        const op = this.clipboard.operation === 'copy' ? '复制' : '移动';
+                        logError(`${op}文件失败:`, file.name, error);
+                        this.showMessage(`${op}失败: ${String(error)}`, 'error');
+                    } else {
+                        logInfo(`文件${this.clipboard.operation === 'copy' ? '复制' : '移动'}成功:`, file.name, '->', String(destPath));
+                    }
+                }
+            };
+            window.electronIPC.on('file-pasted', handler);
+        });
+
+        setTimeout(() => this.refresh(), 1000);
+
+        if (this.clipboard.operation === 'cut') {
+            this.clipboard = null;
+        }
+    }
+
+    private getPasteTargetFolder(): FileEntry | null {
+        const selected = Array.from(this.selectedFiles.values());
+        for (let i = selected.length - 1; i >= 0; i--) {
+            if (selected[i]?.type === 'folder') {
+                return selected[i];
+            }
+        }
+        if (this.currentPath) {
+            return { path: this.currentPath, name: '', type: 'folder' };
+        }
+        return null;
     }
 
     searchFiles(_query: string): void {
