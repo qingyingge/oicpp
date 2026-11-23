@@ -50,11 +50,43 @@ class CodeComparer {
     }
 
     async promptMissingPythonInterpreter(task: Record<string, unknown>) {
-        // 提示缺少 Python 解释器
+        const taskKey = String(task?.taskKey || '');
+        this.showMessage(`Python 解释器不可用，无法运行生成器：${taskKey}`, 'warn');
+        if (window.electronAPI?.openExternal) {
+            try {
+                await window.electronAPI.openExternal('https://www.python.org/downloads/');
+            } catch (_) { }
+        }
     }
 
     setupEventListeners() {
-        // 设置事件监听器
+        if (this.eventsbound) return;
+        this.eventsbound = true;
+        window.addEventListener('oicpp:compare-request', (e: CustomEvent) => {
+            const detail = e?.detail as { standardCode?: string; testCode?: string; generatorPath?: string } | undefined;
+            if (!detail) return;
+            this.standardCodePath = detail.standardCode || '';
+            this.testCodePath = detail.testCode || '';
+            this.generatorPath = detail.generatorPath || '';
+            this.runCompare();
+        });
+    }
+
+    private async runCompare() {
+        if (!this.standardCodePath || !this.testCodePath) return;
+        try {
+            if (!window.electronAPI?.send) return;
+            window.electronAPI.send('code-compare-request', {
+                standardCode: this.standardCodePath,
+                testCode: this.testCodePath,
+                generatorPath: this.generatorPath,
+                useTestlib: this.useTestlib,
+                spjPath: this.spjPath,
+                maxParallelThreads: this.maxParallelThreads
+            });
+        } catch (error) {
+            logWarn('[对拍器] 发送对拍请求失败:', error);
+        }
     }
 
     setActiveTaskKey(filePath: string, options: Record<string, unknown> = {}) {
