@@ -108,23 +108,82 @@ class CloudSyncPanel {
     }
 
     async createNewFile() {
-        // 创建新文件
+        if (!window.electronAPI?.saveAsFile) return;
+        const result = await window.electronAPI.saveAsFile('', `${this.currentPath}new-file.cpp`);
+        if (result && (result as { canceled?: boolean }).canceled) return;
+        this.refresh();
     }
 
     async createNewFolder() {
-        // 创建新文件夹
+        if (!window.electronAPI?.send) return;
+        window.electronAPI.send('cloud-create-folder', this.currentPath);
+        this.refresh();
     }
 
     async uploadLocalFile() {
-        // 上传本地文件
+        if (!window.electronAPI?.openFileDialog || !window.electronAPI?.readFile || !window.electronAPI?.writeFile) return;
+        const result = await window.electronAPI.openFileDialog({
+            title: window.i18n ? window.i18n.t('cloud.uploadFile') : '选择要上传的文件',
+            filters: [{ name: 'All Files', extensions: ['*'] }]
+        });
+        if (result?.canceled || !result?.filePaths?.[0]) return;
+        const filePath = result.filePaths[0];
+        try {
+            const content = await window.electronAPI.readFile(filePath);
+            const fileName = filePath.split(/[\\/]/).pop() || 'file';
+            const destPath = `${this.currentPath}${fileName}`;
+            await window.electronAPI.writeFile(destPath, content);
+            this.refresh();
+        } catch (_) {
+            this.showMessage('上传失败', 'error');
+        }
     }
 
     async uploadLocalFolder() {
-        // 上传本地文件夹
+        if (!window.electronAPI?.send) return;
+        window.electronAPI.send('cloud-upload-folder', this.currentPath);
+        this.refresh();
     }
 
     async refresh() {
-        // 刷新
+        this.isLoading = true;
+        if (this.remainingEl) {
+            this.remainingEl.textContent = window.i18n ? window.i18n.t('cloud.loading') : '加载中...';
+        }
+        try {
+            if (!window.electronAPI?.walkDirectory) {
+                this.isLoading = false;
+                return;
+            }
+            const result = await window.electronAPI.walkDirectory(this.rootPath, {
+                excludeGlobs: ['.git/*', 'node_modules/*']
+            });
+            const files = result?.files || [];
+            this.renderFileList(files);
+        } catch (_) {
+            this.showMessage('刷新失败', 'error');
+        } finally {
+            this.isLoading = false;
+        }
+    }
+
+    private renderFileList(files: Array<{ name: string; path: string }>) {
+        if (!this.treeEl) return;
+        this.treeEl.innerHTML = '';
+        for (const file of files) {
+            const item = document.createElement('div');
+            item.className = 'tree-item';
+            item.dataset.path = file.path;
+            item.dataset.kind = 'file';
+            item.textContent = file.name;
+            this.treeEl.appendChild(item);
+        }
+        const remainingEl = this.remainingEl;
+        if (remainingEl) {
+            remainingEl.textContent = files.length > 0
+                ? (window.i18n ? window.i18n.t('cloud.fileCount', { count: files.length }) : `${files.length} 个文件`)
+                : (window.i18n ? window.i18n.t('cloud.empty') : '空目录');
+        }
     }
 
     escapeHtml(text: string) {
