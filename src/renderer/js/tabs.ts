@@ -88,6 +88,52 @@ class TabManager {
     showMessage(message: string, type?: string) {
         logInfo(`[标签管理器][${type || 'info'}] ${message}`);
     }
+
+    getFileNameFromPath(filePath: string | null): string {
+        if (!filePath) return '';
+        return filePath.replace(/\\/g, '/').split('/').pop() || '';
+    }
+
+    generateNewFileName(): string {
+        let n = 1;
+        while (true) {
+            const name = `untitled-${n}.cpp`;
+            let exists = false;
+            for (const [, data] of this.tabs) {
+                if (data && typeof data === 'object' && (data as Record<string, unknown>).fileName === name) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) return name;
+            n += 1;
+        }
+    }
+
+    isPdfFile(fileName: string): boolean {
+        return fileName.toLowerCase().endsWith('.pdf');
+    }
+
+    isWindowsPlatform(): boolean {
+        return typeof navigator !== 'undefined' && /Win/.test(navigator.platform);
+    }
+
+    base64ToUint8Array(base64: string): Uint8Array {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    normalizePathSlashes(pathCandidate: string): string {
+        return pathCandidate.replace(/\\/g, '/');
+    }
+
+    isLikelyFileObject(candidate: unknown): candidate is File {
+        return candidate !== null && typeof candidate === 'object' && 'name' in (candidate as Record<string, unknown>);
+    }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
