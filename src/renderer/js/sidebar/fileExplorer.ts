@@ -925,12 +925,36 @@ class FileExplorer {
         }
     }
 
-    searchFiles(_query: string): void {
-        // 批次 5 实现
+    searchFiles(query: string): void {
+        const fileTree = this._fileTree || document.querySelector<HTMLElement>('.file-tree');
+        if (!fileTree) return;
+
+        const trimmed = (query || '').trim();
+        if (!trimmed) {
+            this.renderFileTree();
+            return;
+        }
+
+        const lower = trimmed.toLowerCase();
+        const filtered = this.files.filter((f) => f.name.toLowerCase().includes(lower));
+
+        fileTree.innerHTML = '';
+        this._treeItemsByPath.clear();
+        const fragment = document.createDocumentFragment();
+        filtered.forEach((file) => {
+            const item = this.createTreeItem(file);
+            fragment.appendChild(item);
+            this._treeItemsByPath.set(file.path, item);
+        });
+        fileTree.appendChild(fragment);
     }
 
     refresh(): void {
-        // 批次 5 实现
+        if (this.hasWorkspace && this.currentPath) {
+            this.loadDirectory(this.currentPath);
+        } else {
+            this.renderFileTree();
+        }
     }
 
     async openFile(file: FileEntry): Promise<void> {
