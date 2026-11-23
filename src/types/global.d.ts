@@ -87,6 +87,7 @@ interface Window {
         enableAutoTranslate?: () => void;
         t?: (key: string, params?: Record<string, unknown>) => string;
         _applyToDOM?: () => void;
+        onChange?: (cb: () => void) => void;
     };
     __?: (key: string, params?: Record<string, unknown>) => string;
 
