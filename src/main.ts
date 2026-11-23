@@ -18,7 +18,7 @@ try {
     sevenBinPath = null;
 }
 const logger = require('./utils/logger');
-const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
+const { consolePauserSource: CONSOLE_PAUSER_SOURCE } = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 
 const GDBDebugger = require('./gdb-debugger');
