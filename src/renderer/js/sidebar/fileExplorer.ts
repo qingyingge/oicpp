@@ -580,12 +580,26 @@ class FileExplorer {
         });
     }
 
-    copyFile(): void {
-        // 批次 4 实现
+    copyFile(files: FileEntry | FileEntry[]): void {
+        const fileList = Array.isArray(files) ? files : [files];
+        const valid = fileList.filter((f) => f?.path);
+        if (!valid.length) {
+            logWarn('copyFile 调用时未提供有效文件');
+            return;
+        }
+        this.clipboard = { files: valid, operation: 'copy' };
+        logInfo('复制文件:', valid.map((f) => f.name));
     }
 
-    cutFile(): void {
-        // 批次 4 实现
+    cutFile(files: FileEntry | FileEntry[]): void {
+        const fileList = Array.isArray(files) ? files : [files];
+        const valid = fileList.filter((f) => f?.path);
+        if (!valid.length) {
+            logWarn('cutFile 调用时未提供有效文件');
+            return;
+        }
+        this.clipboard = { files: valid, operation: 'cut' };
+        logInfo('剪切文件:', valid.map((f) => f.name));
     }
 
     pasteFile(): void {
