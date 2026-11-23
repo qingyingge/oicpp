@@ -127,12 +127,52 @@ class TabManager {
         return bytes;
     }
 
-    normalizePathSlashes(pathCandidate: string): string {
+    normalizePathSlashes(pathCandidate: string | null): string | null {
+        if (!pathCandidate) return null;
         return pathCandidate.replace(/\\/g, '/');
     }
 
     isLikelyFileObject(candidate: unknown): candidate is File {
         return candidate !== null && typeof candidate === 'object' && 'name' in (candidate as Record<string, unknown>);
+    }
+
+    isInternalTabDrag(dataTransfer: DataTransfer): boolean {
+        try {
+            return dataTransfer.types && Array.isArray(dataTransfer.types)
+                ? dataTransfer.types.includes('application/oicpp-tab')
+                : false;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    normalizeDroppedPath(pathCandidate: string | null): string | null {
+        return this.normalizePathSlashes(pathCandidate);
+    }
+
+    async readFileContent(filePath: string): Promise<string | null> {
+        try {
+            const w = window as unknown as { oicppApp?: unknown; electronAPI?: unknown };
+            if (w.oicppApp && typeof (w.oicppApp as Record<string, unknown>).readFileContent === 'function') {
+                const fn = (w.oicppApp as Record<string, unknown>).readFileContent as (...args: unknown[]) => Promise<unknown>;
+                const result = await fn(filePath);
+                if (typeof result === 'string') return result;
+                return null;
+            }
+            if (w.electronAPI && typeof (w.electronAPI as Record<string, unknown>).readFile === 'function') {
+                const fn = (w.electronAPI as Record<string, unknown>).readFile as (...args: unknown[]) => Promise<unknown>;
+                const result = await fn(filePath);
+                if (typeof result === 'string') return result;
+                return null;
+            }
+            return null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    openFile(fileName: string, content: string = '', isNew: boolean = false, filePath: string | null = null): void {
+        // 实际的标签打开逻辑将在后续批次完善
     }
 
     getGroupTabCount(groupId: string): number {
@@ -153,6 +193,101 @@ class TabManager {
 
     canSplitGroup(groupId: string): boolean {
         return this.getGroupTabCount(groupId) > 1;
+    }
+
+    bindEditorAreaDnD(editorArea: HTMLElement | null): void {
+        if (!editorArea || (editorArea as unknown as Record<string, unknown>)._editorDnDBound) return;
+        const onDragOver = (event: DragEvent) => {
+            try {
+                event.preventDefault();
+                event.stopPropagation();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = 'copy';
+                }
+            } catch (_) { }
+        };
+        const onDrop = async (event: DragEvent) => {
+            try {
+                event.preventDefault();
+                event.stopPropagation();
+                const groupId = editorArea.dataset.groupId || this.activeGroupId || 'group-1';
+                await this.processExternalDrop(event.dataTransfer, groupId);
+            } catch (err) {
+                logWarn('编辑区 drop 处理失败:', err);
+            }
+        };
+        editorArea.addEventListener('dragover', onDragOver, true);
+        editorArea.addEventListener('drop', onDrop, true);
+        (editorArea as unknown as Record<string, unknown>)._editorDnDBound = true;
+    }
+
+    async processExternalDrop(dataTransfer: DataTransfer | null, groupId: string): Promise<boolean> {
+        if (!dataTransfer) return false;
+        if (this.tabDragInProgress) return false;
+        if (this.isInternalTabDrag(dataTransfer)) return false;
+
+        const entries: Array<{ fileName: string; filePath: string | null; fileObject: File | null; base64: string | null }> = [];
+        const text = typeof dataTransfer.getData === 'function' ? dataTransfer.getData('text/plain') || '' : '';
+        if (text && text.trim().startsWith('{') && text.includes('files')) {
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed && Array.isArray(parsed.files)) {
+                    parsed.files.forEach((f: unknown) => {
+                        if (!f || typeof f !== 'object') return;
+                        const fileObj = f as Record<string, unknown>;
+                        if (fileObj.type !== 'file') return;
+                        const filePathRaw = typeof fileObj.path === 'string' ? fileObj.path : null;
+                        const filePath = this.normalizeDroppedPath(filePathRaw);
+                        if (!filePath) return;
+                        const fileName = (typeof fileObj.name === 'string' ? fileObj.name : null) || (filePath.split(/[\\\/]/).pop()) || 'untitled';
+                        const base64 = typeof fileObj.base64 === 'string' && fileObj.base64.trim() ? fileObj.base64.trim() : null;
+                        entries.push({ fileName, filePath, fileObject: null, base64 });
+                    });
+                }
+            } catch (error) {
+                logWarn('解析拖拽数据失败:', error);
+            }
+        }
+
+        if (entries.length === 0) {
+            const fileList = Array.from(dataTransfer.files || []);
+            fileList.forEach((file: File) => {
+                if (!file) return;
+                const fpRaw = (file as unknown as Record<string, unknown>).path as string | null;
+                const fp = this.normalizeDroppedPath(fpRaw);
+                const name = file.name || (fp && fp.split(/[\\\/]/).pop()) || 'untitled';
+                entries.push({ fileName: name, filePath: fp, fileObject: file, base64: null });
+            });
+        }
+
+        if (entries.length === 0) {
+            const uriList = typeof dataTransfer.getData === 'function' ? dataTransfer.getData('text/uri-list') || '' : '';
+            if (uriList && uriList.trim()) {
+                uriList.trim().split(/\r?\n/).forEach((uri) => {
+                    if (!uri || uri.startsWith('#')) return;
+                    if (!/^file:/i.test(uri)) return;
+                    try {
+                        const decoded = decodeURIComponent(uri.replace(/^file:\/\//, ''));
+                        if (decoded) {
+                            entries.push({ fileName: decoded.split(/[\\\/]/).pop() || 'untitled', filePath: decoded, fileObject: null, base64: null });
+                        }
+                    } catch (_) { }
+                });
+            }
+        }
+
+        // Process each entry via oicppApp.openDroppedFile or electronAPI.readFileContent
+        for (const entry of entries) {
+            if (entry.filePath) {
+                try {
+                    const content = await this.readFileContent(entry.filePath);
+                    if (content !== null) {
+                        this.openFile(entry.fileName, content);
+                    }
+                } catch (_) { }
+            }
+        }
+        return entries.length > 0;
     }
 }
 
