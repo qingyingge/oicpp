@@ -35,6 +35,12 @@ interface Window {
         updateSettings?: (settings: Record<string, unknown>) => Promise<{ success?: boolean; error?: string }>;
         getLanguage?: () => Promise<string>;
         getLanguageFile?: (lang: string) => Promise<Record<string, unknown> | null>;
+        // File dialogs (settings UI)
+        openFileDialog?: (opts: { title?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled?: boolean; filePaths?: string[] }>;
+        saveFileDialog?: (opts: { title?: string; defaultPath?: string }) => Promise<{ canceled?: boolean; filePath?: string }>;
+        readFile?: (filePath: string) => Promise<string>;
+        writeFile?: (filePath: string, content: string) => Promise<unknown>;
+        getSettings?: () => Promise<Record<string, unknown>>;
         onLanguageChanged?: (cb: (langCode: string) => void) => void;
         getAvailableLanguages?: () => Promise<string[]>;
         // Settings backup
