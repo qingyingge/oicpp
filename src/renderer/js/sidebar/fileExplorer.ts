@@ -1,21 +1,42 @@
 export {};
 
+interface FileEntry {
+    name: string;
+    path: string;
+    type: 'folder' | 'file';
+    extension?: string;
+}
+
+interface ClipboardData {
+    files: FileEntry[];
+    operation: 'copy' | 'cut';
+}
+
 class FileExplorer {
     currentPath = '';
-    files: Array<Record<string, unknown>> = [];
-    selectedFile: string | null = null;
-    selectedFiles = new Map<string, unknown>();
+    workspacePath = '';
+    files: FileEntry[] = [];
+    selectedFile: FileEntry | null = null;
+    selectedFiles = new Map<string, FileEntry>();
     hasWorkspace = false;
-    clipboard: Record<string, unknown> | null = null;
+    clipboard: ClipboardData | null = null;
     expandedFolders = new Set<string>();
-    _directoryReadRequests = new Map<string, unknown>();
+    _directoryReadRequests = new Map<string, Promise<FileEntry[]>>();
     _treeItemsByPath = new Map<string, HTMLElement>();
-    _draggingItems = new Set<string>();
+    _draggingItems = new Set<HTMLElement>();
     _dragOverItem: HTMLElement | null = null;
     _pendingDragOverTarget: HTMLElement | null = null;
     _pendingDragOverRoot = false;
-    _dragHoverFrame: ReturnType<typeof requestAnimationFrame> | null = null;
+    _dragHoverFrame: number | null = null;
     isDragging = false;
+
+    // DOM 缓存（批次 1）
+    private _fileTree: HTMLElement | null = null;
+    private _searchInput: HTMLInputElement | null = null;
+    private _newFileBtn: HTMLElement | null = null;
+    private _newFolderBtn: HTMLElement | null = null;
+    private _refreshBtn: HTMLElement | null = null;
+    private _deleteBtn: HTMLElement | null = null;
 
     constructor() {
         this.setupKeyboardShortcuts();
@@ -57,7 +78,7 @@ class FileExplorer {
     }
 
     setupKeyboardShortcuts() {
-        // 设置键盘快捷键
+        // 设置键盘快捷键（后续批次补充）
     }
 
     escapeHtml(text: string) {
@@ -72,6 +93,157 @@ class FileExplorer {
 
     showMessage(message: string, type?: string) {
         logInfo(`[文件资源管理器][${type || 'info'}] ${message}`);
+    }
+
+    // ========== 批次 1：DOM 缓存与初始化 ==========
+
+    cacheDOM(): void {
+        this._fileTree = document.querySelector<HTMLElement>('.file-tree');
+        this._searchInput = document.querySelector<HTMLInputElement>('.file-search-input');
+
+        const panel = document.querySelector<HTMLElement>('#files-panel');
+        if (!panel) {
+            return;
+        }
+        const buttons = panel.querySelectorAll<HTMLElement>('.icon-btn');
+        this._newFileBtn = buttons.item(0);
+        this._newFolderBtn = buttons.item(1);
+        this._refreshBtn = buttons.item(2);
+        this._deleteBtn = buttons.item(3);
+    }
+
+    init(): void {
+        this.cacheDOM();
+        this.setupEventListeners();
+        this.loadSettings();
+    }
+
+    loadSettings(): void {
+        const api = window.electronAPI;
+        if (!api?.getSettings) {
+            logWarn('electronAPI.getSettings 不可用，跳过加载设置');
+            return;
+        }
+        api.getSettings().catch((error: unknown) => {
+            logWarn('加载设置失败', error);
+        });
+    }
+
+    setupEventListeners(): void {
+        // 搜索输入
+        if (this._searchInput) {
+            this._searchInput.addEventListener('input', (event: Event) => {
+                const target = event.target as HTMLInputElement | null;
+                this.searchFiles(target ? target.value : '');
+            });
+        }
+
+        // 新建文件
+        if (this._newFileBtn) {
+            this._newFileBtn.addEventListener('click', () => {
+                this.createNewFile();
+            });
+        }
+
+        // 新建文件夹
+        if (this._newFolderBtn) {
+            this._newFolderBtn.addEventListener('click', () => {
+                this.createNewFolder();
+            });
+        }
+
+        // 刷新
+        if (this._refreshBtn) {
+            this._refreshBtn.addEventListener('click', () => {
+                this.refresh();
+            });
+        }
+
+        // 批量删除
+        if (this._deleteBtn) {
+            this._deleteBtn.addEventListener('click', () => {
+                this.batchDelete();
+            });
+        }
+    }
+
+    // ========== 后续批次占位（在后续批次中实现）==========
+
+    loadDirectory(_path: string): void {
+        // 批次 2 实现
+    }
+
+    renderFileTree(): void {
+        // 批次 2 实现
+    }
+
+    createTreeItem(_file: FileEntry): HTMLElement {
+        // 批次 2 实现
+        return document.createElement('div');
+    }
+
+    toggleFolder(_path: string): void {
+        // 批次 2 实现
+    }
+
+    createNewFile(): void {
+        // 批次 3 实现
+    }
+
+    createNewFolder(): void {
+        // 批次 3 实现
+    }
+
+    renameFile(_file: FileEntry): void {
+        // 批次 3 实现
+    }
+
+    deleteFile(_file: FileEntry): void {
+        // 批次 3 实现
+    }
+
+    selectFile(_filePath: string): void {
+        // 批次 3 实现
+    }
+
+    copyFile(): void {
+        // 批次 4 实现
+    }
+
+    cutFile(): void {
+        // 批次 4 实现
+    }
+
+    pasteFile(): void {
+        // 批次 4 实现
+    }
+
+    searchFiles(_query: string): void {
+        // 批次 5 实现
+    }
+
+    refresh(): void {
+        // 批次 5 实现
+    }
+
+    batchDelete(): void {
+        // 批次 3 实现（由 sidebar.ts 调用）
+    }
+
+    openFile(_file: FileEntry): void {
+        // 批次 3 实现
+    }
+
+    activate(): void {
+        // 批次 2 实现
+    }
+
+    getActiveFilePath(): string | null {
+        return null;
+    }
+
+    isCloudFilePath(_path: string): boolean {
+        return false;
     }
 }
 
