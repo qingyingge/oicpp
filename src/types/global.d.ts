@@ -37,6 +37,13 @@ interface Window {
         getLanguageFile?: (lang: string) => Promise<Record<string, unknown> | null>;
         onLanguageChanged?: (cb: (langCode: string) => void) => void;
         getAvailableLanguages?: () => Promise<string[]>;
+        // LSP
+        lspStart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        lspStop?: () => Promise<unknown>;
+        lspRestart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        lspRequest?: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        lspNotify?: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+        onLspNotification?: (cb: (payload: Record<string, unknown>) => void) => void;
     };
 
     // electronIPC
@@ -126,6 +133,10 @@ interface Window {
     cppFormatter?: {
         format?: (code: string, options?: Record<string, unknown>) => string;
     };
+
+    // LSP
+    LspClientBridge?: typeof import('./lsp-client').LspClientBridge;
+    lspClient?: LspClientBridge;
 
     [key: string]: unknown;
 }

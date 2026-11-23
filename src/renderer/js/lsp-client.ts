@@ -1,4 +1,36 @@
+export {};
+
+interface LspStartOptions {
+    workspaceRoot?: string;
+    workspaceName?: string;
+    rootUri?: string;
+    clangdArgs?: string[];
+    fallbackFlags?: string[];
+    compilerPath?: string;
+}
+
+interface LspStartResult {
+    ok?: boolean;
+    error?: string;
+    alreadyRunning?: boolean;
+    clangdPath?: string;
+    fallbackFlags?: string[];
+}
+
+interface Diagnostic {
+    uri?: string;
+    diagnostics?: unknown[];
+}
+
 class LspClientBridge {
+    private _ready = false;
+    private _readyPromise: Promise<void> | null = null;
+    private _serverCapabilities: Record<string, unknown> | null = null;
+    private _semanticTokensLegend: Record<string, unknown> | null = null;
+    private _readyListeners = new Set<(client: LspClientBridge) => void>();
+    private _diagnosticListeners = new Set<(uri: string, diagnostics: unknown[]) => void>();
+    private _notificationListeners = new Set<(payload: Record<string, unknown>) => void>();
+
     constructor() {
         this._ready = false;
         this._readyPromise = null;
@@ -10,17 +42,17 @@ class LspClientBridge {
         this._bindNotifications();
     }
 
-    _bindNotifications() {
+    private _bindNotifications(): void {
         if (!window.electronAPI || typeof window.electronAPI.onLspNotification !== 'function') {
             return;
         }
-        window.electronAPI.onLspNotification((payload) => {
+        window.electronAPI.onLspNotification((payload: Record<string, unknown>) => {
             if (!payload || typeof payload.method !== 'string') {
                 return;
             }
             if (payload.method === 'textDocument/publishDiagnostics') {
-                const params = payload.params || {};
-                const uri = params.uri || '';
+                const params = (payload.params as Record<string, unknown>) || {};
+                const uri = String(params.uri || '');
                 const diagnostics = Array.isArray(params.diagnostics) ? params.diagnostics : [];
                 this._diagnosticListeners.forEach((listener) => {
                     try { listener(uri, diagnostics); } catch (_) {}
@@ -32,11 +64,11 @@ class LspClientBridge {
         });
     }
 
-    async start(options = {}) {
+    async start(options: LspStartOptions = {}): Promise<void> {
         if (this._readyPromise) {
             return this._readyPromise;
         }
-        this._readyPromise = this._startInternal(options).catch((err) => {
+        this._readyPromise = this._startInternal(options).catch((err: unknown) => {
             // 一次瞬态失败不能永久缓存 rejected Promise，否则 clangd 永远无法重试。
             this._readyPromise = null;
             throw err;
@@ -44,18 +76,22 @@ class LspClientBridge {
         return this._readyPromise;
     }
 
-    async restart(options = {}) {
+    async restart(options: LspStartOptions = {}): Promise<void> {
         this._ready = false;
         this._readyPromise = null;
-        this._readyPromise = this._restartInternal(options).catch((err) => {
+        this._readyPromise = this._restartInternal(options).catch((err: unknown) => {
             this._readyPromise = null;
             throw err;
         });
         return this._readyPromise;
     }
 
-    async _restartInternal(options = {}) {
-        const api = window.electronAPI;
+    private async _restartInternal(options: LspStartOptions = {}): Promise<void> {
+        const api = window.electronAPI as {
+            lspRestart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+            lspStop?: () => Promise<unknown>;
+            lspStart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        };
         if (!api) {
             throw new Error('LSP API unavailable');
         }
@@ -78,10 +114,10 @@ class LspClientBridge {
             if (startResult.alreadyRunning) {
                 logInfo('[LSP] clangd 已在运行中，复用现有进程');
             } else {
-                logInfo('[LSP] clangd 进程已启动:', startResult.clangdPath || '');
+                logInfo('[LSP] clangd 进程已启动:', String(startResult.clangdPath || ''));
             }
 
-            return await this._finishStartup(startResult, options);
+            await this._finishStartup(startResult as LspStartResult, options);
         }
 
         if (typeof api.lspStop === 'function') {
@@ -90,8 +126,10 @@ class LspClientBridge {
         return await this._startInternal(options);
     }
 
-    async _startInternal(options = {}) {
-        const api = window.electronAPI;
+    private async _startInternal(options: LspStartOptions = {}): Promise<void> {
+        const api = window.electronAPI as {
+            lspStart?: (options: Record<string, unknown>) => Promise<Record<string, unknown>>;
+        };
         if (!api || typeof api.lspStart !== 'function') {
             logError('[LSP] LSP API 不可用，无法启动');
             throw new Error('LSP API unavailable');
@@ -130,7 +168,7 @@ class LspClientBridge {
         if (startResult.alreadyRunning) {
             logInfo('[LSP] clangd 已在运行中，复用现有进程');
         } else {
-            logInfo('[LSP] clangd 进程已启动:', startResult.clangdPath || '');
+            logInfo('[LSP] clangd 进程已启动:', String(startResult.clangdPath || ''));
         }
 
         // 使用主进程返回的 fallbackFlags（已包含编译器 include 路径）
@@ -138,10 +176,14 @@ class LspClientBridge {
             ? startResult.fallbackFlags
             : (Array.isArray(options.fallbackFlags) ? options.fallbackFlags : []);
 
-        return await this._finishStartup(startResult, options, api, effectiveFallbackFlags);
+        await this._finishStartup(startResult as LspStartResult, options, api, effectiveFallbackFlags);
     }
 
-    async _finishStartup(startResult, options = {}, api = window.electronAPI, effectiveFallbackFlags = null) {
+    private async _finishStartup(startResult: LspStartResult, options: LspStartOptions = {}, api = window.electronAPI, effectiveFallbackFlags: string[] | null = null): Promise<Record<string, unknown>> {
+        const lspApi = api as {
+            lspRequest?: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+            lspNotify?: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+        };
         const rootUri = options.rootUri || '';
         const workspaceFolders = rootUri
             ? [{ uri: rootUri, name: options.workspaceName || 'workspace' }]
@@ -214,17 +256,18 @@ class LspClientBridge {
             }
         };
 
-        const initResult = await api.lspRequest('initialize', initializeParams);
-        this._serverCapabilities = initResult && initResult.capabilities ? initResult.capabilities : null;
-        this._semanticTokensLegend = this._serverCapabilities?.semanticTokensProvider?.legend || null;
+        const initResult = await lspApi.lspRequest('initialize', initializeParams);
+        this._serverCapabilities = (initResult && (initResult as Record<string, unknown>).capabilities) ? (initResult as Record<string, unknown>).capabilities as Record<string, unknown> : null;
+        const semTokensProvider = (this._serverCapabilities as Record<string, unknown>)?.semanticTokensProvider as Record<string, unknown> | undefined;
+        this._semanticTokensLegend = semTokensProvider?.legend as Record<string, unknown> | null;
 
-        const serverInfo = initResult?.serverInfo || {};
-        logInfo('[LSP] 初始化完成, 服务器:', serverInfo.name || 'clangd', '版本:', serverInfo.version || '?');
+        const serverInfo = (initResult as Record<string, unknown>)?.serverInfo || {};
+        logInfo('[LSP] 初始化完成, 服务器:', (serverInfo as Record<string, unknown>).name || 'clangd', '版本:', (serverInfo as Record<string, unknown>).version || '?');
         if (this._semanticTokensLegend) {
-            logInfo('[LSP] 语义令牌支持: ' + (this._semanticTokensLegend.tokenTypes?.length || 0) + ' 种类型, ' + (this._semanticTokensLegend.tokenModifiers?.length || 0) + ' 种修饰符');
+            logInfo('[LSP] 语义令牌支持: ' + (((this._semanticTokensLegend as Record<string, unknown>).tokenTypes as unknown[] | undefined)?.length || 0) + ' 种类型, ' + (((this._semanticTokensLegend as Record<string, unknown>).tokenModifiers as unknown[] | undefined)?.length || 0) + ' 种修饰符');
         }
 
-        await api.lspNotify('initialized', {});
+        await lspApi.lspNotify('initialized', {});
         this._ready = true;
         logInfo('[LSP] clangd LSP 客户端就绪');
 
@@ -234,28 +277,28 @@ class LspClientBridge {
         return initResult;
     }
 
-    async request(method, params) {
-        const api = window.electronAPI;
+    async request(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const api = window.electronAPI as { lspRequest?: (method: string, params: Record<string, unknown>) => Promise<Record<string, unknown>> };
         if (!api || typeof api.lspRequest !== 'function') {
             throw new Error('LSP request API unavailable');
         }
         return await api.lspRequest(method, params);
     }
 
-    async notify(method, params) {
-        const api = window.electronAPI;
+    async notify(method: string, params: Record<string, unknown>): Promise<unknown> {
+        const api = window.electronAPI as { lspNotify?: (method: string, params: Record<string, unknown>) => Promise<unknown> };
         if (!api || typeof api.lspNotify !== 'function') {
             throw new Error('LSP notify API unavailable');
         }
         const result = await api.lspNotify(method, params);
         // 检查通知是否发送成功（进程可能已停止）
-        if (result && result.ok === false) {
-            logWarn('[LSP] 通知发送失败 (' + method + '):', result.error || '未知错误');
+        if (result && (result as Record<string, unknown>).ok === false) {
+            logWarn('[LSP] 通知发送失败 (' + method + '):', (result as Record<string, unknown>).error || '未知错误');
         }
         return result;
     }
 
-    onReady(listener) {
+    onReady(listener: (client: LspClientBridge) => void): () => void {
         if (typeof listener !== 'function') return () => {};
         this._readyListeners.add(listener);
         if (this._ready) {
@@ -264,23 +307,23 @@ class LspClientBridge {
         return () => this._readyListeners.delete(listener);
     }
 
-    onDiagnostics(listener) {
+    onDiagnostics(listener: (uri: string, diagnostics: unknown[]) => void): () => void {
         if (typeof listener !== 'function') return () => {};
         this._diagnosticListeners.add(listener);
         return () => this._diagnosticListeners.delete(listener);
     }
 
-    onNotification(listener) {
+    onNotification(listener: (payload: Record<string, unknown>) => void): () => void {
         if (typeof listener !== 'function') return () => {};
         this._notificationListeners.add(listener);
         return () => this._notificationListeners.delete(listener);
     }
 
-    getSemanticTokensLegend() {
+    getSemanticTokensLegend(): Record<string, unknown> | null {
         return this._semanticTokensLegend;
     }
 
-    getServerCapabilities() {
+    getServerCapabilities(): Record<string, unknown> | null {
         return this._serverCapabilities;
     }
 }
