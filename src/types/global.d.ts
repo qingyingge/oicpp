@@ -72,6 +72,7 @@ interface Window {
         isTestlibSelected?: (version: string) => Promise<boolean>;
         saveSetting?: (key: string, value: string) => Promise<unknown>;
         runCommandVersionProbe?: (cmd: string, args: string[], options?: { env?: Record<string, string>; timeoutMs?: number }) => Promise<{ ok: boolean; output: string; message: string }>;
+        onSampleTesterCreateProblem?: (cb: (data: Record<string, unknown>) => void) => void;
     };
 
     // electronIPC
@@ -95,6 +96,7 @@ interface Window {
         getPanelManager?: (name: string) => unknown;
         updateFileExplorerButtons?: () => void;
         checkResizeStatus?: () => void;
+        showPanel?: (name: string) => void;
     };
 
     // TabManager
