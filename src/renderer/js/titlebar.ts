@@ -1,4 +1,10 @@
 class TitlebarManager {
+    titlebar: HTMLElement | null = null;
+    currentTitle: string = 'OICPP IDE';
+    isMaximized: boolean = false;
+    _closeConfirmInProgress: boolean = false;
+    isMacPlatform: boolean = false;
+
     constructor() {
         this.titlebar = null;
         this.currentTitle = 'OICPP IDE';
@@ -149,13 +155,13 @@ class TitlebarManager {
         const unsavedFiles = (() => {
             try {
                 if (window.tabManager && typeof window.tabManager.getUnsavedFiles === 'function') {
-                    return window.tabManager.getUnsavedFiles() || [];
+                    return (window.tabManager.getUnsavedFiles() as unknown[]) || [];
                 }
             } catch (_) { }
             return [];
         })();
 
-        if (!unsavedFiles || unsavedFiles.length === 0) {
+        if (!unsavedFiles || !Array.isArray(unsavedFiles) || unsavedFiles.length === 0) {
             if (source === 'system') {
                 window.electronIPC.send('app-close-confirmed');
             } else {
@@ -188,7 +194,7 @@ class TitlebarManager {
                 { id: 'cancel', label: window.i18n ? window.i18n.t('dialog.cancel') : '取消' }
             ]);
 
-            if (result === 'save') {
+            if ((result as string) === 'save') {
                 if (source === 'system') {
                     window.electronIPC.send('app-close-confirmed');
                 } else {
@@ -230,8 +236,8 @@ class TitlebarManager {
                 ]
             );
             if (result === 'cancel' || !result) return false;
-            if (result === 'save') {
-                const content = window.tabManager.getTabContentForSave?.(tab);
+            if ((result as string) === 'save') {
+                const content = String(window.tabManager.getTabContentForSave?.(tab) ?? '');
                 const savedPath = await window.electronAPI?.saveAsFile?.(content);
                 if (!savedPath) return false;
             }

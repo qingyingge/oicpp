@@ -1,12 +1,18 @@
 (function () {
     if (window.folderPicker) return;
-    const E = (t, c, txt) => { const e = document.createElement(t); if (c) e.className = c; if (txt !== undefined) e.textContent = txt; return e; };
+    const w = window as unknown as {
+        i18n?: { t: (key: string, params?: Record<string, unknown>) => string };
+        oicppApp?: { settings?: { theme?: string; lastOpen?: string } };
+        electronAPI?: { ensureDirectory: (path: string) => Promise<void>; readDirectory: (path: string) => Promise<{ type: string; name: string; path: string }[]> };
+        uiIcons?: { hydrate: (node: Element) => void };
+    };
+    const E = (t: string, c?: string | null, txt?: string) => { const e = document.createElement(t); if (c) e.className = c; if (txt !== undefined) e.textContent = txt; return e as HTMLElement; };
     const norm = (...ps) => ps.join('/').replace(/\\/g, '/').replace(/\/+/g, '/');
 
     function buildBreadcrumb(path, bar, onChange) {
         bar.innerHTML = '';
         const upBtn = E('button', 'folder-picker-up', '⬆');
-        upBtn.title = window.i18n ? window.i18n.t('folderPicker.parentDir') : 'Parent Directory';
+        upBtn.title = w.i18n ? w.i18n.t('folderPicker.parentDir') : 'Parent Directory';
         upBtn.onclick = () => {
             if (path === '/' || /^[A-Za-z]:\/$/.test(path)) return;
             const parent = path.replace(/[\\/]+$/, '').replace(/[/\\][^/\\]+$/, '') || '/';
@@ -44,11 +50,11 @@
     }
 
     window.folderPicker = {
-        show(opts = {}) {
+        show(opts: { startPath?: string } = {}) {
             return new Promise(resolve => {
-                const theme = (window.oicppApp?.settings?.theme) || 'dark';
+                const theme = (w.oicppApp?.settings?.theme) || 'dark';
                 const isLightTheme = String(theme).toLowerCase().includes('light');
-                let cur = opts.startPath || window.oicppApp?.settings?.lastOpen || ((process.platform === 'win32') ? (process.env.USERPROFILE || 'C:/') : '/');
+                let cur = opts.startPath || w.oicppApp?.settings?.lastOpen || ((process.platform === 'win32') ? (process.env.USERPROFILE || 'C:/') : '/');
                 if (!cur) cur = '/';
                 const backdrop = E('div', 'folder-picker-backdrop');
                 const panel = E('div', 'folder-picker ' + (isLightTheme ? 'light' : ''));
@@ -69,7 +75,7 @@
                 body.appendChild(treeWrap);
 
                 const quick = E('div', 'folder-picker-quick');
-                quick.appendChild(E('div', 'folder-picker-quick-title', window.i18n ? window.i18n.t('folderPicker.quickAccess') : 'Quick Access'));
+                quick.appendChild(E('div', 'folder-picker-quick-title', w.i18n ? w.i18n.t('folderPicker.quickAccess') : 'Quick Access'));
                 const quickList = E('div', 'folder-picker-quick-list');
                 getQuickAccess().forEach(q => {
                     const it = E('div', 'folder-picker-quick-item', q.name);
@@ -80,18 +86,18 @@
                 quick.appendChild(quickList);
                 side.appendChild(quick);
 
-                const search = E('input', 'folder-picker-search');
-                search.placeholder = window.i18n ? window.i18n.t('folderPicker.filterDir') : '过滤当前目录';
+                const search = E('input', 'folder-picker-search') as HTMLInputElement;
+                search.placeholder = w.i18n ? w.i18n.t('folderPicker.filterDir') : '过滤当前目录';
                 side.appendChild(search);
 
                 const createWrap = E('div', 'folder-picker-create');
-                const createInput = E('input');
-                createInput.placeholder = window.i18n ? window.i18n.t('folderPicker.createFolder') : '新建文件夹';
-                const createBtn = E('button', null, window.i18n ? window.i18n.t('folderPicker.create') : 'Create');
+                const createInput = E('input') as HTMLInputElement;
+                createInput.placeholder = w.i18n ? w.i18n.t('folderPicker.createFolder') : '新建文件夹';
+                const createBtn = E('button', null, w.i18n ? w.i18n.t('folderPicker.create') : 'Create');
                 createBtn.onclick = async () => {
                     const name = createInput.value.trim();
                     if (!name) return;
-                    await window.electronAPI.ensureDirectory(norm(cur, name));
+                    await w.electronAPI.ensureDirectory(norm(cur, name));
                     createInput.value = '';
                     reload();
                 };
@@ -105,8 +111,8 @@
                 tip.style.opacity = '.7';
                 tip.style.flex = '1';
                 const actions = E('div', 'folder-picker-actions');
-                const cancel = E('button', 'folder-picker-btn secondary', window.i18n ? window.i18n.t('folderPicker.cancel') : 'Cancel');
-                const choose = E('button', 'folder-picker-btn', window.i18n ? window.i18n.t('folderPicker.selectThis') : 'Choose This Directory');
+                const cancel = E('button', 'folder-picker-btn secondary', w.i18n ? w.i18n.t('folderPicker.cancel') : 'Cancel');
+                const choose = E('button', 'folder-picker-btn', w.i18n ? w.i18n.t('folderPicker.selectThis') : 'Choose This Directory') as HTMLButtonElement;
                 cancel.onclick = () => { clean(); resolve(null); };
                 choose.onclick = () => { clean(); resolve(cur); };
                 actions.appendChild(cancel);
@@ -121,10 +127,10 @@
                 async function reload() {
                     choose.disabled = true;
                     buildBreadcrumb(cur, bar, p => { cur = p; reload(); });
-                    treeWrap.innerHTML = '<div class="folder-picker-loading">' + (window.i18n ? window.i18n.t('folderPicker.loading') : 'Loading...') + '</div>';
+                    treeWrap.innerHTML = '<div class="folder-picker-loading">' + (w.i18n ? w.i18n.t('folderPicker.loading') : 'Loading...') + '</div>';
                     let entries = [], error = null;
                     try {
-                        entries = await window.electronAPI.readDirectory(cur);
+                        entries = await w.electronAPI.readDirectory(cur);
                     } catch (e) { error = e; }
                     const folders = (entries || []).filter(i => i.type === 'folder');
                     const f = search.value.trim().toLowerCase();
@@ -155,8 +161,8 @@
                         item.ondblclick = () => { cur = d.path; reload(); };
                         treeWrap.appendChild(item);
                     });
-                    if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
-                        window.uiIcons.hydrate(treeWrap);
+                    if (w.uiIcons && typeof w.uiIcons.hydrate === 'function') {
+                        w.uiIcons.hydrate(treeWrap);
                     }
                     choose.disabled = false;
                 }

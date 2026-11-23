@@ -1,16 +1,78 @@
-class SidebarManager {
-    constructor() {
-        this.currentPanel = 'files';
-        this.panels = {
-            files: new FileExplorer(),
-            samples: new SampleTester(),
-            compare: new CodeComparer(),
-            debug: new DebugPanel(),
-            cloud: new CloudSyncPanel()
-        };
+declare class FileExplorer {
+    constructor();
+    hasWorkspace?: boolean;
+    currentPath?: string;
+    createNewFile?: () => void;
+    createNewFolder?: () => void;
+    refresh?: () => void;
+    batchDelete?: () => void;
+    getActiveFilePath?: () => string | null;
+    isCloudFilePath?: (path: string) => boolean;
+}
+declare class SampleTester { constructor(); }
+declare class CodeComparer {
+    constructor();
+    checkCompilerAndUpdate?: () => void;
+}
+declare class DebugPanel { constructor(); }
+declare class CloudSyncPanel {
+    constructor();
+    setLoggedInState?: (loggedIn: boolean) => void;
+}
 
-        this._pendingResizeRaf = null;
-        this._pendingResizeIsTimeout = false;
+const editorManager = window.editorManager as unknown as {
+    currentEditor?: { layout?: () => void } | null;
+};
+
+const fileExplorerManager = window.fileExplorerManager as unknown as {
+    hasWorkspace?: boolean;
+    currentPath?: string;
+    createNewFile?: () => void;
+    createNewFolder?: () => void;
+    refresh?: () => void;
+    batchDelete?: () => void;
+    getActiveFilePath?: () => string | null;
+    isCloudFilePath?: (path: string) => boolean;
+};
+
+const i18n = window.i18n as unknown as {
+    t?: (key: string, params?: Record<string, unknown>) => string;
+};
+
+const oicppApp = window.oicppApp as unknown as {
+    showMessage?: (message: string, type?: string) => void;
+    getActiveFilePath?: () => string | null;
+    isCloudFilePath?: (path: string) => boolean;
+};
+
+class SidebarManager {
+    currentPanel: string = 'files';
+    panels: {
+        files: FileExplorer;
+        samples: SampleTester;
+        compare: CodeComparer;
+        debug: DebugPanel;
+        cloud: CloudSyncPanel;
+    } = {
+        files: new FileExplorer(),
+        samples: new SampleTester(),
+        compare: new CodeComparer(),
+        debug: new DebugPanel(),
+        cloud: new CloudSyncPanel()
+    };
+
+    _pendingResizeRaf: ReturnType<typeof setTimeout> | null = null;
+    _pendingResizeIsTimeout: boolean = false;
+
+    resizer: HTMLElement | null = null;
+    sidebar: HTMLElement | null = null;
+    sidebarPanel: HTMLElement | null = null;
+    isCollapsed: boolean = false;
+    savedWidth: number = 0;
+    _prevWidth: string = '';
+    _wasCollapsed: boolean = false;
+
+    constructor() {
 
         this.init();
     }
@@ -26,7 +88,7 @@ class SidebarManager {
     async bootstrapCloudVisibility() {
         try {
             if (!window.electronAPI?.getIdeLoginStatus) return;
-            const status = await window.electronAPI.getIdeLoginStatus();
+            const status = await window.electronAPI.getIdeLoginStatus?.();
             logInfo('[CloudSpace] 启动时登录状态:', {
                 loggedIn: !!status?.loggedIn,
                 user: status?.user?.username || ''
@@ -38,20 +100,20 @@ class SidebarManager {
     }
 
     setupEventListeners() {
-        const sidebarIcons = document.querySelectorAll('.sidebar-icon');
+        const sidebarIcons = document.querySelectorAll<HTMLElement>('.sidebar-icon');
         logInfo('setupEventListeners: 找到', sidebarIcons.length, '个侧边栏图标');
         sidebarIcons.forEach((icon, index) => {
             logInfo('绑定事件监听器到图标', index, '面板名:', icon.dataset.panel);
             icon.tabIndex = 0;
             icon.setAttribute('role', 'button');
-            icon.addEventListener('click', (e) => {
+            icon.addEventListener('click', (e: MouseEvent) => {
                 e.preventDefault();
                 icon.focus({ preventScroll: true });
-                const panelName = e.currentTarget.dataset.panel;
+                const panelName = (e.currentTarget as HTMLElement).dataset.panel;
                 logInfo('图标被点击，面板名:', panelName);
                 this.showPanel(panelName);
             });
-            icon.addEventListener('keydown', (e) => {
+            icon.addEventListener('keydown', (e: KeyboardEvent) => {
                 if (e.key !== 'Enter' && e.key !== ' ') return;
                 e.preventDefault();
                 e.stopPropagation();
@@ -59,10 +121,9 @@ class SidebarManager {
             });
         });
 
-        const sidebarIconsContainer = document.querySelector('.sidebar-icons');
+        const sidebarIconsContainer = document.querySelector<HTMLElement>('.sidebar-icons');
         if (sidebarIconsContainer) {
-            sidebarIconsContainer.addEventListener('dblclick', (e) => {
-                e.preventDefault();
+            sidebarIconsContainer.addEventListener('dblclick', () => {
                 this.toggleSidebar();
             });
         }
@@ -71,8 +132,8 @@ class SidebarManager {
     }
 
     setupActiveFileListener() {
-        window.addEventListener('oicpp:active-file-changed', (event) => {
-            const filePath = event?.detail?.filePath;
+        window.addEventListener('oicpp:active-file-changed', (event: CustomEvent) => {
+            const filePath = event.detail?.filePath;
             const isCloudFile = typeof filePath === 'string' && /^cloud:/i.test(filePath);
             this.updateCloudPanelLocks();
             if (isCloudFile && ['debug', 'samples', 'compare'].includes(this.currentPanel)) {
@@ -82,10 +143,10 @@ class SidebarManager {
     }
 
     setupResizer() {
-        const sidebar = document.querySelector('.sidebar');
-        const resizer = document.querySelector('.sidebar-resizer');
-        const mainContainer = document.querySelector('.main-container');
-        const sidebarPanel = document.querySelector('.sidebar-panel');
+        const sidebar = document.querySelector<HTMLElement>('.sidebar');
+        const resizer = document.querySelector<HTMLElement>('.sidebar-resizer');
+        const mainContainer = document.querySelector<HTMLElement>('.main-container');
+        const sidebarPanel = document.querySelector<HTMLElement>('.sidebar-panel');
 
         if (!sidebar || !resizer || !mainContainer || !sidebarPanel) return;
 
@@ -98,7 +159,7 @@ class SidebarManager {
         this.sidebarPanel = sidebarPanel;
         this.isCollapsed = false;
 
-        resizer.addEventListener('mousedown', (e) => {
+        resizer.addEventListener('mousedown', (e: MouseEvent) => {
             e.preventDefault();
             isResizing = true;
             startX = e.clientX;
@@ -111,7 +172,7 @@ class SidebarManager {
             document.addEventListener('selectstart', preventSelection);
         });
 
-        document.addEventListener('mousemove', (e) => {
+        document.addEventListener('mousemove', (e: MouseEvent) => {
             if (!isResizing) return;
 
             e.preventDefault();
@@ -146,7 +207,7 @@ class SidebarManager {
             document.removeEventListener('selectstart', preventSelection);
 
             const width = sidebar.offsetWidth;
-            localStorage.setItem('sidebar-width', width);
+            localStorage.setItem('sidebar-width', String(width));
 
             this.scheduleEditorResize(true);
             setTimeout(() => {
@@ -175,7 +236,7 @@ class SidebarManager {
 
         setTimeout(() => {
             const welcomeContainer = document.getElementById('welcome-container');
-            const editorArea = document.querySelector('.editor-area');
+            const editorArea = document.querySelector<HTMLElement>('.editor-area');
 
             const isWelcomeVisible = welcomeContainer &&
                 (welcomeContainer.style.display === 'block' ||
@@ -209,7 +270,7 @@ class SidebarManager {
     }
 
     hideForWelcome() {
-        const sidebar = this.sidebar || document.querySelector('.sidebar');
+        const sidebar = this.sidebar || document.querySelector<HTMLElement>('.sidebar');
         if (sidebar) {
             if (sidebar.classList.contains('hidden')) return;
             try {
@@ -222,7 +283,7 @@ class SidebarManager {
     }
 
     showForEditor() {
-        const sidebar = this.sidebar || document.querySelector('.sidebar');
+        const sidebar = this.sidebar || document.querySelector<HTMLElement>('.sidebar');
         if (sidebar) {
             sidebar.classList.remove('hidden');
             try {
@@ -277,13 +338,14 @@ class SidebarManager {
         this.sidebarPanel.style.display = '';
 
         const currentWidth = parseInt(this.sidebar.style.width, 10);
-        const rememberedWidth = parseInt(this.savedWidth, 10);
-        const storedWidth = parseInt(localStorage.getItem('sidebar-width'), 10);
+        const rememberedWidth = this.savedWidth;
+        const storedWidthStr = localStorage.getItem('sidebar-width');
+        const storedWidth = parseInt(storedWidthStr ?? '', 10);
         const width = [currentWidth, rememberedWidth, storedWidth]
             .find(candidate => Number.isFinite(candidate) && candidate >= 200) || 350;
         this.sidebar.style.width = width + 'px';
 
-        localStorage.setItem('sidebar-width', width);
+        localStorage.setItem('sidebar-width', String(width));
         localStorage.removeItem('sidebar-collapsed');
 
         logInfo('侧边栏已展开，宽度:', width, 'isCollapsed:', this.isCollapsed);
@@ -301,7 +363,7 @@ class SidebarManager {
 
     checkResizeStatus() {
         const welcomeContainer = document.getElementById('welcome-container');
-        const editorArea = document.querySelector('.editor-area');
+        const editorArea = document.querySelector<HTMLElement>('.editor-area');
         const isWelcomeVisible = welcomeContainer && welcomeContainer.style.display === 'block';
         const isEditorVisible = editorArea && editorArea.style.display !== 'none';
         const isResizerEnabled = this.resizer && this.resizer.style.display !== 'none';
@@ -321,10 +383,10 @@ class SidebarManager {
     }
 
     triggerEditorResize() {
-        if (window.monaco && window.editorManager && window.editorManager.currentEditor) {
+        if (window.monaco && editorManager && editorManager.currentEditor) {
             setTimeout(() => {
-                if (window.editorManager.currentEditor.layout) {
-                    window.editorManager.currentEditor.layout();
+                if (editorManager.currentEditor.layout) {
+                    editorManager.currentEditor.layout();
                 }
             }, 50);
         }
@@ -338,7 +400,7 @@ class SidebarManager {
                 if (this._pendingResizeIsTimeout) {
                     clearTimeout(this._pendingResizeRaf);
                 } else {
-                    try { cancelAnimationFrame(this._pendingResizeRaf); } catch (_) { }
+                    try { cancelAnimationFrame(this._pendingResizeRaf as unknown as number); } catch (_) { }
                 }
                 this._pendingResizeRaf = null;
                 this._pendingResizeIsTimeout = false;
@@ -371,7 +433,7 @@ class SidebarManager {
     }
 
     setupPanelHeaderButtons() {
-        const fileButtons = document.querySelectorAll('#files-panel .icon-btn');
+        const fileButtons = document.querySelectorAll<HTMLElement>('#files-panel .icon-btn');
         fileButtons.forEach((btn, index) => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -405,8 +467,8 @@ class SidebarManager {
         logInfo('showPanel called, panelName:', panelName, 'isCollapsed:', this.isCollapsed);
         this.updateCloudPanelLocks();
         if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
-            if (window.oicppApp?.showMessage) {
-                window.oicppApp.showMessage('云文件仅支持基础编辑与手动保存，请下载到本地再使用该面板。', 'warning');
+            if (oicppApp?.showMessage) {
+                oicppApp.showMessage('云文件仅支持基础编辑与手动保存，请下载到本地再使用该面板。', 'warning');
             }
             return;
         }
@@ -419,7 +481,7 @@ class SidebarManager {
             return;
         }
 
-        const icons = document.querySelectorAll('.sidebar-icon');
+        const icons = document.querySelectorAll<HTMLElement>('.sidebar-icon');
         icons.forEach(icon => {
             icon.classList.remove('active');
             if (icon.dataset.panel === panelName) {
@@ -427,7 +489,7 @@ class SidebarManager {
             }
         });
 
-        const panels = document.querySelectorAll('.panel-content');
+        const panels = document.querySelectorAll<HTMLElement>('.panel-content');
         panels.forEach(panel => {
             panel.classList.remove('active');
             if (panel.id === `${panelName}-panel`) {
@@ -461,26 +523,27 @@ class SidebarManager {
     }
 
     updateFileExplorerButtons() {
-        const fileButtons = document.querySelectorAll('#files-panel .icon-btn');
+        const fileButtons = document.querySelectorAll<HTMLElement>('#files-panel .icon-btn');
         const fileExplorer = this.panels.files;
         const hasWorkspace = fileExplorer && fileExplorer.hasWorkspace;
 
         fileButtons.forEach((btn, index) => {
+            const button = btn as HTMLButtonElement;
             // 新建文件、新建文件夹、批量删除在无工作区时禁用；刷新始终可用
             if (index === 0 || index === 1 || index === 3) {
-                btn.disabled = !hasWorkspace;
-                btn.style.opacity = hasWorkspace ? '1' : '0.5';
-                btn.style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
+                button.disabled = !hasWorkspace;
+                button.style.opacity = hasWorkspace ? '1' : '0.5';
+                button.style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
             }
         });
     }
 
     isCloudFileActive() {
         try {
-            const filePath = window.oicppApp?.getActiveFilePath?.();
+            const filePath = oicppApp?.getActiveFilePath?.();
             if (!filePath) return false;
-            if (window.oicppApp?.isCloudFilePath) {
-                return window.oicppApp.isCloudFilePath(filePath);
+            if (oicppApp?.isCloudFilePath) {
+                return oicppApp.isCloudFilePath(filePath);
             }
             return typeof filePath === 'string' && /^cloud:/i.test(filePath);
         } catch (_) {
@@ -492,23 +555,23 @@ class SidebarManager {
         const locked = this.isCloudFileActive();
         const lockTargets = ['debug', 'samples', 'compare'];
         lockTargets.forEach(panel => {
-            const icon = document.querySelector(`.sidebar-icon[data-panel="${panel}"]`);
+            const icon = document.querySelector<HTMLElement>(`.sidebar-icon[data-panel="${panel}"]`);
             if (!icon) return;
             if (locked) {
                 icon.classList.add('disabled');
                 icon.setAttribute('title', '云文件仅支持基础编辑与手动保存');
             } else {
                 icon.classList.remove('disabled');
-                if (panel === 'debug') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.debug') : 'Debug');
-                if (panel === 'samples') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.sampleTester') : 'Sample Tester');
-                if (panel === 'compare') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.codeComparer') : 'Code Comparer');
+                if (panel === 'debug') icon.setAttribute('title', i18n ? i18n.t('sidebar.debug') : 'Debug');
+                if (panel === 'samples') icon.setAttribute('title', i18n ? i18n.t('sidebar.sampleTester') : 'Sample Tester');
+                if (panel === 'compare') icon.setAttribute('title', i18n ? i18n.t('sidebar.codeComparer') : 'Code Comparer');
             }
         });
     }
 
     setCloudPanelVisible(visible) {
         const show = !!visible;
-        const icon = document.querySelector('.sidebar-icon.cloud-sync-icon');
+        const icon = document.querySelector<HTMLElement>('.sidebar-icon.cloud-sync-icon');
         const panel = document.getElementById('cloud-panel');
         if (icon) {
             icon.style.display = show ? 'flex' : 'none';

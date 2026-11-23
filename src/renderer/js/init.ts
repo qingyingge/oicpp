@@ -1,11 +1,23 @@
+// Forward-declared globals (attached to window by their respective .ts modules)
+// SidebarManager, TitlebarManager, FileExplorer, SampleTester, CodeComparer,
+// DebugPanel, CloudSyncPanel are declared in sidebar.ts / titlebar.ts (script scope).
+declare const TabManager: { new (): { saveAllFiles: () => Promise<{ success: boolean; failures: any[] }>; saveCurrentFile: () => Promise<unknown>; getTabCount: () => number; showWelcomePage: () => void; getUnsavedFiles: () => unknown; tabs: Array<{ isTempFile?: boolean; viewType?: string; fileName?: string }>; getTabContentForSave: () => unknown; saveAsFile: (content: string, filePath: string) => Promise<unknown>; }; };
+declare const OICPPApp: { new (): { init: () => Promise<void>; saveCurrentFile: () => Promise<unknown>; createNewCppFile: () => void; showMessage: (message: string, type?: string) => void; getActiveFilePath: () => string | null; isCloudFilePath: (path: string) => boolean; }; };
+
+const dialogManager = window.dialogManager as { showConfirmDialog: (title: string, msg: string) => Promise<void> } | undefined;
+
 document.addEventListener('DOMContentLoaded', function() {
+    const i18n = window.i18n as { init: () => Promise<void>; enableAutoTranslate: () => void; t: (key: string, params?: Record<string, unknown>) => string } | undefined;
+    const dialogManager = window.dialogManager as { showNewYearGreeting: (d: Date) => void; showSpringFestivalGreeting: (d: Date) => void; showConfirmDialog: (title: string, msg: string) => Promise<void> } | undefined;
+    const _electronAPI: unknown = window.electronAPI;
+    const electronAPI = _electronAPI as ({ getUserIconPath: () => Promise<string>; onRequestSaveAll: (cb: () => Promise<unknown>) => void; notifySaveAllFailed: (d: unknown) => void; notifySaveAllComplete: () => void } | undefined);
     logInfo('DOM 加载完成，开始初始化应用...');
     setUserIconPath();
     // Initialize i18n before app
-    if (window.i18n && typeof window.i18n.init === 'function') {
-        window.i18n.init().then(() => {
-            if (typeof window.i18n.enableAutoTranslate === 'function') {
-                window.i18n.enableAutoTranslate();
+    if (i18n && typeof i18n.init === 'function') {
+        i18n.init().then(() => {
+            if (typeof i18n.enableAutoTranslate === 'function') {
+                i18n.enableAutoTranslate();
             }
         }).catch(err => logError('i18n 初始化失败:', err));
     }
@@ -16,15 +28,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const isNewYearDay = (now.getMonth() === 0 && now.getDate() === 1);
             const isSpringFestivalDay = (now.getMonth() === 1 && now.getDate() === 17);
 
-            if (!window.dialogManager) return;
+            if (!dialogManager) return;
 
-            if (isNewYearDay && typeof window.dialogManager.showNewYearGreeting === 'function') {
-                window.dialogManager.showNewYearGreeting(now);
+            if (isNewYearDay && typeof dialogManager.showNewYearGreeting === 'function') {
+                dialogManager.showNewYearGreeting(now);
                 return;
             }
 
-            if (isSpringFestivalDay && typeof window.dialogManager.showSpringFestivalGreeting === 'function') {
-                window.dialogManager.showSpringFestivalGreeting(now);
+            if (isSpringFestivalDay && typeof dialogManager.showSpringFestivalGreeting === 'function') {
+                dialogManager.showSpringFestivalGreeting(now);
             }
         } catch (e) {
             try { logWarn('新年弹窗触发失败:', e); } catch (_) { }
@@ -34,8 +46,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function setUserIconPath() {
     try {
-        const userIconPath = await window.electronAPI.getUserIconPath();
-        const appIcon = document.getElementById('app-icon');
+        if (!electronAPI) return;
+    const userIconPath = await (window.electronAPI as unknown as { getUserIconPath: () => Promise<string> }).getUserIconPath();
+        const appIcon = document.getElementById('app-icon') as HTMLImageElement | null;
         if (appIcon) {
             appIcon.src = userIconPath;
         }
@@ -79,8 +92,9 @@ async function initializeApp() {
         
         logInfo('应用初始化完成！');
         try {
-            if (window.electronAPI && window.electronAPI.onRequestSaveAll) {
-                window.electronAPI.onRequestSaveAll(async () => {
+            const ea = window.electronAPI as unknown as { onRequestSaveAll: (cb: () => Promise<unknown>) => void } | undefined;
+            if (ea && ea.onRequestSaveAll) {
+                ea.onRequestSaveAll(async () => {
                     let result = { success: true, failures: [] };
                     try {
                         if (window.tabManager && typeof window.tabManager.saveAllFiles === 'function') {
@@ -99,13 +113,13 @@ async function initializeApp() {
                         const message = `以下文件保存失败，窗口保持打开，请处理后重试：\n${detail || '未知错误'}`;
                         logError('[关闭前保存]', message);
                         try {
-                            if (window.dialogManager?.showConfirmDialog) {
-                                window.dialogManager.showConfirmDialog('保存失败', message).catch(() => { });
+                            if (dialogManager?.showConfirmDialog) {
+                                dialogManager.showConfirmDialog('保存失败', message).catch(() => { });
                             }
                         } catch (_) { }
-                        try { window.electronAPI.notifySaveAllFailed({ failures }); } catch (_) { }
+                        try { window.electronAPI.notifySaveAllFailed?.({ failures }); } catch (_) { }
                     } else {
-                        window.electronAPI.notifySaveAllComplete();
+                        window.electronAPI.notifySaveAllComplete?.();
                     }
                 });
             }
@@ -113,14 +127,14 @@ async function initializeApp() {
         
     } catch (error) {
         logError('应用初始化失败:', error);
-        showErrorMessage((window.i18n ? window.i18n.t('app.appInitFailed', {msg: error.message}) : '应用初始化失败: ' + error.message));
+        showErrorMessage((i18n ? i18n.t('app.appInitFailed', {msg: error.message}) : '应用初始化失败: ' + error.message));
     }
 }
 
 function setupDefaultContent() {
     setTimeout(function() {
         try {
-            const fileExplorer = window.sidebarManager?.getPanelManager?.('files');
+            const fileExplorer = window.sidebarManager?.getPanelManager?.('files') as { hasWorkspace?: boolean } | undefined;
             const hasWorkspace = !!(fileExplorer && fileExplorer.hasWorkspace);
             if (hasWorkspace) {
                 logInfo('检测到已打开工作区，跳过欢迎页面');
@@ -137,8 +151,8 @@ function setupDefaultContent() {
             }
         } catch (error) {
             logError('显示欢迎页面时出错:', error);
-            if (window.tabManager && typeof window.tabManager.createNewCppFile === 'function') {
-                window.tabManager.createNewCppFile();
+            if (window.oicppApp && typeof window.oicppApp.createNewCppFile === 'function') {
+                window.oicppApp.createNewCppFile();
             }
         }
     }, 1000); 

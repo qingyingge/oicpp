@@ -1,3 +1,33 @@
+export {}
+
+const i18n = window.i18n as { t: (key: string, params?: Record<string, unknown>) => string } | undefined;
+const tabManager = window.tabManager as unknown as { tabs: Map<string, any>; activeGroupId: string; openBrowserTab: (opts: { url: string; groupId?: string }) => void } | undefined;
+
+interface OicppWebview {
+    loadURL(url: string): Promise<unknown>;
+    getURL(): string;
+    canGoBack(): boolean;
+    goBack(): void;
+    canGoForward(): boolean;
+    goForward(): void;
+    reload(): void;
+    stop(): void;
+    focus(): void;
+    shadowRoot: ShadowRoot | null;
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+    getWebContentsId?(): number;
+    style: CSSStyleDeclaration;
+    parentNode: Node | null;
+    setAttribute(name: string, value: string): void;
+    getAttribute(name: string): string | null;
+    className: string;
+    dataset: DOMStringMap;
+    baseURI: string;
+    childNodes: NodeList;
+    firstChild: Node | null;
+    isConnected: boolean;
+}
+
 /**
  * BrowserManager - 内置浏览器管理器
  * 提供标签页内的网页浏览功能，支持分屏
@@ -36,14 +66,33 @@ p{font-size:13px;color:${muted};margin-bottom:24px;text-align:center;line-height
 })();
 
 class BrowserManager {
-    constructor() {
-        this.browserTabs = new Map(); // uniqueKey -> { webview, container, navBar, urlInput, title }
-        this._currentFocusKey = null;
-        this._pendingNav = new Map(); // uniqueKey -> url
-        this._newTabPage = NEW_TAB_PAGE_HTML;
+    private browserTabs: Map<string, {
+        webview: OicppWebview;
+        iframe: OicppWebview;
+        frameWrapper: HTMLDivElement;
+        container: HTMLDivElement;
+        navBar: HTMLDivElement;
+        urlInput: HTMLInputElement;
+        title: string;
+        canGoBack: boolean;
+        canGoForward: boolean;
+        isLoading: boolean;
+        currentUrl: string;
+        history: unknown[];
+        _hasBeenShown: boolean;
+        syncWebviewSize?: () => void;
+        resizeObserver?: ResizeObserver;
+        _needsContentRestore?: boolean;
+    }> = new Map();
+    private _currentFocusKey: string | null = null;
+    private _pendingNav: Map<string, string> = new Map();
+    private _newTabPage: string = NEW_TAB_PAGE_HTML;
+    private _removeOpenNewTabListener: (() => void) | null = null;
 
-        if (window.electronAPI?.onBrowserOpenNewTab) {
-            this._removeOpenNewTabListener = window.electronAPI.onBrowserOpenNewTab((request) => {
+    constructor() {
+        const ea = window.electronAPI as unknown as { onBrowserOpenNewTab: (cb: (request: { url?: string; sourceWebContentsId?: number }) => void) => (() => void) } | undefined;
+        if (ea?.onBrowserOpenNewTab) {
+            this._removeOpenNewTabListener = ea.onBrowserOpenNewTab((request) => {
                 this._handleOpenNewTabRequest(request);
             });
         }
@@ -88,7 +137,7 @@ class BrowserManager {
         frameWrapper.style.position = 'relative';
         frameWrapper.style.overflow = 'hidden';
 
-        const webview = document.createElement('webview');
+        const webview = document.createElement('webview') as unknown as OicppWebview;
         webview.className = 'browser-webview';
         // Electron 37 创建的 webview 内部 iframe 没有高度样式，会保留
         // HTML iframe 默认的 150px 高度。必须在首次导航前修正，否则
@@ -112,7 +161,7 @@ class BrowserManager {
         webview.style.height = '100%';
         webview.style.border = 'none';
 
-        frameWrapper.appendChild(webview);
+        frameWrapper.appendChild(webview as unknown as Node);
         container.appendChild(frameWrapper);
 
         // Electron 37 的 webview 内部 iframe 在初始 tab 中（容器为 display:none）
@@ -137,7 +186,7 @@ class BrowserManager {
             frameWrapper,
             container,
             navBar,
-            urlInput: navBar.querySelector('.browser-url-input'),
+            urlInput: navBar.querySelector('.browser-url-input') as HTMLInputElement,
             title: '',
             canGoBack: false,
             canGoForward: false,
@@ -145,7 +194,10 @@ class BrowserManager {
             currentUrl: initialUrl,
             history: [],
             // 标记是否已显示过；首次显示时强制重载，确保 guest 以正确视口重新布局
-            _hasBeenShown: false
+            _hasBeenShown: false,
+            _needsContentRestore: false,
+            syncWebviewSize: undefined,
+            resizeObserver: undefined
         };
         this.browserTabs.set(uniqueKey, state);
 
@@ -214,7 +266,7 @@ class BrowserManager {
         const urlInput = document.createElement('input');
         urlInput.type = 'text';
         urlInput.className = 'browser-url-input';
-        urlInput.setAttribute('placeholder', window.i18n ? window.i18n.t('browser.urlPlaceholder') : '输入网址或搜索...');
+        urlInput.setAttribute('placeholder', window.i18n ? i18n?.t('browser.urlPlaceholder') : '输入网址或搜索...');
         urlInput.value = initialUrl?.startsWith('data:text/html') ? '' : (initialUrl || '');
         urlInput.setAttribute('spellcheck', 'false');
         urlInput.setAttribute('autocomplete', 'off');
@@ -229,7 +281,7 @@ class BrowserManager {
             '<path d="M7 7V5h2v2h2v2H9v2H7V9H5V7h2z" fill="currentColor"/>',
             '</svg>'
         ].join('');
-        openNewTabBtn.title = window.i18n ? window.i18n.t('browser.openInNewTab') : '新建浏览器标签页';
+        openNewTabBtn.title = window.i18n ? i18n?.t('browser.openInNewTab') : '新建浏览器标签页';
         navBar.appendChild(openNewTabBtn);
 
         // 导航按钮事件
@@ -319,13 +371,13 @@ class BrowserManager {
     /**
      * 在新标签页中打开 URL
      */
-    _openInNewTab(url, groupId) {
-        if (!url || !window.tabManager) return;
+    _openInNewTab(url, groupId = '') {
+        if (!url || !tabManager) return;
         const resolvedUrl = url;
         // 使用 tabManager 打开新的浏览器标签
-        window.tabManager.openBrowserTab({
+        tabManager.openBrowserTab({
             url: resolvedUrl,
-            groupId: groupId || window.tabManager.activeGroupId
+            groupId: groupId || tabManager.activeGroupId
         });
     }
 
@@ -433,8 +485,8 @@ class BrowserManager {
     _updateNavButtons(uniqueKey) {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
-        const backBtn = state.navBar.querySelector('.browser-nav-back');
-        const forwardBtn = state.navBar.querySelector('.browser-nav-forward');
+        const backBtn = state.navBar.querySelector('.browser-nav-back') as HTMLElement;
+        const forwardBtn = state.navBar.querySelector('.browser-nav-forward') as HTMLElement;
         let canGoBack = false;
         let canGoForward = false;
         try {
@@ -451,7 +503,7 @@ class BrowserManager {
     _updateReloadButton(uniqueKey, isLoading) {
         const state = this.browserTabs.get(uniqueKey);
         if (!state) return;
-        const reloadBtn = state.navBar.querySelector('.browser-nav-reload');
+        const reloadBtn = state.navBar.querySelector('.browser-nav-reload') as HTMLElement;
         if (!reloadBtn) return;
         if (isLoading) {
             reloadBtn.innerHTML = [
@@ -459,7 +511,7 @@ class BrowserManager {
                 '<rect x="6" y="6" width="12" height="12" rx="2"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.stop') : '停止';
+            reloadBtn.title = window.i18n ? i18n?.t('browser.stop') : '停止';
             reloadBtn.dataset.action = 'stop';
         } else {
             reloadBtn.innerHTML = [
@@ -468,7 +520,7 @@ class BrowserManager {
                 '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.reload') : '刷新';
+            reloadBtn.title = window.i18n ? i18n?.t('browser.reload') : '刷新';
             reloadBtn.dataset.action = 'reload';
         }
     }
@@ -477,13 +529,13 @@ class BrowserManager {
      * 更新标签标题
      */
     _updateTabTitle(uniqueKey, title) {
-        if (!title || !window.tabManager) return;
-        const tabData = window.tabManager.tabs.get(uniqueKey);
+        if (!title || !tabManager) return;
+        const tabData = tabManager.tabs.get(uniqueKey);
         if (!tabData) return;
         const displayTitle = title || tabData.fileName;
         tabData.fileName = displayTitle;
         if (tabData.element) {
-            const label = tabData.element.querySelector('.tab-label');
+            const label = tabData.element.querySelector('.tab-label') as HTMLElement;
             if (label) {
                 label.textContent = displayTitle;
                 label.title = displayTitle;
@@ -507,7 +559,7 @@ class BrowserManager {
         try {
             if (state.webview && state.webview.parentNode) {
                 try { state.webview.stop(); } catch (_) {}
-                state.webview.parentNode.removeChild(state.webview);
+                state.webview.parentNode.removeChild(state.webview as unknown as Node);
             }
             if (state.resizeObserver) {
                 try { state.resizeObserver.disconnect(); } catch (_) {}
