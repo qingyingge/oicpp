@@ -86,7 +86,7 @@ interface Window {
     dialogManager?: {
         showNewYearGreeting?: (d: Date) => void;
         showSpringFestivalGreeting?: (d: Date) => void;
-        showConfirmDialog?: (title: string, msg: string) => Promise<void>;
+        showConfirmDialog?: (title: string, msg: string) => Promise<unknown>;
         showActionDialog?: (title: string, msg: string, buttons: Array<{ id: string; label: string; className?: string }>) => Promise<unknown>;
         showError?: (title: string, msg: string) => void;
     };

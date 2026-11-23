@@ -1,3 +1,5 @@
+export {};
+
 class DialogManager {
     currentDialog: { id: string; element: HTMLElement; resolve: (value: unknown) => void; reject: (reason?: unknown) => void } | null = null;
     _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -8,7 +10,7 @@ class DialogManager {
         this.createDialogContainer();
     }
 
-    createDialogContainer() {
+    createDialogContainer(): void {
         const overlay = document.createElement('div');
         overlay.className = 'dialog-overlay';
         overlay.id = 'dialog-overlay';
@@ -22,7 +24,7 @@ class DialogManager {
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
 
-        overlay.addEventListener('click', (e) => {
+        overlay.addEventListener('click', (e: MouseEvent) => {
             try {
                 if (e.target !== overlay) return;
                 if (overlay.dataset.closeOnBackdrop !== '1') return;
@@ -32,7 +34,7 @@ class DialogManager {
         });
     }
 
-    resetDialogState() {
+    resetDialogState(): void {
         const overlay = document.getElementById('dialog-overlay');
         const container = document.getElementById('dialog-container');
         if (overlay) {
@@ -43,13 +45,13 @@ class DialogManager {
         }
     }
 
-    attachEscapeToClose() {
+    attachEscapeToClose(): void {
         try {
             if (this._keydownHandler) {
                 document.removeEventListener('keydown', this._keydownHandler, true);
                 this._keydownHandler = null;
             }
-            this._keydownHandler = (e) => {
+            this._keydownHandler = (e: KeyboardEvent) => {
                 try {
                     if (e.key === 'Escape') {
                         e.preventDefault();
@@ -63,7 +65,7 @@ class DialogManager {
         }
     }
 
-    showInputDialog(title: string, defaultValue = '', placeholder = '', options: { selectStart?: number; selectEnd?: number } = {}) {
+    showInputDialog(title: string, defaultValue = '', placeholder = '', options: { selectStart?: number; selectEnd?: number } = {}): Promise<unknown> {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = document.getElementById('dialog-overlay');
@@ -107,7 +109,7 @@ class DialogManager {
             }, 50);
 
             if (input) {
-                input.addEventListener('keydown', (e) => {
+                input.addEventListener('keydown', (e: KeyboardEvent) => {
                     e.stopPropagation();
 
                     if (e.key === 'Enter') {
@@ -120,7 +122,7 @@ class DialogManager {
                 });
             }
 
-            overlay.addEventListener('keydown', (e) => {
+            overlay.addEventListener('keydown', (e: KeyboardEvent) => {
                 e.stopPropagation();
             });
 
@@ -133,7 +135,7 @@ class DialogManager {
         });
     }
 
-    showConfirmDialog(title, message) {
+    showConfirmDialog(title: string, message: string): Promise<unknown> {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = document.getElementById('dialog-overlay');
@@ -164,7 +166,7 @@ class DialogManager {
         });
     }
 
-    showActionDialog(title, message, actions = []) {
+    showActionDialog(title: string, message: string, actions: Array<{ id: string; label: string; className?: string }> = []): Promise<unknown> {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = document.getElementById('dialog-overlay');
@@ -201,7 +203,7 @@ class DialogManager {
         });
     }
 
-    showNewYearGreeting(now = new Date()) {
+    showNewYearGreeting(now: Date = new Date()): Promise<boolean> {
         return new Promise((resolve) => {
             this.resetDialogState();
 
@@ -258,7 +260,7 @@ class DialogManager {
         });
     }
 
-    showSpringFestivalGreeting(now = new Date()) {
+    showSpringFestivalGreeting(now: Date = new Date()): Promise<boolean> {
         return new Promise((resolve) => {
             this.resetDialogState();
 
@@ -314,7 +316,7 @@ class DialogManager {
         });
     }
 
-    confirmDialog() {
+    confirmDialog(): void {
         if (!this.currentDialog) return;
 
         const input = document.getElementById('dialog-input') as HTMLInputElement | null;
@@ -324,20 +326,20 @@ class DialogManager {
         this.hideDialog();
     }
 
-    cancelDialog() {
+    cancelDialog(): void {
         if (!this.currentDialog) return;
 
         this.currentDialog.resolve(null);
         this.hideDialog();
     }
 
-    actionDialog(actionId) {
+    actionDialog(actionId: string): void {
         if (!this.currentDialog) return;
         this.currentDialog.resolve(actionId);
         this.hideDialog();
     }
 
-    hideDialog() {
+    hideDialog(): void {
         const overlay = document.getElementById('dialog-overlay');
         const pending = this.currentDialog;
         this.currentDialog = null;
@@ -358,7 +360,7 @@ class DialogManager {
         }
     }
 
-    showGotoLineDialog() {
+    showGotoLineDialog(): Promise<unknown> {
         return this.showInputDialog(
             window.i18n ? window.i18n.t('dialog.gotoLine') : '跳转到行号',
             '1',
@@ -366,7 +368,7 @@ class DialogManager {
         );
     }
 
-    showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp') {
+    showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp'): Promise<unknown> {
         const errorTitle = window.i18n ? window.i18n.t('dialog.newFileDialogErrorTitle') : '新建文件 - 错误';
         const title = errorMessage ? errorTitle : (window.i18n ? window.i18n.t('dialog.newFileDialogTitle') : '新建文件');
         const placeholder = errorMessage
@@ -376,7 +378,7 @@ class DialogManager {
         return this.showInputDialog(title, initial, placeholder);
     }
 
-    showNewFolderDialog() {
+    showNewFolderDialog(): Promise<unknown> {
         return this.showInputDialog(
             window.i18n ? window.i18n.t('dialog.newFolderDialogTitle') : '新建文件夹',
             'new-folder',
@@ -384,37 +386,36 @@ class DialogManager {
         );
     }
 
-    escapeAttribute(text) {
+    escapeAttribute(text: string): string {
         return this.escapeHtml(String(text ?? ''))
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
 
     // 对消息做 HTML 转义，但允许调用方使用 \n 换行（以及历史遗留的 <br>）。
-    formatMessage(message) {
+    formatMessage(message: string): string {
         return this.escapeHtml(String(message ?? ''))
             .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
             .replace(/\r?\n/g, '<br>');
     }
 
-    showError(message) {
+    showError(message: unknown): void {
         this.resetDialogState();
         try { logError('[DialogShowError]', { message: String(message) }); } catch (_) { }
         try { logWarn('[DialogShowErrorSuppressed]', String(message)); } catch (_) { }
     }
 
-    escapeHtml(text) {
+    escapeHtml(text: string): string {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 }
 
-let dialogManager;
+let dialogManager: DialogManager | null = null;
 document.addEventListener('DOMContentLoaded', () => {
     dialogManager = new DialogManager();
     if (typeof window !== 'undefined') {
         window.dialogManager = dialogManager;
     }
-
 });
