@@ -225,6 +225,7 @@ class FileExplorer {
             });
 
         fileTree.appendChild(fragment);
+        this.setupDragAndDrop(fileTree);
     }
 
     private _isVisible(file: FileEntry): boolean {
@@ -267,6 +268,11 @@ class FileExplorer {
         content.appendChild(label);
 
         item.appendChild(content);
+
+        item.draggable = true;
+        item.addEventListener('dragstart', (event: DragEvent) => {
+            this.handleDragStart(event, file);
+        });
 
         if (file.type === 'folder') {
             item.addEventListener('click', (event: MouseEvent) => {
@@ -731,6 +737,192 @@ class FileExplorer {
         this._clearDragIndicators(fileTree);
         this._clearDraggingItems();
         this.isDragging = false;
+    }
+
+    // ========== 批次 4：拖放核心 ==========
+
+    private isFileSelected(path: string): boolean {
+        return !!path && this.selectedFiles.has(path);
+    }
+
+    private getActionSelection(targetFile: FileEntry | null): FileEntry[] {
+        const selected = Array.from(this.selectedFiles.values());
+        if (selected.length > 1 && targetFile && this.isFileSelected(targetFile.path)) {
+            return selected;
+        }
+        if (!targetFile && selected.length > 0) {
+            return selected;
+        }
+        if (targetFile) {
+            return [targetFile];
+        }
+        return [];
+    }
+
+    private handleDragStart(event: DragEvent, file: FileEntry): void {
+        const filesToDrag = this.getActionSelection(file);
+        const dragData = { files: filesToDrag.length ? filesToDrag : [file], action: 'move' as const };
+        const dt = event.dataTransfer;
+        if (dt) {
+            dt.setData('text/plain', JSON.stringify(dragData));
+            dt.effectAllowed = 'move';
+        }
+        dragData.files.forEach((f) => {
+            const dragItem = this._treeItemsByPath.get(f.path);
+            if (dragItem) {
+                dragItem.classList.add('dragging');
+                this._draggingItems.add(dragItem);
+            }
+        });
+        logInfo('开始拖拽:', dragData.files.map((f) => f.name));
+    }
+
+    private setupDragAndDrop(fileTree: HTMLElement): void {
+        const marker = fileTree as HTMLElement & { __oicppDragAndDropBound?: boolean };
+        if (marker.__oicppDragAndDropBound) return;
+        marker.__oicppDragAndDropBound = true;
+
+        const getItem = (event: Event): HTMLElement | null => {
+            const target = event.target as HTMLElement | null;
+            const item = target?.closest('.tree-item') as HTMLElement | null;
+            return item && fileTree.contains(item) ? item : null;
+        };
+
+        fileTree.addEventListener('dragover', (e: DragEvent) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const targetItem = getItem(e);
+            this._scheduleDragHover(fileTree, targetItem && fileTree.contains(targetItem) ? targetItem : null);
+        });
+
+        fileTree.addEventListener('dragleave', (e: DragEvent) => {
+            const related = e.relatedTarget as Node | null;
+            if (!fileTree.contains(related ?? undefined)) {
+                this._clearDragIndicators(fileTree);
+            }
+        });
+
+        fileTree.addEventListener('drop', (e: DragEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (this.isDragging) {
+                logInfo('拖拽操作正在进行中，忽略重复事件');
+                return;
+            }
+
+            this.isDragging = true;
+            this._clearDragIndicators(fileTree);
+            this._clearDraggingItems();
+
+            try {
+                const dragDataRaw = e.dataTransfer.getData('text/plain');
+                const dragData = JSON.parse(dragDataRaw) as { files: FileEntry[]; action: string };
+                const targetItem = (e.target as HTMLElement | null)?.closest('.tree-item') as HTMLElement | null;
+                let targetPath: string | null = null;
+                if (targetItem) {
+                    const targetType = targetItem.dataset.type;
+                    if (targetType === 'folder') {
+                        targetPath = targetItem.dataset.path ?? null;
+                    } else {
+                        const itemPath = targetItem.dataset.path ?? '';
+                        const lastSep = Math.max(itemPath.lastIndexOf('\\'), itemPath.lastIndexOf('/'));
+                        targetPath = lastSep >= 0 ? itemPath.substring(0, lastSep) : null;
+                    }
+                } else {
+                    targetPath = this.currentPath || null;
+                }
+
+                if (targetPath) {
+                    this.moveFiles(dragData.files || [], targetPath).finally(() => {
+                        this.isDragging = false;
+                    });
+                } else {
+                    this.isDragging = false;
+                }
+            } catch (error) {
+                logError('处理拖拽数据时出错:', error);
+                this.isDragging = false;
+            }
+        });
+
+        fileTree.addEventListener('dragend', () => {
+            this._clearDragState(fileTree);
+        });
+    }
+
+    private async moveFiles(files: FileEntry[], targetPath: string): Promise<void> {
+        logInfo('移动文件:', files.map((f) => f.name), '到:', targetPath);
+
+        const ipc = window.electronIPC;
+        if (!ipc) {
+            logError('Electron IPC 不可用');
+            return;
+        }
+
+        try {
+            const isSameLocation = files.some((file) => {
+                const fileDir = file.path.substring(0, Math.max(file.path.lastIndexOf('\\'), file.path.lastIndexOf('/')));
+                return fileDir === targetPath;
+            });
+            if (isSameLocation) {
+                logInfo('文件已在目标位置，无需移动');
+                return;
+            }
+
+            for (const file of files) {
+                const separator = targetPath.includes('\\') ? '\\' : '/';
+                const newPath = targetPath + separator + file.name;
+                const exists = await ipc.invoke('check-file-exists', newPath);
+                if (exists) {
+                    const shouldOverwrite = await this.confirmDelete(`文件 "${file.name}" 已存在于目标位置。是否要覆盖？`);
+                    if (!shouldOverwrite) {
+                        logInfo('用户取消了文件移动操作');
+                        return;
+                    }
+                }
+            }
+
+            for (const file of files) {
+                await new Promise<void>((resolve, reject) => {
+                    let resolved = false;
+                    const separator = targetPath.includes('\\') ? '\\' : '/';
+                    const newPath = targetPath + separator + file.name;
+
+                    const successHandler = (_event: unknown, oldPath: unknown, movedNewPath: unknown) => {
+                        if (String(oldPath) === file.path && String(movedNewPath) === newPath && !resolved) {
+                            resolved = true;
+                            logInfo(`文件移动成功: ${oldPath} -> ${movedNewPath}`);
+                            try {
+                                const tabManager = window.tabManager as {
+                                    updateTabPathBySource?: (oldPath: string, newPath: string, options?: { skipAutoSave?: boolean }) => void;
+                                } | undefined;
+                                tabManager?.updateTabPathBySource?.(String(oldPath), String(movedNewPath));
+                            } catch (e) { logWarn('移动后更新标签页路径失败:', e); }
+                            resolve();
+                        }
+                    };
+
+                    const errorHandler = (_event: unknown, oldPath: unknown, error: unknown) => {
+                        if (String(oldPath) === file.path && !resolved) {
+                            resolved = true;
+                            logError(`文件移动失败: ${oldPath}, 错误: ${error}`);
+                            reject(new Error(String(error)));
+                        }
+                    };
+
+                    window.electronIPC.on('file-moved', successHandler);
+                    window.electronIPC.on('file-move-error', errorHandler);
+                    ipc.send('move-file', file.path, newPath);
+                });
+            }
+
+            this.refresh();
+            logInfo('文件移动完成');
+        } catch (error) {
+            logError('移动文件时出错:', error);
+            this.showMessage(`移动文件时出错: ${String(error)}`, 'error');
+        }
     }
 
     searchFiles(_query: string): void {
