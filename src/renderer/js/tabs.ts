@@ -134,6 +134,26 @@ class TabManager {
     isLikelyFileObject(candidate: unknown): candidate is File {
         return candidate !== null && typeof candidate === 'object' && 'name' in (candidate as Record<string, unknown>);
     }
+
+    getGroupTabCount(groupId: string): number {
+        if (!groupId) return 0;
+        const group = this.groups.get(groupId);
+        if (!group) return 0;
+        const groupObj = group as Record<string, unknown>;
+        const tabBar = groupObj.tabBar as HTMLElement | undefined;
+        if (tabBar && typeof tabBar.querySelectorAll === 'function') {
+            return tabBar.querySelectorAll('.tab').length;
+        }
+        const tabs = groupObj.tabs as Map<string, unknown> | undefined;
+        if (tabs instanceof Map) {
+            return tabs.size;
+        }
+        return 0;
+    }
+
+    canSplitGroup(groupId: string): boolean {
+        return this.getGroupTabCount(groupId) > 1;
+    }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
