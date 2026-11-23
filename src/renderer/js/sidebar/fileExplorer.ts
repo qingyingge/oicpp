@@ -479,8 +479,73 @@ class FileExplorer {
         window.electronIPC.on('file-renamed', handler);
     }
 
-    deleteFile(_file: FileEntry): void {
-        // 批次 3 实现
+    async deleteFile(file: FileEntry): Promise<void> {
+        if (!file) {
+            logWarn('deleteFile 调用时未提供有效文件');
+            return;
+        }
+
+        logInfo('删除文件:', file.name);
+
+        const confirmed = await this.confirmDelete(`确定要删除 "${file.name}" 吗？`);
+        if (!confirmed) return;
+
+        const ipc = window.electronIPC;
+        if (!ipc) {
+            this.showMessage('文件删除功能需要在完整应用环境中运行', 'error');
+            return;
+        }
+
+        ipc.send('delete-file', file.path);
+
+        const handler = (_event: unknown, deletedPath: unknown, error: unknown) => {
+            if (String(deletedPath) === file.path) {
+                if (error) {
+                    this.showMessage(`删除失败: ${String(error)}`, 'error');
+                } else {
+                    this.selectedFiles.delete(file.path);
+                    if (this.selectedFile && this.selectedFile.path === file.path) {
+                        this.selectedFile = this.selectedFiles.size ? this.selectedFiles.values().next().value : null;
+                    }
+                    this.refresh();
+                }
+            }
+        };
+        window.electronIPC.on('file-deleted', handler);
+    }
+
+    private async confirmDelete(message: string): Promise<boolean> {
+        const dm = window.dialogManager;
+        if (dm && typeof dm.showConfirmDialog === 'function') {
+            const result = await dm.showConfirmDialog('删除文件', message);
+            return result !== null && result !== undefined && result !== false;
+        }
+        return window.confirm?.(message) ?? true;
+    }
+
+    async batchDelete(): Promise<void> {
+        if (!this.hasWorkspace) {
+            this.showMessage('没有打开的工作区', 'error');
+            return;
+        }
+
+        const selected = Array.from(this.selectedFiles.values());
+        if (selected.length === 0) {
+            this.showMessage('未选中任何文件', 'error');
+            return;
+        }
+
+        const confirmed = await this.confirmDelete(`确定要删除这 ${selected.length} 个项目吗？`);
+        if (!confirmed) return;
+
+        for (const file of selected) {
+            try {
+                await this.deleteFile(file);
+            } catch (error) {
+                logError('批量删除文件时出错:', error);
+            }
+        }
+        this.refresh();
     }
 
     selectFile(filePath: string): void {
@@ -533,10 +598,6 @@ class FileExplorer {
 
     refresh(): void {
         // 批次 5 实现
-    }
-
-    batchDelete(): void {
-        // 批次 3 实现（由 sidebar.ts 调用）
     }
 
     async openFile(file: FileEntry): Promise<void> {
