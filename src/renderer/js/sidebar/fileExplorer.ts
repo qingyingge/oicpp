@@ -169,12 +169,41 @@ class FileExplorer {
 
     // ========== 后续批次占位（在后续批次中实现）==========
 
-    loadDirectory(_path: string): void {
-        // 批次 2 实现
+    async loadDirectory(path: string): Promise<void> {
+        if (!path || !this.hasWorkspace) {
+            this.files = [];
+            this.renderFileTree();
+            return;
+        }
+
+        const api = window.electronAPI;
+        if (!api?.walkDirectory) {
+            logWarn('electronAPI.walkDirectory 不可用');
+            this.files = [];
+            this.renderFileTree();
+            return;
+        }
+
+        try {
+            const result = await api.walkDirectory(path);
+            const entries = (result && result.files) || [];
+            const files: FileEntry[] = entries.map((entry: Record<string, unknown>) => ({
+                name: String(entry.name || ''),
+                path: String(entry.path || ''),
+                type: (entry.ext ? 'file' : 'folder') as 'folder' | 'file',
+                extension: typeof entry.ext === 'string' ? entry.ext : undefined
+            }));
+            this.files = files;
+            this.renderFileTree();
+        } catch (error) {
+            logWarn('加载目录失败', error);
+            this.files = [];
+            this.renderFileTree();
+        }
     }
 
     renderFileTree(): void {
-        // 批次 2 实现
+        // 批次 2 实现（渲染 HTML）
     }
 
     createTreeItem(_file: FileEntry): HTMLElement {
@@ -235,7 +264,9 @@ class FileExplorer {
     }
 
     activate(): void {
-        // 批次 2 实现
+        if (this.hasWorkspace && this.currentPath) {
+            this.loadDirectory(this.currentPath);
+        }
     }
 
     getActiveFilePath(): string | null {
